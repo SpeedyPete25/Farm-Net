@@ -1,6 +1,6 @@
 # Lab Booking & Equipment Checkout Prototype
 
-This prototype provides a minimal university lab room booking and equipment borrowing web app.
+This prototype provides a university lab room booking and equipment borrowing web app.
 
 ## Run locally
 

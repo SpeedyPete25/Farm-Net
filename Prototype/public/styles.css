@@ -57,6 +57,7 @@ h1 {
   padding: 10px 14px;
   border: 1px solid var(--border);
   background: none;
+  color: black;
   cursor: pointer;
   border-radius: 10px;
 }
