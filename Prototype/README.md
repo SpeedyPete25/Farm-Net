@@ -5,19 +5,25 @@ This prototype provides a university lab room booking and equipment borrowing we
 ## Run locally
 
 1. Open a terminal in `Prototype/`
-2. Install dependencies:
+2. Install Node.js locally
+
+```bash
+winget install OpenJS.NodeJS.LTS
+```
+
+3. Install dependencies:
 
 ```bash
 npm install
 ```
 
-3. Start the app:
+4. Start the app:
 
 ```bash
 npm start
 ```
 
-4. Open `http://localhost:3000`
+5. Open `http://localhost:3000`
 
 ## Features
 
