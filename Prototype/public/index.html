@@ -52,8 +52,10 @@
             <p id="booking-room-name" style="margin: 0 0 12px 0; font-weight: 700;"></p>
             <form id="booking-form">
               <label>Date<input id="booking-date" type="date" required /></label>
-              <label>Start time<input id="booking-start-time" type="time" required /></label>
-              <label>Duration (hours)<input id="booking-duration" type="number" min="1" value="1" required /></label>
+              <label>Start time<input id="booking-start-time" type="time" step="900" required /></label>
+              <label>Duration<input id="booking-duration" type="number" min="0.25" step="0.25" value="0.25" required />
+                <small style="font-weight:400; color:#6b7280;">Use 0.25 for 15 minutes, 0.5 for 30 minutes, 0.75 for 45 minutes.</small>
+              </label>
               <div class="form-actions" style="display: flex; gap: 12px; margin-top: 16px;">
                 <button type="submit">Confirm booking</button>
                 <button type="button" id="booking-cancel" class="secondary">Cancel</button>

@@ -198,22 +198,47 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
 
 app.post('/api/book-room', requireLogin, async (req, res) => {
   const { roomId, date, startTime, durationHours } = req.body;
-  if (!roomId || !date || !startTime || !durationHours) {
+  if (!roomId || !date || !startTime || durationHours == null) {
     return res.status(400).json({ error: 'Room, date, start time and duration are required.' });
   }
 
-  const conflict = await query(
-    'SELECT * FROM bookings WHERE roomId = ? AND date = ? AND startTime = ?',
-    [roomId, date, startTime]
+  const duration = Number(durationHours);
+  const timeMatch = /^[0-9]{2}:[0-9]{2}$/.test(startTime);
+  const minute = timeMatch ? Number(startTime.split(':')[1]) : null;
+
+  if (!timeMatch || minute % 15 !== 0) {
+    return res.status(400).json({ error: 'Start time must be in 15-minute increments.' });
+  }
+  if (!Number.isFinite(duration) || duration <= 0 || duration % 0.25 !== 0) {
+    return res.status(400).json({ error: 'Duration must be in 15-minute increments.' });
+  }
+
+  const existingBookings = await query(
+    'SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ?',
+    [roomId, date]
   );
 
-  if (conflict.length > 0) {
-    return res.status(400).json({ error: 'Selected room is already booked at that time.' });
+  const requestedStart = (() => {
+    const [hours, minutes] = startTime.split(':').map(Number);
+    return hours * 60 + minutes;
+  })();
+  const requestedEnd = requestedStart + duration * 60;
+
+  const hasOverlap = existingBookings.some((booking) => {
+    const [hours, minutes] = booking.startTime.split(':').map(Number);
+    const existingStart = hours * 60 + minutes;
+    const existingDuration = Number(booking.durationHours) || 0;
+    const existingEnd = existingStart + existingDuration * 60;
+    return requestedStart < existingEnd && existingStart < requestedEnd;
+  });
+
+  if (hasOverlap) {
+    return res.status(400).json({ error: 'Selected room is already booked during that time.' });
   }
 
   await run(
     'INSERT INTO bookings (userId, roomId, date, startTime, durationHours) VALUES (?, ?, ?, ?, ?)',
-    [req.session.userId, roomId, date, startTime, durationHours]
+    [req.session.userId, roomId, date, startTime, duration]
   );
   res.json({ message: 'Room booked successfully.' });
 });

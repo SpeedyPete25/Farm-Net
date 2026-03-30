@@ -45,6 +45,14 @@ function showError(element, message) {
   element.textContent = message;
 }
 
+function formatDuration(duration) {
+  const value = Number(duration);
+  if (!Number.isFinite(value)) return `${duration}h`;
+  const minutes = Math.round(value * 60);
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes} min`;
+}
+
 function resetErrors() {
   showError(loginError, '');
   showError(registerError, '');
@@ -98,7 +106,7 @@ async function refreshDashboard() {
           <div class="request-card">
             <strong>${booking.roomName}</strong>
             <p>${booking.location}</p>
-            <p>Date: ${booking.date} · Time: ${booking.startTime} · ${booking.durationHours}h</p>
+            <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
           </div>
         `).join('')}
       </div>
@@ -123,7 +131,7 @@ function bookRoom(roomId, roomName) {
   bookingRoomName.textContent = roomName;
   bookingDateInput.value = '';
   bookingStartTimeInput.value = '09:00';
-  bookingDurationInput.value = '1';
+  bookingDurationInput.value = '0.25';
   bookingError.textContent = '';
   bookingPanel.classList.remove('hidden');
 }
@@ -135,6 +143,20 @@ bookingForm.addEventListener('submit', async (event) => {
   const date = bookingDateInput.value;
   const startTime = bookingStartTimeInput.value;
   const durationHours = Number(bookingDurationInput.value);
+
+  if (!/^[0-9]{2}:[0-9]{2}$/.test(startTime)) {
+    bookingError.textContent = 'Start time must be in HH:MM format.';
+    return;
+  }
+  const minutes = Number(startTime.split(':')[1]);
+  if (minutes % 15 !== 0) {
+    bookingError.textContent = 'Start time must be a 15-minute increment.';
+    return;
+  }
+  if (durationHours <= 0 || durationHours % 0.25 !== 0) {
+    bookingError.textContent = 'Duration must be in 15-minute increments.';
+    return;
+  }
 
   const result = await requestJson('/api/book-room', {
     method: 'POST',
