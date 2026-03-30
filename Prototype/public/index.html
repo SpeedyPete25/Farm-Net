@@ -47,8 +47,20 @@
         <div class="grid">
           <article class="card">
             <h2>Available Rooms</h2>
-            <div id="rooms-list"></div>
-          </article>
+            <div id="rooms-list"></div>          <div id="booking-panel" class="hidden" style="margin-top: 24px;">
+            <h3>Book a room</h3>
+            <p id="booking-room-name" style="margin: 0 0 12px 0; font-weight: 700;"></p>
+            <form id="booking-form">
+              <label>Date<input id="booking-date" type="date" required /></label>
+              <label>Start time<input id="booking-start-time" type="time" required /></label>
+              <label>Duration (hours)<input id="booking-duration" type="number" min="1" value="1" required /></label>
+              <div class="form-actions" style="display: flex; gap: 12px; margin-top: 16px;">
+                <button type="submit">Confirm booking</button>
+                <button type="button" id="booking-cancel" class="secondary">Cancel</button>
+              </div>
+              <div id="booking-error" class="form-error"></div>
+            </form>
+          </div>          </article>
 
           <article class="card">
             <h2>Available Equipment</h2>

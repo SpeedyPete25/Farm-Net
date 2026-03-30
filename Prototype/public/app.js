@@ -9,6 +9,15 @@ const registerForm = document.getElementById('register-form');
 const logoutButton = document.getElementById('logout-button');
 const loginError = document.getElementById('login-error');
 const registerError = document.getElementById('register-error');
+const bookingPanel = document.getElementById('booking-panel');
+const bookingForm = document.getElementById('booking-form');
+const bookingRoomName = document.getElementById('booking-room-name');
+const bookingDateInput = document.getElementById('booking-date');
+const bookingStartTimeInput = document.getElementById('booking-start-time');
+const bookingDurationInput = document.getElementById('booking-duration');
+const bookingError = document.getElementById('booking-error');
+const bookingCancel = document.getElementById('booking-cancel');
+let activeBookingRoomId = null;
 
 const tabs = document.querySelectorAll('.tab-button');
 const panels = document.querySelectorAll('.tab-panel');
@@ -109,26 +118,42 @@ async function refreshDashboard() {
   `;
 }
 
-async function bookRoom(roomId, roomName) {
-  const date = prompt(`Enter booking date for ${roomName} (YYYY-MM-DD):`);
-  if (!date) return;
-  const startTime = prompt('Enter start time (HH:MM):');
-  if (!startTime) return;
-  const durationHours = prompt('Enter duration in hours:');
-  if (!durationHours) return;
+function bookRoom(roomId, roomName) {
+  activeBookingRoomId = roomId;
+  bookingRoomName.textContent = roomName;
+  bookingDateInput.value = '';
+  bookingStartTimeInput.value = '09:00';
+  bookingDurationInput.value = '1';
+  bookingError.textContent = '';
+  bookingPanel.classList.remove('hidden');
+}
+
+bookingForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!activeBookingRoomId) return;
+
+  const date = bookingDateInput.value;
+  const startTime = bookingStartTimeInput.value;
+  const durationHours = Number(bookingDurationInput.value);
 
   const result = await requestJson('/api/book-room', {
     method: 'POST',
-    body: JSON.stringify({ roomId, date, startTime, durationHours: Number(durationHours) })
+    body: JSON.stringify({ roomId: activeBookingRoomId, date, startTime, durationHours })
   });
 
   if (result.error) {
-    alert(result.error);
-  } else {
-    alert(result.message);
-    await refreshDashboard();
+    bookingError.textContent = result.error;
+    return;
   }
-}
+
+  alert(result.message);
+  bookingPanel.classList.add('hidden');
+  await refreshDashboard();
+});
+
+bookingCancel.addEventListener('click', () => {
+  bookingPanel.classList.add('hidden');
+});
 
 async function borrowEquipment(equipmentId, equipmentName) {
   const days = prompt(`How many days do you need ${equipmentName}?`);
