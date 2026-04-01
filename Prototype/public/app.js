@@ -57,6 +57,52 @@ function formatDuration(duration) {
   return `${minutes} min`;
 }
 
+function getTodayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getNextQuarterTime() {
+  const now = new Date();
+  const nextQuarter = Math.ceil(now.getMinutes() / 15) * 15;
+  let hours = now.getHours();
+  let minutes = nextQuarter;
+  if (minutes === 60) {
+    hours += 1;
+    minutes = 0;
+  }
+  if (hours >= 24) {
+    return '23:45';
+  }
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function updateBookingTimeMin() {
+  const today = getTodayDateString();
+  const selected = bookingDateInput.value;
+
+  if (selected === today) {
+    const minTime = getNextQuarterTime();
+    bookingStartTimeInput.min = minTime;
+    if (!bookingStartTimeInput.value || bookingStartTimeInput.value < minTime) {
+      bookingStartTimeInput.value = minTime;
+    }
+  } else {
+    bookingStartTimeInput.min = '00:00';
+    if (!bookingStartTimeInput.value) {
+      bookingStartTimeInput.value = '09:00';
+    }
+  }
+}
+
+function setBookingConstraints() {
+  const today = getTodayDateString();
+  bookingDateInput.min = today;
+  if (!bookingDateInput.value || bookingDateInput.value < today) {
+    bookingDateInput.value = today;
+  }
+  updateBookingTimeMin();
+}
+
 function resetErrors() {
   showError(loginError, '');
   showError(registerError, '');
@@ -133,12 +179,13 @@ async function refreshDashboard() {
 function bookRoom(roomId, roomName) {
   activeBookingRoomId = roomId;
   bookingRoomName.textContent = roomName;
-  bookingDateInput.value = '';
-  bookingStartTimeInput.value = '09:00';
+  setBookingConstraints();
   bookingDurationInput.value = '0.25';
   bookingError.textContent = '';
   bookingPanel.classList.remove('hidden');
 }
+
+bookingDateInput.addEventListener('change', updateBookingTimeMin);
 
 bookingForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -159,6 +206,12 @@ bookingForm.addEventListener('submit', async (event) => {
   }
   if (durationHours <= 0 || durationHours % 0.25 !== 0) {
     bookingError.textContent = 'Duration must be in 15-minute increments.';
+    return;
+  }
+
+  const selectedDateTime = new Date(`${date}T${startTime}:00`);
+  if (Number.isNaN(selectedDateTime.getTime()) || selectedDateTime <= new Date()) {
+    bookingError.textContent = 'Booking must be in the future.';
     return;
   }
 

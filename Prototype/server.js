@@ -224,6 +224,11 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Duration must be in 15-minute increments.' });
   }
 
+  const requestedDateTime = new Date(`${date}T${startTime}:00`);
+  if (Number.isNaN(requestedDateTime.getTime()) || requestedDateTime <= new Date()) {
+    return res.status(400).json({ error: 'Booking must be in the future.' });
+  }
+
   const existingBookings = await query(
     'SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ?',
     [roomId, date]
