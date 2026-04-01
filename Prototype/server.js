@@ -10,6 +10,8 @@ const fs = require('fs');
 // - Sessions keep users logged in.
 // - SQLite stores users, rooms, equipment, bookings, and loans.
 const app = express();
+
+// Application data directory for SQLite storage.
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -18,6 +20,8 @@ const db = new sqlite3.Database(dbFile);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Session configuration for user login state.
 app.use(session({
   secret: 'laboratory-booking-secret',
   resave: false,
@@ -25,7 +29,12 @@ app.use(session({
   cookie: { maxAge: 24 * 60 * 60 * 1000 }
 }));
 
-// Helper to run SELECT queries and return rows.
+/**
+ * Execute a SELECT query and return the result rows.
+ * @param {string} sql SQL query text with ? placeholders
+ * @param {Array<any>} params Parameter values for placeholders
+ * @returns {Promise<Array<any>>}
+ */
 function query(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => {
@@ -35,7 +44,12 @@ function query(sql, params = []) {
   });
 }
 
-// Helper to run INSERT / UPDATE / DELETE statements.
+/**
+ * Execute a statement that modifies data and return the statement context.
+ * @param {string} sql SQL statement with ? placeholders
+ * @param {Array<any>} params Parameter values for placeholders
+ * @returns {Promise<import('sqlite3').Statement>}
+ */
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -45,7 +59,10 @@ function run(sql, params = []) {
   });
 }
 
-// Initialize the SQLite database and seed the default data.
+/**
+ * Ensure the SQLite schema exists and seed default data.
+ * This uses CREATE TABLE IF NOT EXISTS so it is safe to run every startup.
+ */
 async function initDatabase() {
   await run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,7 +128,7 @@ function requireLogin(req, res, next) {
   next();
 }
 
-// User registration endpoint.
+// Register a new user with username and password.
 app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -131,6 +148,7 @@ app.post('/api/register', async (req, res) => {
 });
 
 // User login endpoint.
+// Authenticate an existing user and start a session.
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -154,12 +172,14 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Logout endpoint clears the current session.
+// End the current user session.
 app.post('/api/logout', (req, res) => {
   req.session.destroy(() => {
     res.json({ message: 'Logged out.' });
   });
 });
 
+// Return authentication status and logged-in username.
 app.get('/api/profile', (req, res) => {
   if (!req.session.userId) {
     return res.json({ authenticated: false });
@@ -167,6 +187,7 @@ app.get('/api/profile', (req, res) => {
   res.json({ authenticated: true, username: req.session.username });
 });
 
+// Return available rooms and equipment for the dashboard.
 app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
   const equipment = await query('SELECT * FROM equipment');
@@ -177,6 +198,7 @@ app.get('/api/resources', requireLogin, async (req, res) => {
     return acc;
   }, {});
 
+  // Calculate available equipment by subtracting active loans from total quantity.
   const equipmentWithAvailability = equipment.map((item) => {
     const activeLoans = loanMap[item.id] || 0;
     return { ...item, available: Math.max(0, item.quantity - activeLoans) };
@@ -185,6 +207,7 @@ app.get('/api/resources', requireLogin, async (req, res) => {
   res.json({ rooms, equipment: equipmentWithAvailability });
 });
 
+// Return the current user's room bookings and equipment loans.
 app.get('/api/my-requests', requireLogin, async (req, res) => {
   const userId = req.session.userId;
   const bookings = await query(
@@ -207,6 +230,8 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   res.json({ bookings, loans });
 });
 
+// Submit a room booking request.
+// Validates future time, 15-minute increments, and overlapping bookings.
 app.post('/api/book-room', requireLogin, async (req, res) => {
   const { roomId, date, startTime, durationHours } = req.body;
   if (!roomId || !date || !startTime || durationHours == null) {
@@ -229,17 +254,20 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Booking must be in the future.' });
   }
 
+  // Load all bookings for the selected room and date so we can detect overlaps.
   const existingBookings = await query(
     'SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ?',
     [roomId, date]
   );
 
+  // Convert the requested booking time into minutes since midnight.
   const requestedStart = (() => {
     const [hours, minutes] = startTime.split(':').map(Number);
     return hours * 60 + minutes;
   })();
   const requestedEnd = requestedStart + duration * 60;
 
+  // Determine whether the requested interval overlaps any existing booking.
   const hasOverlap = existingBookings.some((booking) => {
     const [hours, minutes] = booking.startTime.split(':').map(Number);
     const existingStart = hours * 60 + minutes;
@@ -259,6 +287,7 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
   res.json({ message: 'Room booked successfully.' });
 });
 
+// Submit an equipment loan request and enforce quantity availability.
 app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   const { equipmentId, days } = req.body;
   if (!equipmentId || !days) {
@@ -290,6 +319,8 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   res.json({ message: 'Equipment borrowed successfully.' });
 });
 
+// Serve the frontend application for any unmatched route.
+// Serve the frontend application for any route not handled by the API.
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
