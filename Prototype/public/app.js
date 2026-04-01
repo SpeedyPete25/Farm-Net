@@ -1,3 +1,4 @@
+// Frontend element bindings for the lab booking app.
 const authSection = document.getElementById('auth-section');
 const dashboardSection = document.getElementById('dashboard-section');
 const userStatus = document.getElementById('user-status');
@@ -32,6 +33,7 @@ tabs.forEach((tab) => {
   });
 });
 
+// Sends a JSON request to the backend and returns parsed JSON.
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -41,10 +43,12 @@ async function requestJson(url, options = {}) {
   return response.json();
 }
 
+// Display a validation or error message in a UI element.
 function showError(element, message) {
   element.textContent = message;
 }
 
+// Convert stored duration in hours to a friendly label.
 function formatDuration(duration) {
   const value = Number(duration);
   if (!Number.isFinite(value)) return `${duration}h`;

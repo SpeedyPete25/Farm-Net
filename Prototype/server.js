@@ -5,6 +5,10 @@ const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3');
 const fs = require('fs');
 
+// Simple lab booking backend using Express and SQLite.
+// - Express serves API routes and the static frontend.
+// - Sessions keep users logged in.
+// - SQLite stores users, rooms, equipment, bookings, and loans.
 const app = express();
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
@@ -21,6 +25,7 @@ app.use(session({
   cookie: { maxAge: 24 * 60 * 60 * 1000 }
 }));
 
+// Helper to run SELECT queries and return rows.
 function query(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => {
@@ -30,6 +35,7 @@ function query(sql, params = []) {
   });
 }
 
+// Helper to run INSERT / UPDATE / DELETE statements.
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -39,6 +45,7 @@ function run(sql, params = []) {
   });
 }
 
+// Initialize the SQLite database and seed the default data.
 async function initDatabase() {
   await run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,6 +103,7 @@ async function initDatabase() {
   }
 }
 
+// Middleware helper: only allow authenticated users to access protected routes.
 function requireLogin(req, res, next) {
   if (!req.session.userId) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -103,6 +111,7 @@ function requireLogin(req, res, next) {
   next();
 }
 
+// User registration endpoint.
 app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -121,6 +130,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
+// User login endpoint.
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -143,6 +153,7 @@ app.post('/api/login', async (req, res) => {
   res.json({ message: 'Login successful.', username: user.username });
 });
 
+// Logout endpoint clears the current session.
 app.post('/api/logout', (req, res) => {
   req.session.destroy(() => {
     res.json({ message: 'Logged out.' });
