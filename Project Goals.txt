@@ -1,0 +1,19 @@
+---Admin---
+Admin login
+Manage bookings
+Cancel bookings
+Add or remove rooms and equipment
+
+---Equipment---
+Return equipment page
+Submit status with return
+Submit photos with return
+
+---Bookings---
+Cancel bookings
+Archives old bookings
+Visualise booked periods for rooms
+Edit booking times
+
+---Notifications---
+Sends email notifications for confirmed and cancelled bookings
