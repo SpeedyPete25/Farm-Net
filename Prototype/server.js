@@ -114,10 +114,18 @@ async function initDatabase() {
     equipmentId INTEGER NOT NULL,
     borrowDate TEXT NOT NULL,
     returnDate TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(userId) REFERENCES users(id),
     FOREIGN KEY(equipmentId) REFERENCES equipment(id)
   )`);
+
+  // Check if status column exists, add it if not
+  const loanColumns = await query("PRAGMA table_info(loans)");
+  const hasLoanStatus = loanColumns.some(col => col.name === 'status');
+  if (!hasLoanStatus) {
+    await run(`ALTER TABLE loans ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
+  }
 
   const rooms = await query('SELECT id FROM rooms LIMIT 1');
   if (rooms.length === 0) {
@@ -206,7 +214,7 @@ app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
   const equipment = await query('SELECT * FROM equipment');
 
-  const loans = await query('SELECT equipmentId, COUNT(*) AS activeLoans FROM loans WHERE returnDate >= date("now") GROUP BY equipmentId');
+  const loans = await query('SELECT equipmentId, COUNT(*) AS activeLoans FROM loans WHERE returnDate >= date("now") AND status = ? GROUP BY equipmentId', ['active']);
   const loanMap = loans.reduce((acc, item) => {
     acc[item.equipmentId] = item.activeLoans;
     return acc;
@@ -252,14 +260,30 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
     );
   }
 
-  const loans = await query(
-    `SELECT l.id, e.name AS equipmentName, l.borrowDate, l.returnDate
-     FROM loans l
-     JOIN equipment e ON e.id = l.equipmentId
-     WHERE l.userId = ?
-     ORDER BY l.borrowDate`,
-    [userId]
-  );
+  let loans;
+  if (statusFilter === 'all') {
+    loans = await query(
+      `SELECT l.id, e.name AS equipmentName, l.borrowDate, l.returnDate, l.status
+       FROM loans l
+       JOIN equipment e ON e.id = l.equipmentId
+       WHERE l.userId = ?
+       ORDER BY l.borrowDate DESC`,
+      [userId]
+    );
+  } else {
+    const today = new Date().toISOString().slice(0, 10);
+    loans = await query(
+      `SELECT l.id, e.name AS equipmentName, l.borrowDate, l.returnDate, l.status
+       FROM loans l
+       JOIN equipment e ON e.id = l.equipmentId
+       WHERE l.userId = ?
+         AND l.status = 'active'
+         AND l.returnDate >= ?
+       ORDER BY l.borrowDate DESC`,
+      [userId, today]
+    );
+  }
+
   res.json({ bookings, loans });
 });
 
@@ -288,6 +312,32 @@ app.post('/api/cancel-booking', requireLogin, async (req, res) => {
 
   await run('UPDATE bookings SET status = ? WHERE id = ?', ['cancelled', bookingId]);
   res.json({ message: 'Booking cancelled successfully.' });
+});
+
+// Cancel an equipment loan owned by the current user.
+app.post('/api/cancel-loan', requireLogin, async (req, res) => {
+  const { loanId } = req.body;
+  if (!loanId) {
+    return res.status(400).json({ error: 'Loan ID is required.' });
+  }
+
+  const existing = await query('SELECT * FROM loans WHERE id = ? AND userId = ?', [loanId, req.session.userId]);
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'Loan not found or not owned by user.' });
+  }
+
+  const loan = existing[0];
+  if (loan.status !== 'active') {
+    return res.status(400).json({ error: 'Loan is already cancelled.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (loan.returnDate < today) {
+    return res.status(400).json({ error: 'Past loans cannot be cancelled.' });
+  }
+
+  await run('UPDATE loans SET status = ? WHERE id = ?', ['cancelled', loanId]);
+  res.json({ message: 'Loan cancelled successfully.' });
 });
 
 // Submit a room booking request.

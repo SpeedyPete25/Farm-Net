@@ -177,13 +177,26 @@ async function refreshDashboard(statusFilter = 'active') {
     <div class="request-group">
       <h3>Equipment Loans</h3>
       <div class="request-list">
-        ${requests.loans.length === 0 ? '<div class="request-card"><p>No equipment loans yet.</p></div>' : requests.loans.map((loan) => `
-          <div class="request-card">
+        ${requests.loans.length === 0 ? '<div class="request-card"><p>No equipment loans yet.</p></div>' : requests.loans.map((loan) => {
+          const today = new Date().toISOString().slice(0, 10);
+          const isExpired = loan.returnDate < today;
+          const isCancelled = loan.status === 'cancelled';
+          let statusLabel = '';
+          if (isCancelled) {
+            statusLabel = '<span class="status-label cancelled">Cancelled</span>';
+          } else if (isExpired) {
+            statusLabel = '<span class="status-label past">Expired</span>';
+          }
+
+          return `
+          <div class="request-card ${isCancelled ? 'cancelled' : ''}">
             <strong>${loan.equipmentName}</strong>
             <p>Borrowed: ${loan.borrowDate}</p>
             <p>Return by: ${loan.returnDate}</p>
+            ${statusLabel}
+            ${(!isExpired && !isCancelled) ? `<button class="cancel-button" onclick="cancelLoan(${loan.id})">Cancel</button>` : ''}
           </div>
-        `).join('')}
+        `}).join('')}
       </div>
     </div>
   `;
@@ -280,6 +293,22 @@ async function cancelBooking(bookingId) {
   }
 }
 
+async function cancelLoan(loanId) {
+  if (!confirm('Are you sure you want to cancel this loan?')) return;
+
+  const result = await requestJson('/api/cancel-loan', {
+    method: 'POST',
+    body: JSON.stringify({ loanId })
+  });
+
+  if (result.error) {
+    alert(result.error);
+  } else {
+    alert(result.message);
+    await refreshDashboard(bookingFilter.value);
+  }
+}
+
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   resetErrors();
@@ -296,7 +325,7 @@ loginForm.addEventListener('submit', async (event) => {
     showError(loginError, result.error);
     return;
   }
-  await refreshDashboard();
+  await refreshDashboard(bookingFilter.value);
 });
 
 registerForm.addEventListener('submit', async (event) => {
@@ -326,9 +355,9 @@ bookingFilter.addEventListener('change', async () => {
 
 logoutButton.addEventListener('click', async () => {
   await requestJson('/api/logout', { method: 'POST' });
-  await refreshDashboard();
+  await refreshDashboard(bookingFilter.value);
 });
 
 window.bookRoom = bookRoom;
 window.borrowEquipment = borrowEquipment;
-refreshDashboard();
+refreshDashboard(bookingFilter.value);
