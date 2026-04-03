@@ -160,7 +160,7 @@ async function refreshDashboard() {
             <strong>${booking.roomName}</strong>
             <p>${booking.location}</p>
             <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
-            <button class="cancel-button" onclick="cancelBooking(${booking.id})" ${isPast ? 'disabled' : ''}>Cancel</button>
+            ${!isPast ? `<button class="cancel-button" onclick="cancelBooking(${booking.id})">Cancel</button>` : ''}
           </div>
         `}).join('')}
       </div>
