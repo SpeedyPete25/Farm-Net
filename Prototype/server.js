@@ -230,6 +230,23 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   res.json({ bookings, loans });
 });
 
+// Cancel a room booking owned by the current user.
+app.post('/api/cancel-booking', requireLogin, async (req, res) => {
+  const { bookingId } = req.body;
+  if (!bookingId) {
+    return res.status(400).json({ error: 'Booking ID is required.' });
+  }
+
+  // Ensure users can only cancel their own booking.
+  const existing = await query('SELECT * FROM bookings WHERE id = ? AND userId = ?', [bookingId, req.session.userId]);
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'Booking not found or not owned by user.' });
+  }
+
+  await run('DELETE FROM bookings WHERE id = ?', [bookingId]);
+  res.json({ message: 'Booking cancelled successfully.' });
+});
+
 // Submit a room booking request.
 // Validates future time, 15-minute increments, and overlapping bookings.
 app.post('/api/book-room', requireLogin, async (req, res) => {

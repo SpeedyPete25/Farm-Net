@@ -157,6 +157,7 @@ async function refreshDashboard() {
             <strong>${booking.roomName}</strong>
             <p>${booking.location}</p>
             <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
+            <button class="cancel-button" onclick="cancelBooking(${booking.id})">Cancel</button>
           </div>
         `).join('')}
       </div>
@@ -241,6 +242,22 @@ async function borrowEquipment(equipmentId, equipmentName) {
   const result = await requestJson('/api/borrow-equipment', {
     method: 'POST',
     body: JSON.stringify({ equipmentId, days: Number(days) })
+  });
+
+  if (result.error) {
+    alert(result.error);
+  } else {
+    alert(result.message);
+    await refreshDashboard();
+  }
+}
+
+async function cancelBooking(bookingId) {
+  if (!confirm('Are you sure you want to cancel this booking?')) return;
+
+  const result = await requestJson('/api/cancel-booking', {
+    method: 'POST',
+    body: JSON.stringify({ bookingId })
   });
 
   if (result.error) {
