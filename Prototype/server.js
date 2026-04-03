@@ -89,10 +89,14 @@ async function initDatabase() {
     date TEXT NOT NULL,
     startTime TEXT NOT NULL,
     durationHours INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(userId) REFERENCES users(id),
     FOREIGN KEY(roomId) REFERENCES rooms(id)
   )`);
+
+  // Add status column to existing bookings table when upgrading from older schema.
+  await run(`ALTER TABLE bookings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`).catch(() => {});
 
   await run(`CREATE TABLE IF NOT EXISTS loans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,10 +215,10 @@ app.get('/api/resources', requireLogin, async (req, res) => {
 app.get('/api/my-requests', requireLogin, async (req, res) => {
   const userId = req.session.userId;
   const bookings = await query(
-    `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours
+    `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status
      FROM bookings b
      JOIN rooms r ON r.id = b.roomId
-     WHERE b.userId = ?
+     WHERE b.userId = ? AND b.status = 'active'
      ORDER BY b.date, b.startTime`,
     [userId]
   );
@@ -243,7 +247,17 @@ app.post('/api/cancel-booking', requireLogin, async (req, res) => {
     return res.status(404).json({ error: 'Booking not found or not owned by user.' });
   }
 
-  await run('DELETE FROM bookings WHERE id = ?', [bookingId]);
+  const booking = existing[0];
+  if (booking.status !== 'active') {
+    return res.status(400).json({ error: 'Booking is already cancelled.' });
+  }
+
+  const bookingDateTime = new Date(`${booking.date}T${booking.startTime}:00`);
+  if (bookingDateTime <= new Date()) {
+    return res.status(400).json({ error: 'Past bookings cannot be cancelled.' });
+  }
+
+  await run('UPDATE bookings SET status = ? WHERE id = ?', ['cancelled', bookingId]);
   res.json({ message: 'Booking cancelled successfully.' });
 });
 
@@ -271,10 +285,10 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Booking must be in the future.' });
   }
 
-  // Load all bookings for the selected room and date so we can detect overlaps.
+  // Load active bookings for the selected room and date so we can detect overlaps.
   const existingBookings = await query(
-    'SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ?',
-    [roomId, date]
+    'SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status = ? ',
+    [roomId, date, 'active']
   );
 
   // Convert the requested booking time into minutes since midnight.

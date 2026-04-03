@@ -152,14 +152,17 @@ async function refreshDashboard() {
     <div class="request-group">
       <h3>Room Bookings</h3>
       <div class="request-list">
-        ${requests.bookings.length === 0 ? '<div class="request-card"><p>No room bookings yet.</p></div>' : requests.bookings.map((booking) => `
+        ${requests.bookings.length === 0 ? '<div class="request-card"><p>No room bookings yet.</p></div>' : requests.bookings.map((booking) => {
+          const bookingDateTime = new Date(`${booking.date}T${booking.startTime}:00`);
+          const isPast = bookingDateTime <= new Date();
+          return `
           <div class="request-card">
             <strong>${booking.roomName}</strong>
             <p>${booking.location}</p>
             <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
-            <button class="cancel-button" onclick="cancelBooking(${booking.id})">Cancel</button>
+            <button class="cancel-button" onclick="cancelBooking(${booking.id})" ${isPast ? 'disabled' : ''}>Cancel</button>
           </div>
-        `).join('')}
+        `}).join('')}
       </div>
     </div>
     <div class="request-group">

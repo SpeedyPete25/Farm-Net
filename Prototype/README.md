@@ -32,6 +32,7 @@ npm start
 - Book a room for a date and time in 15-minute increments.
 - View available equipment and borrow items for a number of days.
 - Review your active bookings and loans.
+- Cancel your own upcoming room bookings.
 
 ## Architecture
 
@@ -46,6 +47,7 @@ npm start
 - Users register and log in through `/api/register` and `/api/login`.
 - Authenticated users can load resources from `/api/resources`.
 - Room booking requests are sent to `/api/book-room`.
+- Room cancellation requests are sent to `/api/cancel-booking` (only your upcoming bookings can be cancelled).
 - Equipment borrowing requests are sent to `/api/borrow-equipment`.
 - The server validates 15-minute booking increments and prevents overlapping room reservations.
 
