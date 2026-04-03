@@ -5,6 +5,7 @@ const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
 const requestsList = document.getElementById('requests-list');
+const bookingFilter = document.getElementById('booking-filter');
 const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
 const logoutButton = document.getElementById('logout-button');
@@ -108,7 +109,7 @@ function resetErrors() {
   showError(registerError, '');
 }
 
-async function refreshDashboard() {
+async function refreshDashboard(statusFilter = 'active') {
   const profile = await requestJson('/api/profile');
   if (!profile.authenticated) {
     authSection.classList.remove('hidden');
@@ -122,7 +123,7 @@ async function refreshDashboard() {
   userStatus.textContent = `Signed in as ${profile.username}`;
 
   const resources = await requestJson('/api/resources');
-  const requests = await requestJson('/api/my-requests');
+  const requests = await requestJson(`/api/my-requests?status=${statusFilter}`);
 
   roomsList.innerHTML = resources.rooms.map((room) => {
     return `
@@ -155,12 +156,20 @@ async function refreshDashboard() {
         ${requests.bookings.length === 0 ? '<div class="request-card"><p>No room bookings yet.</p></div>' : requests.bookings.map((booking) => {
           const bookingDateTime = new Date(`${booking.date}T${booking.startTime}:00`);
           const isPast = bookingDateTime <= new Date();
+          const isCancelled = booking.status === 'cancelled';
+          let statusLabel = '';
+          if (isCancelled) {
+            statusLabel = '<span class="status-label cancelled">Cancelled</span>';
+          } else if (isPast) {
+            statusLabel = '<span class="status-label past">Past booking</span>';
+          }
           return `
-          <div class="request-card">
+          <div class="request-card ${isCancelled ? 'cancelled' : ''}">
             <strong>${booking.roomName}</strong>
             <p>${booking.location}</p>
             <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
-            ${!isPast ? `<button class="cancel-button" onclick="cancelBooking(${booking.id})">Cancel</button>` : ''}
+            ${statusLabel}
+            ${!isPast && !isCancelled ? `<button class="cancel-button" onclick="cancelBooking(${booking.id})">Cancel</button>` : ''}
           </div>
         `}).join('')}
       </div>
@@ -231,7 +240,7 @@ bookingForm.addEventListener('submit', async (event) => {
 
   alert(result.message);
   bookingPanel.classList.add('hidden');
-  await refreshDashboard();
+  await refreshDashboard(bookingFilter.value);
 });
 
 bookingCancel.addEventListener('click', () => {
@@ -251,7 +260,7 @@ async function borrowEquipment(equipmentId, equipmentName) {
     alert(result.error);
   } else {
     alert(result.message);
-    await refreshDashboard();
+    await refreshDashboard(bookingFilter.value);
   }
 }
 
@@ -267,7 +276,7 @@ async function cancelBooking(bookingId) {
     alert(result.error);
   } else {
     alert(result.message);
-    await refreshDashboard();
+    await refreshDashboard(bookingFilter.value);
   }
 }
 
@@ -309,6 +318,10 @@ registerForm.addEventListener('submit', async (event) => {
 
   alert(result.message);
   tabs[0].click();
+});
+
+bookingFilter.addEventListener('change', async () => {
+  await refreshDashboard(bookingFilter.value);
 });
 
 logoutButton.addEventListener('click', async () => {

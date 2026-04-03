@@ -75,6 +75,14 @@
 
         <article class="card">
           <h2>My Bookings & Loans</h2>
+          <div class="filter-controls" style="margin-bottom: 16px;">
+            <label>Filter: 
+              <select id="booking-filter">
+                <option value="active">Active bookings only</option>
+                <option value="all">All bookings</option>
+              </select>
+            </label>
+          </div>
           <div id="requests-list"></div>
         </article>
       </section>

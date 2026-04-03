@@ -18,6 +18,12 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 const dbFile = path.join(dataDir, 'lab-booking.db');
 const db = new sqlite3.Database(dbFile);
 
+// Handle database errors
+db.on('error', (err) => {
+  console.error('Database error:', err);
+  process.exit(1);
+});
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -95,8 +101,12 @@ async function initDatabase() {
     FOREIGN KEY(roomId) REFERENCES rooms(id)
   )`);
 
-  // Add status column to existing bookings table when upgrading from older schema.
-  await run(`ALTER TABLE bookings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`).catch(() => {});
+  // Check if status column exists, add it if not
+  const columns = await query("PRAGMA table_info(bookings)");
+  const hasStatusColumn = columns.some(col => col.name === 'status');
+  if (!hasStatusColumn) {
+    await run(`ALTER TABLE bookings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS loans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -214,14 +224,33 @@ app.get('/api/resources', requireLogin, async (req, res) => {
 // Return the current user's room bookings and equipment loans.
 app.get('/api/my-requests', requireLogin, async (req, res) => {
   const userId = req.session.userId;
-  const bookings = await query(
-    `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status
-     FROM bookings b
-     JOIN rooms r ON r.id = b.roomId
-     WHERE b.userId = ? AND b.status = 'active'
-     ORDER BY b.date, b.startTime`,
-    [userId]
-  );
+  const statusFilter = req.query.status || 'active'; // 'active' or 'all'
+
+  let bookings;
+  if (statusFilter === 'all') {
+    bookings = await query(
+      `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status
+       FROM bookings b
+       JOIN rooms r ON r.id = b.roomId
+       WHERE b.userId = ?
+       ORDER BY b.date DESC, b.startTime DESC`,
+      [userId]
+    );
+  } else {
+    const today = new Date().toISOString().slice(0, 10);
+    const nowTime = new Date().toTimeString().slice(0, 5);
+
+    bookings = await query(
+      `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status
+       FROM bookings b
+       JOIN rooms r ON r.id = b.roomId
+       WHERE b.userId = ?
+         AND b.status = 'active'
+         AND (b.date > ? OR (b.date = ? AND b.startTime > ?))
+       ORDER BY b.date DESC, b.startTime DESC`,
+      [userId, today, today, nowTime]
+    );
+  }
 
   const loans = await query(
     `SELECT l.id, e.name AS equipmentName, l.borrowDate, l.returnDate
@@ -359,7 +388,13 @@ app.get('*', (req, res) => {
 initDatabase()
   .then(() => {
     const port = process.env.PORT || 3000;
-    app.listen(port, () => console.log(`Lab booking app running on http://localhost:${port}`));
+    const server = app.listen(port, () => console.log(`Lab booking app running on http://localhost:${port}`));
+    
+    // Handle server errors
+    server.on('error', (err) => {
+      console.error('Server error:', err);
+      process.exit(1);
+    });
   })
   .catch((err) => {
     console.error('Failed to initialize database:', err);
