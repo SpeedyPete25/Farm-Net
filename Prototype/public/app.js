@@ -119,7 +119,7 @@ async function refreshDashboard() {
 
   authSection.classList.add('hidden');
   dashboardSection.classList.remove('hidden');
-  userStatus.textContent = `Signed in as ${profile.username}`;
+  userStatus.textContent = `Signed in as ${profile.email}`;
 
   const resources = await requestJson('/api/resources');
   const requests = await requestJson('/api/my-requests');
@@ -255,12 +255,12 @@ loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   resetErrors();
   const formData = new FormData(loginForm);
-  const username = formData.get('username').trim();
+  const email = formData.get('email').trim();
   const password = formData.get('password').trim();
 
   const result = await requestJson('/api/login', {
     method: 'POST',
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ email, password })
   });
 
   if (result.error) {
@@ -274,12 +274,12 @@ registerForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   resetErrors();
   const formData = new FormData(registerForm);
-  const username = formData.get('username').trim();
+  const email = formData.get('email').trim();
   const password = formData.get('password').trim();
 
   const result = await requestJson('/api/register', {
     method: 'POST',
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ email, password })
   });
 
   if (result.error) {
