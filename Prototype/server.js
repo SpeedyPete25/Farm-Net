@@ -72,9 +72,16 @@ function run(sql, params = []) {
 async function initDatabase() {
   await run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
     passwordHash TEXT NOT NULL
   )`);
+
+  // Rename username column to email if it exists
+  const columns = await query("PRAGMA table_info(users)");
+  const hasUsernameColumn = columns.some(col => col.name === 'username');
+  if (hasUsernameColumn) {
+    await run(`ALTER TABLE users RENAME COLUMN username TO email`);
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,8 +109,8 @@ async function initDatabase() {
   )`);
 
   // Check if status column exists, add it if not
-  const columns = await query("PRAGMA table_info(bookings)");
-  const hasStatusColumn = columns.some(col => col.name === 'status');
+  const bookingColumns = await query("PRAGMA table_info(bookings)");
+  const hasStatusColumn = bookingColumns.some(col => col.name === 'status');
   if (!hasStatusColumn) {
     await run(`ALTER TABLE bookings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
   }
@@ -150,20 +157,26 @@ function requireLogin(req, res, next) {
   next();
 }
 
-// Register a new user with username and password.
+// Register a new user with email and password.
 app.post('/api/register', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' });
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
   try {
-    await run('INSERT INTO users (username, passwordHash) VALUES (?, ?)', [username, passwordHash]);
+    await run('INSERT INTO users (email, passwordHash) VALUES (?, ?)', [email, passwordHash]);
     res.json({ message: 'Registration successful. You can now log in.' });
   } catch (err) {
     if (err.message.includes('UNIQUE')) {
-      return res.status(400).json({ error: 'Username already exists.' });
+      return res.status(400).json({ error: 'Email already exists.' });
     }
     res.status(500).json({ error: 'Could not create account.' });
   }
@@ -172,25 +185,25 @@ app.post('/api/register', async (req, res) => {
 // User login endpoint.
 // Authenticate an existing user and start a session.
 app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' });
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
   }
 
-  const users = await query('SELECT * FROM users WHERE username = ?', [username]);
+  const users = await query('SELECT * FROM users WHERE email = ?', [email]);
   if (users.length === 0) {
-    return res.status(400).json({ error: 'Invalid username or password.' });
+    return res.status(400).json({ error: 'Invalid email or password.' });
   }
 
   const user = users[0];
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
-    return res.status(400).json({ error: 'Invalid username or password.' });
+    return res.status(400).json({ error: 'Invalid email or password.' });
   }
 
   req.session.userId = user.id;
-  req.session.username = user.username;
-  res.json({ message: 'Login successful.', username: user.username });
+  req.session.email = user.email;
+  res.json({ message: 'Login successful.', email: user.email });
 });
 
 // Logout endpoint clears the current session.
@@ -201,12 +214,12 @@ app.post('/api/logout', (req, res) => {
   });
 });
 
-// Return authentication status and logged-in username.
+// Return authentication status and logged-in email.
 app.get('/api/profile', (req, res) => {
   if (!req.session.userId) {
     return res.json({ authenticated: false });
   }
-  res.json({ authenticated: true, username: req.session.username });
+  res.json({ authenticated: true, email: req.session.email });
 });
 
 // Return available rooms and equipment for the dashboard.
