@@ -18,6 +18,7 @@ const bookingStartTimeInput = document.getElementById('booking-start-time');
 const bookingDurationInput = document.getElementById('booking-duration');
 const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
+const scheduleGrid = document.getElementById('schedule-grid');
 let activeBookingRoomId = null;
 
 const tabs = document.querySelectorAll('.tab-button');
@@ -176,6 +177,47 @@ async function refreshDashboard() {
   `;
 }
 
+async function renderSchedule(roomId, date) {
+  if (!roomId || !date) { scheduleGrid.innerHTML = ''; return; }
+  const bookings = await requestJson(`/api/rooms/${roomId}/schedule?date=${date}`);
+  if (!Array.isArray(bookings)) { scheduleGrid.innerHTML = ''; return; }
+
+  // Build a map of occupied start-times from all bookings on that day.
+  const occupied = new Map();
+  for (const b of bookings) {
+    const [h, m] = b.startTime.split(':').map(Number);
+    const totalSlots = Math.round(Number(b.durationHours) / 0.5);
+    for (let i = 0; i < totalSlots; i++) {
+      const mins = h * 60 + m + i * 30;
+      const label = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      if (!occupied.has(label)) occupied.set(label, b.email);
+    }
+  }
+
+  const currentSelection = bookingStartTimeInput.value;
+
+  let html = '<div class="schedule-grid">';
+  for (let mins = 8 * 60; mins < 20 * 60; mins += 30) {
+    const label = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+    const busy = occupied.has(label);
+    const selected = !busy && label === currentSelection;
+    const cls = busy ? 'slot-busy' : selected ? 'slot-free slot-selected' : 'slot-free';
+    html += `<div class="slot ${cls}"${!busy ? ` onclick="selectSlot('${label}')"` : ''}>`
+      + `<span>${label}</span>`
+      + `<span>${busy ? 'Booked' : selected ? 'Selected' : 'Available'}</span>`
+      + `</div>`;
+  }
+  html += '</div>';
+  scheduleGrid.innerHTML = html;
+}
+
+function selectSlot(time) {
+  bookingStartTimeInput.value = time;
+  bookingError.textContent = '';
+  // Re-render to move the highlight to the newly selected slot.
+  renderSchedule(activeBookingRoomId, bookingDateInput.value);
+}
+
 function bookRoom(roomId, roomName) {
   activeBookingRoomId = roomId;
   bookingRoomName.textContent = roomName;
@@ -183,9 +225,13 @@ function bookRoom(roomId, roomName) {
   bookingDurationInput.value = '0.25';
   bookingError.textContent = '';
   bookingPanel.classList.remove('hidden');
+  renderSchedule(roomId, bookingDateInput.value);
 }
 
-bookingDateInput.addEventListener('change', updateBookingTimeMin);
+bookingDateInput.addEventListener('change', () => {
+  updateBookingTimeMin();
+  renderSchedule(activeBookingRoomId, bookingDateInput.value);
+});
 
 bookingForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -298,4 +344,5 @@ logoutButton.addEventListener('click', async () => {
 
 window.bookRoom = bookRoom;
 window.borrowEquipment = borrowEquipment;
+window.selectSlot = selectSlot;
 refreshDashboard();

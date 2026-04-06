@@ -184,3 +184,45 @@ button.danger {
     grid-template-columns: 1fr;
   }
 }
+
+/* Schedule grid for room availability visualisation */
+.schedule-grid {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 0.875rem;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.slot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.slot:last-child {
+  border-bottom: none;
+}
+
+.slot-free {
+  background: #f0fdf4;
+  cursor: pointer;
+}
+
+.slot-free:hover {
+  background: #bbf7d0;
+}
+
+.slot-selected {
+  background: #86efac !important;
+  font-weight: 600;
+}
+
+.slot-busy {
+  background: #fee2e2;
+  color: #991b1b;
+  cursor: not-allowed;
+}

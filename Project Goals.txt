@@ -14,6 +14,7 @@ Submit photos with return
 *Archive old bookings
 Visualise booked periods for rooms
 Edit booking times
+Timetable engine
 
 ---Notifications---
 Sends email notifications for confirmed and cancelled bookings

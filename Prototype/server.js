@@ -339,6 +339,23 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   res.json({ message: 'Equipment borrowed successfully.' });
 });
 
+// Return all bookings for a room on a given date for the schedule visualisation.
+app.get('/api/rooms/:roomId/schedule', requireLogin, async (req, res) => {
+  const roomId = Number(req.params.roomId);
+  const { date } = req.query;
+  if (!roomId || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'Room ID and date are required.' });
+  }
+  const bookings = await query(
+    `SELECT b.startTime, b.durationHours, u.email
+     FROM bookings b JOIN users u ON b.userId = u.id
+     WHERE b.roomId = ? AND b.date = ?
+     ORDER BY b.startTime`,
+    [roomId, date]
+  );
+  res.json(bookings);
+});
+
 // Serve the frontend application for any unmatched route.
 // Serve the frontend application for any route not handled by the API.
 app.get('*', (req, res) => {
