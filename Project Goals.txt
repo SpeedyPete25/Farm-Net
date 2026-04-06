@@ -11,13 +11,19 @@ Submit photos with return
 
 ---Bookings---
 *Cancel bookings
-*Archives old bookings
-Visualise booked periods for rooms
+*Archive old bookings
+*Visualise booked periods for rooms
 Edit booking times
+Timetable engine
 
 ---Notifications---
 Sends email notifications for confirmed and cancelled bookings
 
---Account--
-Account ID is by email not username
-Emails are verified
+--Accounts--
+*User IDs are emails not usernames
+Passwords have requirements
+*Email format validation
+*Email domain validation
+Confirm domain has mail servers
+Connect to mail server to verify mailbox existence
+Send confirmation emails and user has to click link to confirm
