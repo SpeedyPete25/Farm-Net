@@ -19,6 +19,7 @@ const bookingStartTimeInput = document.getElementById('booking-start-time');
 const bookingDurationInput = document.getElementById('booking-duration');
 const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
+const scheduleGrid = document.getElementById('schedule-grid');
 let activeBookingRoomId = null;
 
 const tabs = document.querySelectorAll('.tab-button');
@@ -202,16 +203,59 @@ async function refreshDashboard(statusFilter = 'active') {
   `;
 }
 
+async function renderSchedule(roomId, date) {
+  if (!roomId || !date) { scheduleGrid.innerHTML = ''; return; }
+  const bookings = await requestJson(`/api/rooms/${roomId}/schedule?date=${date}`);
+  if (!Array.isArray(bookings)) { scheduleGrid.innerHTML = ''; return; }
+
+  // Build a set of occupied 30-min slot labels from all bookings on this day.
+  const occupied = new Map();
+  for (const b of bookings) {
+    const [h, m] = b.startTime.split(':').map(Number);
+    const totalSlots = Math.round(Number(b.durationHours) / 0.5);
+    for (let i = 0; i < totalSlots; i++) {
+      const mins = h * 60 + m + i * 30;
+      const label = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      if (!occupied.has(label)) occupied.set(label, b.email);
+    }
+  }
+
+  const currentSelection = bookingStartTimeInput.value;
+  let html = '<div class="schedule-grid">';
+  for (let mins = 8 * 60; mins < 20 * 60; mins += 30) {
+    const label = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+    const busy = occupied.has(label);
+    const selected = !busy && label === currentSelection;
+    const cls = busy ? 'slot-busy' : selected ? 'slot-free slot-selected' : 'slot-free';
+    html += `<div class="slot ${cls}"${!busy ? ` onclick="selectSlot('${label}')"` : ''}>`
+      + `<span>${label}</span>`
+      + `<span>${busy ? 'Booked' : selected ? 'Selected' : 'Available'}</span>`
+      + `</div>`;
+  }
+  html += '</div>';
+  scheduleGrid.innerHTML = html;
+}
+
+function selectSlot(time) {
+  bookingStartTimeInput.value = time;
+  bookingError.textContent = '';
+  renderSchedule(activeBookingRoomId, bookingDateInput.value);
+}
+
 function bookRoom(roomId, roomName) {
   activeBookingRoomId = roomId;
   bookingRoomName.textContent = roomName;
   setBookingConstraints();
-  bookingDurationInput.value = '0.25';
+  bookingDurationInput.value = '0.5';
   bookingError.textContent = '';
   bookingPanel.classList.remove('hidden');
+  renderSchedule(roomId, bookingDateInput.value);
 }
 
-bookingDateInput.addEventListener('change', updateBookingTimeMin);
+bookingDateInput.addEventListener('change', () => {
+  updateBookingTimeMin();
+  renderSchedule(activeBookingRoomId, bookingDateInput.value);
+});
 
 bookingForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -230,8 +274,8 @@ bookingForm.addEventListener('submit', async (event) => {
     bookingError.textContent = 'Start time must be a 15-minute increment.';
     return;
   }
-  if (durationHours <= 0 || durationHours % 0.25 !== 0) {
-    bookingError.textContent = 'Duration must be in 15-minute increments.';
+  if (durationHours <= 0 || durationHours % 0.5 !== 0) {
+    bookingError.textContent = 'Duration must be in 30-minute increments.';
     return;
   }
 
@@ -251,7 +295,8 @@ bookingForm.addEventListener('submit', async (event) => {
     return;
   }
 
-  alert(result.message);
+  const durationLabel = formatDuration(durationHours);
+  alert(`Booking confirmed!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}`);
   bookingPanel.classList.add('hidden');
   await refreshDashboard(bookingFilter.value);
 });
@@ -360,4 +405,7 @@ logoutButton.addEventListener('click', async () => {
 
 window.bookRoom = bookRoom;
 window.borrowEquipment = borrowEquipment;
+window.cancelBooking = cancelBooking;
+window.cancelLoan = cancelLoan;
+window.selectSlot = selectSlot;
 refreshDashboard(bookingFilter.value);
