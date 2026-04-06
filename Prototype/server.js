@@ -265,8 +265,8 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
   if (!timeMatch || minute % 15 !== 0) {
     return res.status(400).json({ error: 'Start time must be in 15-minute increments.' });
   }
-  if (!Number.isFinite(duration) || duration <= 0 || duration % 0.25 !== 0) {
-    return res.status(400).json({ error: 'Duration must be in 15-minute increments.' });
+  if (!Number.isFinite(duration) || duration <= 0 || duration % 0.5 !== 0) {
+    return res.status(400).json({ error: 'Duration must be in 30-minute increments.' });
   }
 
   const requestedDateTime = new Date(`${date}T${startTime}:00`);

@@ -222,7 +222,7 @@ function bookRoom(roomId, roomName) {
   activeBookingRoomId = roomId;
   bookingRoomName.textContent = roomName;
   setBookingConstraints();
-  bookingDurationInput.value = '0.25';
+  bookingDurationInput.value = '0.5';
   bookingError.textContent = '';
   bookingPanel.classList.remove('hidden');
   renderSchedule(roomId, bookingDateInput.value);
@@ -250,8 +250,8 @@ bookingForm.addEventListener('submit', async (event) => {
     bookingError.textContent = 'Start time must be a 15-minute increment.';
     return;
   }
-  if (durationHours <= 0 || durationHours % 0.25 !== 0) {
-    bookingError.textContent = 'Duration must be in 15-minute increments.';
+  if (durationHours <= 0 || durationHours % 0.5 !== 0) {
+    bookingError.textContent = 'Duration must be in 30-minute increments.';
     return;
   }
 
@@ -271,7 +271,8 @@ bookingForm.addEventListener('submit', async (event) => {
     return;
   }
 
-  alert(result.message);
+  const durationLabel = formatDuration(durationHours);
+  alert(`Booking confirmed!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}`);
   bookingPanel.classList.add('hidden');
   await refreshDashboard();
 });
