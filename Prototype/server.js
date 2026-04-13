@@ -134,6 +134,17 @@ async function initDatabase() {
     await run(`ALTER TABLE loans ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
   }
 
+  await run(`CREATE TABLE IF NOT EXISTS activity_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId INTEGER NOT NULL,
+    eventType TEXT NOT NULL,
+    resourceType TEXT NOT NULL,
+    resourceId INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(userId) REFERENCES users(id)
+  )`);
+
   const rooms = await query('SELECT id FROM rooms LIMIT 1');
   if (rooms.length === 0) {
     await run('INSERT INTO rooms (name, location) VALUES (?, ?)', ['Chemistry Lab', 'Block A, Floor 2']);
@@ -155,6 +166,26 @@ function requireLogin(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
+}
+
+/**
+ * Log an activity event to the activity history.
+ * @param {number} userId User ID performing the action
+ * @param {string} eventType Type of event (e.g., 'booking_created', 'booking_cancelled')
+ * @param {string} resourceType Type of resource affected (e.g., 'booking', 'loan')
+ * @param {number} resourceId ID of the resource affected
+ * @param {string} description Human-readable description of the event
+ * @returns {Promise<void>}
+ */
+async function logActivity(userId, eventType, resourceType, resourceId, description) {
+  try {
+    await run(
+      'INSERT INTO activity_history (userId, eventType, resourceType, resourceId, description) VALUES (?, ?, ?, ?, ?)',
+      [userId, eventType, resourceType, resourceId, description]
+    );
+  } catch (err) {
+    console.error('Failed to log activity:', err);
+  }
 }
 
 // Register a new user with email and password.
@@ -324,6 +355,11 @@ app.post('/api/cancel-booking', requireLogin, async (req, res) => {
   }
 
   await run('UPDATE bookings SET status = ? WHERE id = ?', ['cancelled', bookingId]);
+
+  // Log booking cancellation event
+  const description = `Cancelled booking for ${booking.date} at ${booking.startTime}`;
+  await logActivity(req.session.userId, 'booking_cancelled', 'booking', bookingId, description);
+
   res.json({ message: 'Booking cancelled successfully.' });
 });
 
@@ -403,10 +439,16 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Selected room is already booked during that time.' });
   }
 
-  await run(
+  const result = await run(
     'INSERT INTO bookings (userId, roomId, date, startTime, durationHours) VALUES (?, ?, ?, ?, ?)',
     [req.session.userId, roomId, date, startTime, duration]
   );
+
+  // Log booking creation event
+  const roomName = await query('SELECT name FROM rooms WHERE id = ?', [roomId]);
+  const description = `Booked ${roomName[0]?.name || 'room'} on ${date} at ${startTime} for ${duration} hours`;
+  await logActivity(req.session.userId, 'booking_created', 'booking', result.lastID, description);
+
   res.json({ message: 'Room booked successfully.' });
 });
 
