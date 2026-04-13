@@ -1,3 +1,28 @@
+/**
+ * Room bookings page module.
+ * Handles room list rendering, booking form state, schedule rendering, and booking submission.
+ */
+
+/**
+ * Build the room bookings page controller.
+ * @param {Object} deps Dependency bag.
+ * @param {HTMLElement} deps.roomsList Room list container.
+ * @param {HTMLElement} deps.bookingPanel Booking panel container.
+ * @param {HTMLFormElement} deps.bookingForm Booking form element.
+ * @param {HTMLElement} deps.bookingRoomName Selected room title element.
+ * @param {HTMLInputElement} deps.bookingDateInput Booking date input.
+ * @param {HTMLInputElement} deps.bookingStartTimeInput Booking start time input.
+ * @param {HTMLInputElement} deps.bookingDurationInput Booking duration input.
+ * @param {HTMLElement} deps.bookingError Booking error message element.
+ * @param {HTMLElement} deps.bookingCancel Booking cancel button.
+ * @param {HTMLElement} deps.scheduleGrid Schedule grid container.
+ * @param {(url: string, options?: RequestInit) => Promise<any>} deps.requestJson API request helper.
+ * @param {() => string} deps.getTodayDateString Returns today's date in YYYY-MM-DD.
+ * @param {() => string} deps.getNextQuarterTime Returns next quarter-hour in HH:MM.
+ * @param {(duration: number|string) => string} deps.formatDuration Duration formatter.
+ * @param {() => Promise<void>} deps.onBookingCreated Callback after successful booking.
+ * @returns {{ render: (rooms: any[]) => void, hideBookingPanel: () => void }} Rooms page API.
+ */
 export function createRoomsPage({
   roomsList,
   bookingPanel,
@@ -17,6 +42,9 @@ export function createRoomsPage({
 }) {
   let activeBookingRoomId = null;
 
+  /**
+   * Constrain minimum selectable booking time based on selected date.
+   */
   function updateBookingTimeMin() {
     const today = getTodayDateString();
     const selected = bookingDateInput.value;
@@ -35,6 +63,9 @@ export function createRoomsPage({
     }
   }
 
+  /**
+   * Apply initial constraints for booking date/time fields.
+   */
   function setBookingConstraints() {
     const today = getTodayDateString();
     bookingDateInput.min = today;
@@ -44,6 +75,12 @@ export function createRoomsPage({
     updateBookingTimeMin();
   }
 
+  /**
+   * Render the daily schedule grid for the selected room.
+   * @param {number} roomId Room identifier.
+   * @param {string} date Date string in YYYY-MM-DD.
+   * @returns {Promise<void>}
+   */
   async function renderSchedule(roomId, date) {
     if (!roomId || !date) {
       scheduleGrid.innerHTML = '';
@@ -90,10 +127,18 @@ export function createRoomsPage({
     scheduleGrid.innerHTML = html;
   }
 
+  /**
+   * Hide the booking panel.
+   */
   function hideBookingPanel() {
     bookingPanel.classList.add('hidden');
   }
 
+  /**
+   * Open the booking panel for a room and load its schedule.
+   * @param {number} roomId Room identifier.
+   * @param {string} roomName Room display name.
+   */
   function openBookingPanel(roomId, roomName) {
     activeBookingRoomId = roomId;
     bookingRoomName.textContent = roomName;
@@ -184,6 +229,10 @@ export function createRoomsPage({
     await onBookingCreated();
   });
 
+  /**
+   * Render available room cards.
+   * @param {Array<{id: number, name: string, location: string}>} rooms Rooms list.
+   */
   function render(rooms) {
     roomsList.innerHTML = rooms.map((room) => {
       return `

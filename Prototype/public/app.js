@@ -4,6 +4,11 @@ import { createDashboardPage } from './js/dashboard-page.js';
 import { createRoomsPage } from './js/rooms-page.js';
 import { createEquipmentPage } from './js/equipment-page.js';
 
+/**
+ * Main frontend entrypoint.
+ * Coordinates auth flow, page navigation, API orchestration, and page module rendering.
+ */
+
 const authSection = document.getElementById('auth-section');
 const dashboardSection = document.getElementById('dashboard-section');
 const pageDashboard = document.getElementById('page-dashboard');
@@ -34,6 +39,10 @@ const scheduleGrid = document.getElementById('schedule-grid');
 
 const allowedPages = ['dashboard', 'rooms', 'equipment'];
 
+/**
+ * Resolve the active page from URL hash.
+ * @returns {'dashboard'|'rooms'|'equipment'}
+ */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
   return allowedPages.includes(hashPage) ? hashPage : 'dashboard';
@@ -54,11 +63,19 @@ tabs.forEach((tab) => {
   });
 });
 
+/**
+ * Clear authentication form error messages.
+ */
 function resetErrors() {
   showError(loginError, '');
   showError(registerError, '');
 }
 
+/**
+ * Switch the visible dashboard sub-page and optionally sync URL hash.
+ * @param {'dashboard'|'rooms'|'equipment'} page Target page.
+ * @param {{ updateHash?: boolean }} [options={}] Options for hash behavior.
+ */
 function setActivePage(page, options = {}) {
   const updateHash = options.updateHash !== false;
   const nextPage = allowedPages.includes(page) ? page : 'dashboard';
@@ -84,6 +101,10 @@ function setActivePage(page, options = {}) {
   }
 }
 
+/**
+ * Cancel an existing booking for the current user.
+ * @param {number} bookingId Booking identifier.
+ */
 async function cancelBooking(bookingId) {
   if (!confirm('Are you sure you want to cancel this booking?')) return;
 
@@ -101,6 +122,10 @@ async function cancelBooking(bookingId) {
   await refreshDashboard(bookingFilter.value);
 }
 
+/**
+ * Cancel an existing equipment loan for the current user.
+ * @param {number} loanId Loan identifier.
+ */
 async function cancelLoan(loanId) {
   if (!confirm('Are you sure you want to cancel this loan?')) return;
 
@@ -118,6 +143,11 @@ async function cancelLoan(loanId) {
   await refreshDashboard(bookingFilter.value);
 }
 
+/**
+ * Trigger an equipment borrow request for the selected item.
+ * @param {number} equipmentId Equipment identifier.
+ * @param {string} equipmentName Equipment display name.
+ */
 async function borrowEquipment(equipmentId, equipmentName) {
   const days = prompt(`How many days do you need ${equipmentName}?`);
   if (!days) return;
@@ -166,6 +196,10 @@ const equipmentPage = createEquipmentPage({
   onBorrow: borrowEquipment
 });
 
+/**
+ * Refresh profile-dependent page state and render all page modules.
+ * @param {'active'|'all'} [statusFilter='active'] Request filter for dashboard cards.
+ */
 async function refreshDashboard(statusFilter = 'active') {
   const profile = await requestJson('/api/profile');
   if (!profile.authenticated) {

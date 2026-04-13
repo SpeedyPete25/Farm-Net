@@ -1,3 +1,17 @@
+/**
+ * Dashboard page module.
+ * Renders current user's bookings/loans and handles cancellation actions.
+ */
+
+/**
+ * Build the dashboard page controller.
+ * @param {Object} deps Dependency bag.
+ * @param {HTMLElement} deps.requestsList Container for bookings/loans cards.
+ * @param {(duration: number|string) => string} deps.formatDuration Duration formatter.
+ * @param {(bookingId: number) => Promise<void>} deps.onCancelBooking Cancel booking callback.
+ * @param {(loanId: number) => Promise<void>} deps.onCancelLoan Cancel loan callback.
+ * @returns {{ render: (requests: any) => void }} Dashboard page API.
+ */
 export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelLoan }) {
   requestsList.addEventListener('click', async (event) => {
     const cancelBookingBtn = event.target.closest('[data-action="cancel-booking"]');
@@ -18,6 +32,10 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
     }
   });
 
+  /**
+   * Render bookings and loans cards for the dashboard page.
+   * @param {{ bookings: any[], loans: any[] }} requests Request data from the API.
+   */
   function render(requests) {
     requestsList.innerHTML = `
       <div class="request-group">

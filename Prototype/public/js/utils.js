@@ -1,7 +1,21 @@
+/**
+ * Shared UI and date/time helper utilities.
+ */
+
+/**
+ * Show an inline error or validation message.
+ * @param {HTMLElement} element Target element for the message.
+ * @param {string} message Message to display.
+ */
 export function showError(element, message) {
   element.textContent = message;
 }
 
+/**
+ * Format a duration in hours into a user-friendly label.
+ * @param {number|string} duration Duration value in hours.
+ * @returns {string} Human-readable duration string.
+ */
 export function formatDuration(duration) {
   const value = Number(duration);
   if (!Number.isFinite(value)) return `${duration}h`;
@@ -10,10 +24,18 @@ export function formatDuration(duration) {
   return `${minutes} min`;
 }
 
+/**
+ * Return today's date as YYYY-MM-DD.
+ * @returns {string}
+ */
 export function getTodayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * Compute the next quarter-hour time in HH:MM.
+ * @returns {string}
+ */
 export function getNextQuarterTime() {
   const now = new Date();
   const nextQuarter = Math.ceil(now.getMinutes() / 15) * 15;
