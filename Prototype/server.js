@@ -73,7 +73,8 @@ async function initDatabase() {
   await run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
-    passwordHash TEXT NOT NULL
+    passwordHash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user'
   )`);
 
   // Rename username column to email if it exists
@@ -81,6 +82,12 @@ async function initDatabase() {
   const hasUsernameColumn = columns.some(col => col.name === 'username');
   if (hasUsernameColumn) {
     await run(`ALTER TABLE users RENAME COLUMN username TO email`);
+  }
+
+  // Add role column if it doesn't exist
+  const hasRoleColumn = columns.some(col => col.name === 'role');
+  if (!hasRoleColumn) {
+    await run(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS rooms (
@@ -168,6 +175,17 @@ function requireLogin(req, res, next) {
   next();
 }
 
+// Middleware helper: only allow admin users to access admin routes.
+function requireAdmin(req, res, next) {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+  next();
+}
+
 /**
  * Log an activity event to the activity history.
  * @param {number} userId User ID performing the action
@@ -234,7 +252,8 @@ app.post('/api/login', async (req, res) => {
 
   req.session.userId = user.id;
   req.session.email = user.email;
-  res.json({ message: 'Login successful.', email: user.email });
+  req.session.role = user.role;
+  res.json({ message: 'Login successful.', email: user.email, role: user.role });
 });
 
 // Logout endpoint clears the current session.
@@ -250,7 +269,7 @@ app.get('/api/profile', (req, res) => {
   if (!req.session.userId) {
     return res.json({ authenticated: false });
   }
-  res.json({ authenticated: true, email: req.session.email });
+  res.json({ authenticated: true, email: req.session.email, role: req.session.role });
 });
 
 // Return available rooms and equipment for the dashboard.
