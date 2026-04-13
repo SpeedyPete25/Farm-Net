@@ -1,6 +1,12 @@
 // Frontend element bindings for the lab booking app.
 const authSection = document.getElementById('auth-section');
 const dashboardSection = document.getElementById('dashboard-section');
+const pageDashboard = document.getElementById('page-dashboard');
+const pageRooms = document.getElementById('page-rooms');
+const pageEquipment = document.getElementById('page-equipment');
+const navDashboard = document.getElementById('nav-dashboard');
+const navRooms = document.getElementById('nav-rooms');
+const navEquipment = document.getElementById('nav-equipment');
 const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
@@ -21,6 +27,14 @@ const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
 const scheduleGrid = document.getElementById('schedule-grid');
 let activeBookingRoomId = null;
+const allowedPages = ['dashboard', 'rooms', 'equipment'];
+
+function getPageFromHash() {
+  const hashPage = window.location.hash.replace('#', '').trim();
+  return allowedPages.includes(hashPage) ? hashPage : 'dashboard';
+}
+
+let activePage = getPageFromHash();
 
 const tabs = document.querySelectorAll('.tab-button');
 const panels = document.querySelectorAll('.tab-panel');
@@ -110,18 +124,45 @@ function resetErrors() {
   showError(registerError, '');
 }
 
+function setActivePage(page, options = {}) {
+  const updateHash = options.updateHash !== false;
+  const nextPage = allowedPages.includes(page) ? page : 'dashboard';
+  activePage = nextPage;
+
+  pageDashboard.classList.toggle('hidden', nextPage !== 'dashboard');
+  pageRooms.classList.toggle('hidden', nextPage !== 'rooms');
+  pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
+
+  navDashboard.classList.toggle('active', nextPage === 'dashboard');
+  navRooms.classList.toggle('active', nextPage === 'rooms');
+  navEquipment.classList.toggle('active', nextPage === 'equipment');
+
+  if (nextPage !== 'rooms') {
+    bookingPanel.classList.add('hidden');
+  }
+
+  if (updateHash) {
+    const targetHash = `#${nextPage}`;
+    if (window.location.hash !== targetHash) {
+      window.location.hash = targetHash;
+    }
+  }
+}
+
 async function refreshDashboard(statusFilter = 'active') {
   const profile = await requestJson('/api/profile');
   if (!profile.authenticated) {
     authSection.classList.remove('hidden');
     dashboardSection.classList.add('hidden');
     userStatus.textContent = '';
+    setActivePage('dashboard', { updateHash: false });
     return;
   }
 
   authSection.classList.add('hidden');
   dashboardSection.classList.remove('hidden');
   userStatus.textContent = `Signed in as ${profile.email}`;
+  setActivePage(activePage);
 
   const resources = await requestJson('/api/resources');
   const requests = await requestJson(`/api/my-requests?status=${statusFilter}`);
@@ -370,6 +411,7 @@ loginForm.addEventListener('submit', async (event) => {
     showError(loginError, result.error);
     return;
   }
+  setActivePage('dashboard');
   await refreshDashboard(bookingFilter.value);
 });
 
@@ -401,6 +443,25 @@ bookingFilter.addEventListener('change', async () => {
 logoutButton.addEventListener('click', async () => {
   await requestJson('/api/logout', { method: 'POST' });
   await refreshDashboard(bookingFilter.value);
+});
+
+navDashboard.addEventListener('click', () => {
+  setActivePage('dashboard');
+});
+
+navRooms.addEventListener('click', () => {
+  setActivePage('rooms');
+});
+
+navEquipment.addEventListener('click', () => {
+  setActivePage('equipment');
+});
+
+window.addEventListener('hashchange', () => {
+  const hashPage = getPageFromHash();
+  if (hashPage !== activePage) {
+    setActivePage(hashPage, { updateHash: false });
+  }
 });
 
 window.bookRoom = bookRoom;

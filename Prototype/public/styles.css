@@ -150,8 +150,30 @@ button.danger {
 
 .toolbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 16px;
+}
+
+.page-nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.page-nav .secondary {
+  background: #e5e7eb;
+  color: var(--text);
+}
+
+.page-nav .secondary.active {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.page-panel {
+  margin-bottom: 0;
 }
 
 .request-group {
@@ -216,6 +238,11 @@ button.danger {
 @media (max-width: 860px) {
   .grid {
     grid-template-columns: 1fr;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 

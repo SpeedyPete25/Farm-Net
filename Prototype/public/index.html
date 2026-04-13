@@ -42,13 +42,30 @@
 
       <section id="dashboard-section" class="hidden">
         <div class="toolbar">
+          <div class="page-nav">
+            <button id="nav-dashboard" class="secondary active">Dashboard</button>
+            <button id="nav-rooms" class="secondary">Room Bookings</button>
+            <button id="nav-equipment" class="secondary">Equipment Loans</button>
+          </div>
           <button id="logout-button">Logout</button>
         </div>
 
-        <div class="grid">
-          <article class="card">
-            <h2>Available Rooms</h2>
-            <div id="rooms-list"></div>
+        <article id="page-dashboard" class="card page-panel">
+          <h2>My Bookings & Loans</h2>
+          <div class="filter-controls" style="margin-bottom: 16px;">
+            <label>Filter:
+              <select id="booking-filter">
+                <option value="active">Active bookings only</option>
+                <option value="all">All bookings</option>
+              </select>
+            </label>
+          </div>
+          <div id="requests-list"></div>
+        </article>
+
+        <article id="page-rooms" class="card page-panel hidden">
+          <h2>Room Bookings</h2>
+          <div id="rooms-list"></div>
           <!-- Hidden booking panel shown after selecting a room -->
           <div id="booking-panel" class="hidden" style="margin-top: 24px;">
             <h3>Book a room</h3>
@@ -66,25 +83,12 @@
               </div>
               <div id="booking-error" class="form-error"></div>
             </form>
-          </div>          </article>
-
-          <article class="card">
-            <h2>Available Equipment</h2>
-            <div id="equipment-list"></div>
-          </article>
-        </div>
-
-        <article class="card">
-          <h2>My Bookings & Loans</h2>
-          <div class="filter-controls" style="margin-bottom: 16px;">
-            <label>Filter: 
-              <select id="booking-filter">
-                <option value="active">Active bookings only</option>
-                <option value="all">All bookings</option>
-              </select>
-            </label>
           </div>
-          <div id="requests-list"></div>
+        </article>
+
+        <article id="page-equipment" class="card page-panel hidden">
+          <h2>Equipment Loans</h2>
+          <div id="equipment-list"></div>
         </article>
       </section>
     </main>
