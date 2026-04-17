@@ -542,6 +542,10 @@ app.patch('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Invalid role. Allowed roles are user and admin.' });
   }
 
+  const actingUserId = req.session.userId;
+  const actingUserRows = await query('SELECT email FROM users WHERE id = ?', [actingUserId]);
+  const actingUserEmail = actingUserRows[0]?.email || req.session.email || 'unknown';
+
   const targetUserRows = await query('SELECT id, email, role FROM users WHERE id = ?', [targetUserId]);
   if (targetUserRows.length === 0) {
     return res.status(404).json({ error: 'User not found.' });
@@ -563,6 +567,9 @@ app.patch('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
 
   await run('UPDATE users SET role = ? WHERE id = ?', [role, targetUserId]);
 
+  const description = `${actingUserEmail} changed role for ${targetUser.email} from ${targetUser.role} to ${role}`;
+  await logActivity(actingUserId, 'user_role_changed', 'user', targetUserId, description);
+
   // Keep session role in sync if an admin updates their own role.
   if (req.session.userId === targetUserId) {
     req.session.role = role;
@@ -576,6 +583,29 @@ app.patch('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
       role
     }
   });
+});
+
+// Return recent admin audit log entries.
+app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
+  const entries = await query(
+    `SELECT
+       ah.id,
+       ah.eventType,
+       ah.resourceType,
+       ah.resourceId,
+       ah.description,
+       ah.timestamp,
+       actor.email AS actorEmail,
+       target.email AS targetEmail
+     FROM activity_history ah
+     JOIN users actor ON actor.id = ah.userId
+     LEFT JOIN users target ON target.id = ah.resourceId
+     WHERE ah.resourceType = 'user'
+     ORDER BY ah.timestamp DESC, ah.id DESC
+     LIMIT 100`
+  );
+
+  res.json({ entries });
 });
 
 // Serve the frontend application for any unmatched route.

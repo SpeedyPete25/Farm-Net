@@ -11,11 +11,12 @@
  * Create admin page renderer and actions.
  * @param {{
  *   usersList: HTMLElement,
+ *   auditLogList: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>
  * }} deps
  */
 export function createAdminPage(deps) {
-  const { usersList, requestJson } = deps;
+  const { usersList, auditLogList, requestJson } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -110,18 +111,62 @@ export function createAdminPage(deps) {
   }
 
   /**
+   * Render audit log entries.
+   * @param {Array<{ id: number, description: string, timestamp: string }>} entries
+   */
+  function renderAuditLog(entries) {
+    if (!entries || entries.length === 0) {
+      auditLogList.innerHTML = '<p>No audit log entries yet.</p>';
+      return;
+    }
+
+    const container = document.createElement('div');
+    container.className = 'audit-log-list';
+
+    entries.forEach((entry) => {
+      const item = document.createElement('div');
+      item.className = 'audit-log-item';
+
+      const description = document.createElement('p');
+      description.textContent = entry.description;
+
+      const meta = document.createElement('p');
+      meta.className = 'audit-log-meta';
+      const when = new Date(entry.timestamp).toLocaleString();
+      meta.textContent = `Logged: ${when}`;
+
+      item.appendChild(description);
+      item.appendChild(meta);
+      container.appendChild(item);
+    });
+
+    auditLogList.innerHTML = '';
+    auditLogList.appendChild(container);
+  }
+
+  /**
    * Fetch users and render table.
    */
   async function load() {
     usersList.innerHTML = '<p>Loading users...</p>';
-    const result = await requestJson('/api/admin/users');
+    auditLogList.innerHTML = '<p>Loading audit log...</p>';
 
-    if (result.error) {
-      usersList.innerHTML = `<p class="form-error">${result.error}</p>`;
+    const usersResult = await requestJson('/api/admin/users');
+    const auditResult = await requestJson('/api/admin/audit-log');
+
+    if (usersResult.error) {
+      usersList.innerHTML = `<p class="form-error">${usersResult.error}</p>`;
+      auditLogList.innerHTML = '';
       return;
     }
 
-    render(result.users || []);
+    if (auditResult.error) {
+      auditLogList.innerHTML = `<p class="form-error">${auditResult.error}</p>`;
+    } else {
+      renderAuditLog(auditResult.entries || []);
+    }
+
+    render(usersResult.users || []);
   }
 
   return {

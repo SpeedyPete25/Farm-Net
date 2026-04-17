@@ -24,6 +24,7 @@ const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
 const usersList = document.getElementById('users-list');
+const auditLogList = document.getElementById('audit-log-list');
 const requestsList = document.getElementById('requests-list');
 const bookingFilter = document.getElementById('booking-filter');
 const loginForm = document.getElementById('login-form');
@@ -217,6 +218,7 @@ const equipmentPage = createEquipmentPage({
 
 const adminPage = createAdminPage({
   usersList,
+  auditLogList,
   requestJson
 });
 

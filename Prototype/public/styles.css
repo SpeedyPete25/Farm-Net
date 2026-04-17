@@ -312,3 +312,25 @@ button.danger {
   border-radius: 8px;
   background: #fff;
 }
+
+.audit-log-list {
+  display: grid;
+  gap: 10px;
+}
+
+.audit-log-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fcfdff;
+  padding: 12px;
+}
+
+.audit-log-item p {
+  margin: 0;
+}
+
+.audit-log-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
