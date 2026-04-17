@@ -151,8 +151,14 @@ export function createAdminPage(deps) {
     usersList.innerHTML = '<p>Loading users...</p>';
     auditLogList.innerHTML = '<p>Loading audit log...</p>';
 
-    const usersResult = await requestJson('/api/admin/users');
-    const auditResult = await requestJson('/api/admin/audit-log');
+    let usersResult;
+    try {
+      usersResult = await requestJson('/api/admin/users');
+    } catch (err) {
+      usersList.innerHTML = '<p class="form-error">Failed to load users.</p>';
+      auditLogList.innerHTML = '<p class="form-error">Audit log unavailable.</p>';
+      return;
+    }
 
     if (usersResult.error) {
       usersList.innerHTML = `<p class="form-error">${usersResult.error}</p>`;
@@ -160,13 +166,18 @@ export function createAdminPage(deps) {
       return;
     }
 
-    if (auditResult.error) {
-      auditLogList.innerHTML = `<p class="form-error">${auditResult.error}</p>`;
-    } else {
-      renderAuditLog(auditResult.entries || []);
-    }
-
     render(usersResult.users || []);
+
+    try {
+      const auditResult = await requestJson('/api/admin/audit-log');
+      if (auditResult.error) {
+        auditLogList.innerHTML = `<p class="form-error">${auditResult.error}</p>`;
+      } else {
+        renderAuditLog(auditResult.entries || []);
+      }
+    } catch (err) {
+      auditLogList.innerHTML = '<p class="form-error">Audit log unavailable.</p>';
+    }
   }
 
   return {

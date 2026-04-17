@@ -48,14 +48,11 @@ let isAdminUser = false;
 
 /**
  * Resolve the active page from URL hash.
- * @returns {'dashboard'|'rooms'|'equipment'}
+ * @returns {'dashboard'|'rooms'|'equipment'|'admin'}
  */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
   if (!allPages.includes(hashPage)) {
-    return 'dashboard';
-  }
-  if (hashPage === 'admin' && !isAdminUser) {
     return 'dashboard';
   }
   return hashPage;
