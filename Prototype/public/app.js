@@ -3,6 +3,7 @@ import { showError, formatDuration, getTodayDateString, getNextQuarterTime } fro
 import { createDashboardPage } from './js/dashboard-page.js';
 import { createRoomsPage } from './js/rooms-page.js';
 import { createEquipmentPage } from './js/equipment-page.js';
+import { createAdminPage } from './js/admin-page.js';
 
 /**
  * Main frontend entrypoint.
@@ -14,12 +15,15 @@ const dashboardSection = document.getElementById('dashboard-section');
 const pageDashboard = document.getElementById('page-dashboard');
 const pageRooms = document.getElementById('page-rooms');
 const pageEquipment = document.getElementById('page-equipment');
+const pageAdmin = document.getElementById('page-admin');
 const navDashboard = document.getElementById('nav-dashboard');
 const navRooms = document.getElementById('nav-rooms');
 const navEquipment = document.getElementById('nav-equipment');
+const navAdmin = document.getElementById('nav-admin');
 const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
+const usersList = document.getElementById('users-list');
 const requestsList = document.getElementById('requests-list');
 const bookingFilter = document.getElementById('booking-filter');
 const loginForm = document.getElementById('login-form');
@@ -37,7 +41,9 @@ const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
 const scheduleGrid = document.getElementById('schedule-grid');
 
-const allowedPages = ['dashboard', 'rooms', 'equipment'];
+const allPages = ['dashboard', 'rooms', 'equipment', 'admin'];
+
+let isAdminUser = false;
 
 /**
  * Resolve the active page from URL hash.
@@ -45,7 +51,13 @@ const allowedPages = ['dashboard', 'rooms', 'equipment'];
  */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
-  return allowedPages.includes(hashPage) ? hashPage : 'dashboard';
+  if (!allPages.includes(hashPage)) {
+    return 'dashboard';
+  }
+  if (hashPage === 'admin' && !isAdminUser) {
+    return 'dashboard';
+  }
+  return hashPage;
 }
 
 let activePage = getPageFromHash();
@@ -78,19 +90,26 @@ function resetErrors() {
  */
 function setActivePage(page, options = {}) {
   const updateHash = options.updateHash !== false;
-  const nextPage = allowedPages.includes(page) ? page : 'dashboard';
+  const requestedPage = allPages.includes(page) ? page : 'dashboard';
+  const nextPage = requestedPage === 'admin' && !isAdminUser ? 'dashboard' : requestedPage;
   activePage = nextPage;
 
   pageDashboard.classList.toggle('hidden', nextPage !== 'dashboard');
   pageRooms.classList.toggle('hidden', nextPage !== 'rooms');
   pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
+  pageAdmin.classList.toggle('hidden', nextPage !== 'admin');
 
   navDashboard.classList.toggle('active', nextPage === 'dashboard');
   navRooms.classList.toggle('active', nextPage === 'rooms');
   navEquipment.classList.toggle('active', nextPage === 'equipment');
+  navAdmin.classList.toggle('active', nextPage === 'admin');
 
   if (nextPage !== 'rooms') {
     roomsPage.hideBookingPanel();
+  }
+
+  if (nextPage === 'admin' && isAdminUser) {
+    adminPage.load();
   }
 
   if (updateHash) {
@@ -196,6 +215,11 @@ const equipmentPage = createEquipmentPage({
   onBorrow: borrowEquipment
 });
 
+const adminPage = createAdminPage({
+  usersList,
+  requestJson
+});
+
 /**
  * Refresh profile-dependent page state and render all page modules.
  * @param {'active'|'all'} [statusFilter='active'] Request filter for dashboard cards.
@@ -203,6 +227,8 @@ const equipmentPage = createEquipmentPage({
 async function refreshDashboard(statusFilter = 'active') {
   const profile = await requestJson('/api/profile');
   if (!profile.authenticated) {
+    isAdminUser = false;
+    navAdmin.classList.add('hidden');
     authSection.classList.remove('hidden');
     dashboardSection.classList.add('hidden');
     userStatus.textContent = '';
@@ -212,7 +238,17 @@ async function refreshDashboard(statusFilter = 'active') {
 
   authSection.classList.add('hidden');
   dashboardSection.classList.remove('hidden');
-  userStatus.textContent = `Signed in as ${profile.email}`;
+  isAdminUser = profile.role === 'admin';
+  navAdmin.classList.toggle('hidden', !isAdminUser);
+
+  userStatus.textContent = isAdminUser
+    ? `Signed in as ${profile.email} (admin)`
+    : `Signed in as ${profile.email}`;
+
+  if (!isAdminUser && activePage === 'admin') {
+    activePage = 'dashboard';
+  }
+
   setActivePage(activePage);
 
   const resources = await requestJson('/api/resources');
@@ -273,6 +309,8 @@ bookingFilter.addEventListener('change', async () => {
 
 logoutButton.addEventListener('click', async () => {
   await requestJson('/api/logout', { method: 'POST' });
+  isAdminUser = false;
+  navAdmin.classList.add('hidden');
   await refreshDashboard(bookingFilter.value);
 });
 
@@ -286,6 +324,14 @@ navRooms.addEventListener('click', () => {
 
 navEquipment.addEventListener('click', () => {
   setActivePage('equipment');
+});
+
+navAdmin.addEventListener('click', () => {
+  if (!isAdminUser) {
+    setActivePage('dashboard');
+    return;
+  }
+  setActivePage('admin');
 });
 
 window.addEventListener('hashchange', () => {

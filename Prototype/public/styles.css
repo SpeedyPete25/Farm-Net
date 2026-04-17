@@ -287,3 +287,28 @@ button.danger {
   color: #991b1b;
   cursor: not-allowed;
 }
+
+.admin-users-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+.admin-users-table th,
+.admin-users-table td {
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 10px 12px;
+}
+
+.admin-users-table th {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.admin-role-select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}

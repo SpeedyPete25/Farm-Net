@@ -520,6 +520,64 @@ app.get('/api/rooms/:roomId/schedule', requireLogin, async (req, res) => {
   res.json(bookings);
 });
 
+// Return all users for admin role management.
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  const users = await query(
+    'SELECT id, email, role FROM users ORDER BY email ASC'
+  );
+  res.json({ users });
+});
+
+// Update a user's role. Admins can promote/demote other users.
+app.patch('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
+  const targetUserId = Number(req.params.id);
+  const { role } = req.body;
+  const allowedRoles = ['user', 'admin'];
+
+  if (!Number.isFinite(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ error: 'Invalid user ID.' });
+  }
+
+  if (!allowedRoles.includes(role)) {
+    return res.status(400).json({ error: 'Invalid role. Allowed roles are user and admin.' });
+  }
+
+  const targetUserRows = await query('SELECT id, email, role FROM users WHERE id = ?', [targetUserId]);
+  if (targetUserRows.length === 0) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  const targetUser = targetUserRows[0];
+  if (targetUser.role === role) {
+    return res.json({ message: 'Role already set.', user: targetUser });
+  }
+
+  // Prevent removing admin access from the last admin account.
+  if (targetUser.role === 'admin' && role !== 'admin') {
+    const adminCountRows = await query('SELECT COUNT(*) AS count FROM users WHERE role = ?', ['admin']);
+    const adminCount = Number(adminCountRows[0]?.count || 0);
+    if (adminCount <= 1) {
+      return res.status(400).json({ error: 'Cannot demote the last admin user.' });
+    }
+  }
+
+  await run('UPDATE users SET role = ? WHERE id = ?', [role, targetUserId]);
+
+  // Keep session role in sync if an admin updates their own role.
+  if (req.session.userId === targetUserId) {
+    req.session.role = role;
+  }
+
+  res.json({
+    message: `Role updated to ${role}.`,
+    user: {
+      id: targetUser.id,
+      email: targetUser.email,
+      role
+    }
+  });
+});
+
 // Serve the frontend application for any unmatched route.
 // Serve the frontend application for any route not handled by the API.
 app.get('*', (req, res) => {

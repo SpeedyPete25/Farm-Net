@@ -34,6 +34,7 @@ npm start
 - Review your active bookings and loans.
 - Cancel your own upcoming room bookings.
 - View historical and cancelled bookings with status labels.
+- Admin-only user management page to list users and change roles.
 
 ## Architecture
 
