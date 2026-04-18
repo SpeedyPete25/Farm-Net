@@ -47,6 +47,7 @@
             <button id="nav-rooms" class="secondary">Room Bookings</button>
             <button id="nav-equipment" class="secondary">Equipment Loans</button>
             <button id="nav-admin" class="secondary hidden">Admin Users</button>
+            <button id="nav-room-management" class="secondary hidden">Room Management</button>
           </div>
           <button id="logout-button">Logout</button>
         </div>
@@ -98,6 +99,21 @@
           <div id="users-list"></div>
           <h3 style="margin-top: 24px;">Audit Log</h3>
           <div id="audit-log-list"></div>
+        </article>
+
+        <article id="page-room-management" class="card page-panel hidden">
+          <h2>Room Management</h2>
+          <p>Add new rooms or remove existing rooms.</p>
+
+          <form id="room-management-form" class="room-management-form">
+            <label>Room Name<input type="text" id="room-name" required /></label>
+            <label>Location<input type="text" id="room-location" required /></label>
+            <button type="submit">Add room</button>
+            <div id="room-management-error" class="form-error"></div>
+          </form>
+
+          <h3 style="margin-top: 24px;">Existing Rooms</h3>
+          <div id="room-management-list"></div>
         </article>
       </section>
     </main>

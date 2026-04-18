@@ -528,6 +528,73 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
   res.json({ users });
 });
 
+// Return all rooms for admin room management.
+app.get('/api/admin/rooms', requireAdmin, async (req, res) => {
+  const rooms = await query('SELECT id, name, location FROM rooms ORDER BY name ASC');
+  res.json({ rooms });
+});
+
+// Add a new room. Admin only.
+app.post('/api/admin/rooms', requireAdmin, async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const location = String(req.body?.location || '').trim();
+
+  if (!name || !location) {
+    return res.status(400).json({ error: 'Room name and location are required.' });
+  }
+
+  const duplicate = await query(
+    'SELECT id FROM rooms WHERE LOWER(name) = LOWER(?) AND LOWER(location) = LOWER(?) LIMIT 1',
+    [name, location]
+  );
+  if (duplicate.length > 0) {
+    return res.status(400).json({ error: 'A room with this name and location already exists.' });
+  }
+
+  const result = await run('INSERT INTO rooms (name, location) VALUES (?, ?)', [name, location]);
+  const description = `${req.session.email} added room ${name} (${location})`;
+  await logActivity(req.session.userId, 'room_added', 'room', result.lastID, description);
+
+  res.json({ message: 'Room added successfully.' });
+});
+
+// Remove a room. Admin only.
+app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
+  const roomId = Number(req.params.id);
+  if (!Number.isFinite(roomId) || roomId <= 0) {
+    return res.status(400).json({ error: 'Invalid room ID.' });
+  }
+
+  const roomRows = await query('SELECT id, name, location FROM rooms WHERE id = ?', [roomId]);
+  if (roomRows.length === 0) {
+    return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  const room = roomRows[0];
+  const today = new Date().toISOString().slice(0, 10);
+  const nowTime = new Date().toTimeString().slice(0, 5);
+
+  const futureActiveBookings = await query(
+    `SELECT id FROM bookings
+     WHERE roomId = ?
+       AND status = 'active'
+       AND (date > ? OR (date = ? AND startTime > ?))
+     LIMIT 1`,
+    [roomId, today, today, nowTime]
+  );
+
+  if (futureActiveBookings.length > 0) {
+    return res.status(400).json({ error: 'Cannot remove a room that has future active bookings.' });
+  }
+
+  await run('DELETE FROM rooms WHERE id = ?', [roomId]);
+
+  const description = `${req.session.email} removed room ${room.name} (${room.location})`;
+  await logActivity(req.session.userId, 'room_removed', 'room', roomId, description);
+
+  res.json({ message: 'Room removed successfully.' });
+});
+
 // Update a user's role. Admins can promote/demote other users.
 app.patch('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
   const targetUserId = Number(req.params.id);

@@ -4,6 +4,7 @@ import { createDashboardPage } from './js/dashboard-page.js';
 import { createRoomsPage } from './js/rooms-page.js';
 import { createEquipmentPage } from './js/equipment-page.js';
 import { createAdminPage } from './js/admin-page.js';
+import { createRoomManagementPage } from './js/room-management-page.js';
 
 /**
  * Main frontend entrypoint.
@@ -16,15 +17,22 @@ const pageDashboard = document.getElementById('page-dashboard');
 const pageRooms = document.getElementById('page-rooms');
 const pageEquipment = document.getElementById('page-equipment');
 const pageAdmin = document.getElementById('page-admin');
+const pageRoomManagement = document.getElementById('page-room-management');
 const navDashboard = document.getElementById('nav-dashboard');
 const navRooms = document.getElementById('nav-rooms');
 const navEquipment = document.getElementById('nav-equipment');
 const navAdmin = document.getElementById('nav-admin');
+const navRoomManagement = document.getElementById('nav-room-management');
 const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
 const usersList = document.getElementById('users-list');
 const auditLogList = document.getElementById('audit-log-list');
+const roomManagementList = document.getElementById('room-management-list');
+const roomManagementForm = document.getElementById('room-management-form');
+const roomNameInput = document.getElementById('room-name');
+const roomLocationInput = document.getElementById('room-location');
+const roomManagementError = document.getElementById('room-management-error');
 const requestsList = document.getElementById('requests-list');
 const bookingFilter = document.getElementById('booking-filter');
 const loginForm = document.getElementById('login-form');
@@ -42,13 +50,13 @@ const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
 const scheduleGrid = document.getElementById('schedule-grid');
 
-const allPages = ['dashboard', 'rooms', 'equipment', 'admin'];
+const allPages = ['dashboard', 'rooms', 'equipment', 'admin', 'room-management'];
 
 let isAdminUser = false;
 
 /**
  * Resolve the active page from URL hash.
- * @returns {'dashboard'|'rooms'|'equipment'|'admin'}
+ * @returns {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'}
  */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
@@ -83,24 +91,27 @@ function resetErrors() {
 
 /**
  * Switch the visible dashboard sub-page and optionally sync URL hash.
- * @param {'dashboard'|'rooms'|'equipment'} page Target page.
+ * @param {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'} page Target page.
  * @param {{ updateHash?: boolean }} [options={}] Options for hash behavior.
  */
 function setActivePage(page, options = {}) {
   const updateHash = options.updateHash !== false;
   const requestedPage = allPages.includes(page) ? page : 'dashboard';
-  const nextPage = requestedPage === 'admin' && !isAdminUser ? 'dashboard' : requestedPage;
+  const adminOnlyPages = ['admin', 'room-management'];
+  const nextPage = adminOnlyPages.includes(requestedPage) && !isAdminUser ? 'dashboard' : requestedPage;
   activePage = nextPage;
 
   pageDashboard.classList.toggle('hidden', nextPage !== 'dashboard');
   pageRooms.classList.toggle('hidden', nextPage !== 'rooms');
   pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
   pageAdmin.classList.toggle('hidden', nextPage !== 'admin');
+  pageRoomManagement.classList.toggle('hidden', nextPage !== 'room-management');
 
   navDashboard.classList.toggle('active', nextPage === 'dashboard');
   navRooms.classList.toggle('active', nextPage === 'rooms');
   navEquipment.classList.toggle('active', nextPage === 'equipment');
   navAdmin.classList.toggle('active', nextPage === 'admin');
+  navRoomManagement.classList.toggle('active', nextPage === 'room-management');
 
   if (nextPage !== 'rooms') {
     roomsPage.hideBookingPanel();
@@ -108,6 +119,10 @@ function setActivePage(page, options = {}) {
 
   if (nextPage === 'admin' && isAdminUser) {
     adminPage.load();
+  }
+
+  if (nextPage === 'room-management' && isAdminUser) {
+    roomManagementPage.load();
   }
 
   if (updateHash) {
@@ -219,6 +234,16 @@ const adminPage = createAdminPage({
   requestJson
 });
 
+const roomManagementPage = createRoomManagementPage({
+  roomManagementList,
+  roomManagementForm,
+  roomNameInput,
+  roomLocationInput,
+  roomManagementError,
+  requestJson,
+  onRoomsChanged: async () => refreshDashboard(bookingFilter.value)
+});
+
 /**
  * Refresh profile-dependent page state and render all page modules.
  * @param {'active'|'all'} [statusFilter='active'] Request filter for dashboard cards.
@@ -228,6 +253,7 @@ async function refreshDashboard(statusFilter = 'active') {
   if (!profile.authenticated) {
     isAdminUser = false;
     navAdmin.classList.add('hidden');
+    navRoomManagement.classList.add('hidden');
     authSection.classList.remove('hidden');
     dashboardSection.classList.add('hidden');
     userStatus.textContent = '';
@@ -239,12 +265,13 @@ async function refreshDashboard(statusFilter = 'active') {
   dashboardSection.classList.remove('hidden');
   isAdminUser = profile.role === 'admin';
   navAdmin.classList.toggle('hidden', !isAdminUser);
+  navRoomManagement.classList.toggle('hidden', !isAdminUser);
 
   userStatus.textContent = isAdminUser
     ? `Signed in as ${profile.email} (admin)`
     : `Signed in as ${profile.email}`;
 
-  if (!isAdminUser && activePage === 'admin') {
+  if (!isAdminUser && ['admin', 'room-management'].includes(activePage)) {
     activePage = 'dashboard';
   }
 
@@ -310,6 +337,7 @@ logoutButton.addEventListener('click', async () => {
   await requestJson('/api/logout', { method: 'POST' });
   isAdminUser = false;
   navAdmin.classList.add('hidden');
+  navRoomManagement.classList.add('hidden');
   await refreshDashboard(bookingFilter.value);
 });
 
@@ -331,6 +359,14 @@ navAdmin.addEventListener('click', () => {
     return;
   }
   setActivePage('admin');
+});
+
+navRoomManagement.addEventListener('click', () => {
+  if (!isAdminUser) {
+    setActivePage('dashboard');
+    return;
+  }
+  setActivePage('room-management');
 });
 
 window.addEventListener('hashchange', () => {
