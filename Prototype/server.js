@@ -543,12 +543,12 @@ app.post('/api/admin/rooms', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Room name and location are required.' });
   }
 
-  const duplicate = await query(
-    'SELECT id FROM rooms WHERE LOWER(name) = LOWER(?) AND LOWER(location) = LOWER(?) LIMIT 1',
-    [name, location]
+  const duplicateLocation = await query(
+    'SELECT id FROM rooms WHERE LOWER(location) = LOWER(?) LIMIT 1',
+    [location]
   );
-  if (duplicate.length > 0) {
-    return res.status(400).json({ error: 'A room with this name and location already exists.' });
+  if (duplicateLocation.length > 0) {
+    return res.status(400).json({ error: 'A room already exists at this location.' });
   }
 
   const result = await run('INSERT INTO rooms (name, location) VALUES (?, ?)', [name, location]);
