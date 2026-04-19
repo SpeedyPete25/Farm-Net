@@ -48,6 +48,7 @@
             <button id="nav-equipment" class="secondary">Equipment Loans</button>
             <button id="nav-admin" class="secondary hidden">Admin Users</button>
             <button id="nav-room-management" class="secondary hidden">Room Management</button>
+            <button id="nav-equipment-management" class="secondary hidden">Equipment Management</button>
           </div>
           <button id="logout-button">Logout</button>
         </div>
@@ -114,6 +115,21 @@
 
           <h3 style="margin-top: 24px;">Existing Rooms</h3>
           <div id="room-management-list"></div>
+        </article>
+
+        <article id="page-equipment-management" class="card page-panel hidden">
+          <h2>Equipment Management</h2>
+          <p>Add new equipment or remove existing equipment.</p>
+
+          <form id="equipment-management-form" class="room-management-form">
+            <label>Equipment Name<input type="text" id="equipment-name" required /></label>
+            <label>Quantity<input type="number" id="equipment-quantity" min="1" step="1" required /></label>
+            <button type="submit">Add equipment</button>
+            <div id="equipment-management-error" class="form-error"></div>
+          </form>
+
+          <h3 style="margin-top: 24px;">Existing Equipment</h3>
+          <div id="equipment-management-list"></div>
         </article>
       </section>
     </main>

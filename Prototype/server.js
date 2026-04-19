@@ -595,6 +595,71 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
   res.json({ message: 'Room removed successfully.' });
 });
 
+// Return all equipment for admin equipment management.
+app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
+  const equipment = await query('SELECT id, name, quantity FROM equipment ORDER BY name ASC');
+  res.json({ equipment });
+});
+
+// Add a new equipment item. Admin only.
+app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const quantity = Number(req.body?.quantity);
+
+  if (!name || !Number.isInteger(quantity) || quantity <= 0) {
+    return res.status(400).json({ error: 'Equipment name and a quantity greater than 0 are required.' });
+  }
+
+  const duplicateName = await query(
+    'SELECT id FROM equipment WHERE LOWER(name) = LOWER(?) LIMIT 1',
+    [name]
+  );
+  if (duplicateName.length > 0) {
+    return res.status(400).json({ error: 'Equipment with this name already exists.' });
+  }
+
+  const result = await run('INSERT INTO equipment (name, quantity) VALUES (?, ?)', [name, quantity]);
+  const description = `${req.session.email} added equipment ${name} (quantity: ${quantity})`;
+  await logActivity(req.session.userId, 'equipment_added', 'equipment', result.lastID, description);
+
+  res.json({ message: 'Equipment added successfully.' });
+});
+
+// Remove an equipment item. Admin only.
+app.delete('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
+  const equipmentId = Number(req.params.id);
+  if (!Number.isFinite(equipmentId) || equipmentId <= 0) {
+    return res.status(400).json({ error: 'Invalid equipment ID.' });
+  }
+
+  const equipmentRows = await query('SELECT id, name, quantity FROM equipment WHERE id = ?', [equipmentId]);
+  if (equipmentRows.length === 0) {
+    return res.status(404).json({ error: 'Equipment not found.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const activeLoans = await query(
+    `SELECT id FROM loans
+     WHERE equipmentId = ?
+       AND status = 'active'
+       AND returnDate >= ?
+     LIMIT 1`,
+    [equipmentId, today]
+  );
+
+  if (activeLoans.length > 0) {
+    return res.status(400).json({ error: 'Cannot remove equipment that has active loans.' });
+  }
+
+  await run('DELETE FROM equipment WHERE id = ?', [equipmentId]);
+
+  const equipment = equipmentRows[0];
+  const description = `${req.session.email} removed equipment ${equipment.name} (quantity: ${equipment.quantity})`;
+  await logActivity(req.session.userId, 'equipment_removed', 'equipment', equipmentId, description);
+
+  res.json({ message: 'Equipment removed successfully.' });
+});
+
 // Update a user's role. Admins can promote/demote other users.
 app.patch('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
   const targetUserId = Number(req.params.id);

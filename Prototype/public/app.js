@@ -5,6 +5,7 @@ import { createRoomsPage } from './js/rooms-page.js';
 import { createEquipmentPage } from './js/equipment-page.js';
 import { createAdminPage } from './js/admin-page.js';
 import { createRoomManagementPage } from './js/room-management-page.js';
+import { createEquipmentManagementPage } from './js/equipment-management-page.js';
 
 /**
  * Main frontend entrypoint.
@@ -18,11 +19,13 @@ const pageRooms = document.getElementById('page-rooms');
 const pageEquipment = document.getElementById('page-equipment');
 const pageAdmin = document.getElementById('page-admin');
 const pageRoomManagement = document.getElementById('page-room-management');
+const pageEquipmentManagement = document.getElementById('page-equipment-management');
 const navDashboard = document.getElementById('nav-dashboard');
 const navRooms = document.getElementById('nav-rooms');
 const navEquipment = document.getElementById('nav-equipment');
 const navAdmin = document.getElementById('nav-admin');
 const navRoomManagement = document.getElementById('nav-room-management');
+const navEquipmentManagement = document.getElementById('nav-equipment-management');
 const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
@@ -33,6 +36,11 @@ const roomManagementForm = document.getElementById('room-management-form');
 const roomNameInput = document.getElementById('room-name');
 const roomLocationInput = document.getElementById('room-location');
 const roomManagementError = document.getElementById('room-management-error');
+const equipmentManagementList = document.getElementById('equipment-management-list');
+const equipmentManagementForm = document.getElementById('equipment-management-form');
+const equipmentNameInput = document.getElementById('equipment-name');
+const equipmentQuantityInput = document.getElementById('equipment-quantity');
+const equipmentManagementError = document.getElementById('equipment-management-error');
 const requestsList = document.getElementById('requests-list');
 const bookingFilter = document.getElementById('booking-filter');
 const loginForm = document.getElementById('login-form');
@@ -50,13 +58,13 @@ const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
 const scheduleGrid = document.getElementById('schedule-grid');
 
-const allPages = ['dashboard', 'rooms', 'equipment', 'admin', 'room-management'];
+const allPages = ['dashboard', 'rooms', 'equipment', 'admin', 'room-management', 'equipment-management'];
 
 let isAdminUser = false;
 
 /**
  * Resolve the active page from URL hash.
- * @returns {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'}
+ * @returns {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'|'equipment-management'}
  */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
@@ -91,13 +99,13 @@ function resetErrors() {
 
 /**
  * Switch the visible dashboard sub-page and optionally sync URL hash.
- * @param {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'} page Target page.
+ * @param {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'|'equipment-management'} page Target page.
  * @param {{ updateHash?: boolean }} [options={}] Options for hash behavior.
  */
 function setActivePage(page, options = {}) {
   const updateHash = options.updateHash !== false;
   const requestedPage = allPages.includes(page) ? page : 'dashboard';
-  const adminOnlyPages = ['admin', 'room-management'];
+  const adminOnlyPages = ['admin', 'room-management', 'equipment-management'];
   const nextPage = adminOnlyPages.includes(requestedPage) && !isAdminUser ? 'dashboard' : requestedPage;
   activePage = nextPage;
 
@@ -106,12 +114,14 @@ function setActivePage(page, options = {}) {
   pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
   pageAdmin.classList.toggle('hidden', nextPage !== 'admin');
   pageRoomManagement.classList.toggle('hidden', nextPage !== 'room-management');
+  pageEquipmentManagement.classList.toggle('hidden', nextPage !== 'equipment-management');
 
   navDashboard.classList.toggle('active', nextPage === 'dashboard');
   navRooms.classList.toggle('active', nextPage === 'rooms');
   navEquipment.classList.toggle('active', nextPage === 'equipment');
   navAdmin.classList.toggle('active', nextPage === 'admin');
   navRoomManagement.classList.toggle('active', nextPage === 'room-management');
+  navEquipmentManagement.classList.toggle('active', nextPage === 'equipment-management');
 
   if (nextPage !== 'rooms') {
     roomsPage.hideBookingPanel();
@@ -123,6 +133,10 @@ function setActivePage(page, options = {}) {
 
   if (nextPage === 'room-management' && isAdminUser) {
     roomManagementPage.load();
+  }
+
+  if (nextPage === 'equipment-management' && isAdminUser) {
+    equipmentManagementPage.load();
   }
 
   if (updateHash) {
@@ -244,6 +258,16 @@ const roomManagementPage = createRoomManagementPage({
   onRoomsChanged: async () => refreshDashboard(bookingFilter.value)
 });
 
+const equipmentManagementPage = createEquipmentManagementPage({
+  equipmentManagementList,
+  equipmentManagementForm,
+  equipmentNameInput,
+  equipmentQuantityInput,
+  equipmentManagementError,
+  requestJson,
+  onEquipmentChanged: async () => refreshDashboard(bookingFilter.value)
+});
+
 /**
  * Refresh profile-dependent page state and render all page modules.
  * @param {'active'|'all'} [statusFilter='active'] Request filter for dashboard cards.
@@ -254,6 +278,7 @@ async function refreshDashboard(statusFilter = 'active') {
     isAdminUser = false;
     navAdmin.classList.add('hidden');
     navRoomManagement.classList.add('hidden');
+    navEquipmentManagement.classList.add('hidden');
     authSection.classList.remove('hidden');
     dashboardSection.classList.add('hidden');
     userStatus.textContent = '';
@@ -266,12 +291,13 @@ async function refreshDashboard(statusFilter = 'active') {
   isAdminUser = profile.role === 'admin';
   navAdmin.classList.toggle('hidden', !isAdminUser);
   navRoomManagement.classList.toggle('hidden', !isAdminUser);
+  navEquipmentManagement.classList.toggle('hidden', !isAdminUser);
 
   userStatus.textContent = isAdminUser
     ? `Signed in as ${profile.email} (admin)`
     : `Signed in as ${profile.email}`;
 
-  if (!isAdminUser && ['admin', 'room-management'].includes(activePage)) {
+  if (!isAdminUser && ['admin', 'room-management', 'equipment-management'].includes(activePage)) {
     activePage = 'dashboard';
   }
 
@@ -338,6 +364,7 @@ logoutButton.addEventListener('click', async () => {
   isAdminUser = false;
   navAdmin.classList.add('hidden');
   navRoomManagement.classList.add('hidden');
+  navEquipmentManagement.classList.add('hidden');
   await refreshDashboard(bookingFilter.value);
 });
 
@@ -367,6 +394,14 @@ navRoomManagement.addEventListener('click', () => {
     return;
   }
   setActivePage('room-management');
+});
+
+navEquipmentManagement.addEventListener('click', () => {
+  if (!isAdminUser) {
+    setActivePage('dashboard');
+    return;
+  }
+  setActivePage('equipment-management');
 });
 
 window.addEventListener('hashchange', () => {
