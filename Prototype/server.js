@@ -625,6 +625,61 @@ app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
   res.json({ message: 'Equipment added successfully.' });
 });
 
+// Update equipment quantity. Admin only.
+app.patch('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
+  const equipmentId = Number(req.params.id);
+  const quantity = Number(req.body?.quantity);
+
+  if (!Number.isFinite(equipmentId) || equipmentId <= 0) {
+    return res.status(400).json({ error: 'Invalid equipment ID.' });
+  }
+
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    return res.status(400).json({ error: 'Quantity must be a whole number greater than 0.' });
+  }
+
+  const equipmentRows = await query('SELECT id, name, quantity FROM equipment WHERE id = ?', [equipmentId]);
+  if (equipmentRows.length === 0) {
+    return res.status(404).json({ error: 'Equipment not found.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const activeLoanRows = await query(
+    `SELECT COUNT(*) AS count FROM loans
+     WHERE equipmentId = ?
+       AND status = 'active'
+       AND returnDate >= ?`,
+    [equipmentId, today]
+  );
+  const activeLoanCount = Number(activeLoanRows[0]?.count || 0);
+
+  if (quantity < activeLoanCount) {
+    return res.status(400).json({
+      error: `Quantity cannot be lower than active loans (${activeLoanCount}).`
+    });
+  }
+
+  const previousQuantity = Number(equipmentRows[0].quantity);
+  if (previousQuantity === quantity) {
+    return res.json({ message: 'Quantity already set.', equipment: equipmentRows[0] });
+  }
+
+  await run('UPDATE equipment SET quantity = ? WHERE id = ?', [quantity, equipmentId]);
+
+  const equipmentName = equipmentRows[0].name;
+  const description = `${req.session.email} updated equipment ${equipmentName} quantity from ${previousQuantity} to ${quantity}`;
+  await logActivity(req.session.userId, 'equipment_updated', 'equipment', equipmentId, description);
+
+  res.json({
+    message: 'Equipment quantity updated successfully.',
+    equipment: {
+      id: equipmentId,
+      name: equipmentName,
+      quantity
+    }
+  });
+});
+
 // Remove an equipment item. Admin only.
 app.delete('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
   const equipmentId = Number(req.params.id);

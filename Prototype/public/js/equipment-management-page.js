@@ -1,6 +1,6 @@
 /**
  * Admin equipment management page module.
- * Renders equipment list and supports add/remove operations.
+ * Renders equipment list and supports add/remove/update operations.
  */
 
 /**
@@ -40,7 +40,18 @@ export function createEquipmentManagementPage(deps) {
         <div class="item-row">
           <div>
             <strong>${item.name}</strong>
-            <p>Quantity: ${item.quantity}</p>
+            <p>
+              Quantity:
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value="${item.quantity}"
+                data-equipment-quantity-id="${item.id}"
+                style="width: 90px; margin: 0 8px;"
+              />
+              <button data-action="update-equipment" data-equipment-id="${item.id}">Update</button>
+            </p>
           </div>
           <button class="danger" data-action="remove-equipment" data-equipment-id="${item.id}">Remove</button>
         </div>
@@ -91,6 +102,35 @@ export function createEquipmentManagementPage(deps) {
   });
 
   equipmentManagementList.addEventListener('click', async (event) => {
+    const updateButton = event.target.closest('[data-action="update-equipment"]');
+    if (updateButton) {
+      const equipmentId = Number(updateButton.dataset.equipmentId);
+      if (!Number.isFinite(equipmentId)) return;
+
+      const quantityInput = equipmentManagementList.querySelector(`[data-equipment-quantity-id="${equipmentId}"]`);
+      const quantity = Number(quantityInput?.value);
+
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        equipmentManagementError.textContent = 'Quantity must be a whole number greater than 0.';
+        return;
+      }
+
+      const result = await requestJson(`/api/admin/equipment/${equipmentId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ quantity })
+      });
+
+      if (result.error) {
+        equipmentManagementError.textContent = result.error;
+        return;
+      }
+
+      equipmentManagementError.textContent = '';
+      await load();
+      await onEquipmentChanged();
+      return;
+    }
+
     const button = event.target.closest('[data-action="remove-equipment"]');
     if (!button) return;
 
