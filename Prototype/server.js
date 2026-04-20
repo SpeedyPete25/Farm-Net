@@ -408,6 +408,118 @@ app.post('/api/cancel-loan', requireLogin, async (req, res) => {
   res.json({ message: 'Loan cancelled successfully.' });
 });
 
+// Edit a room booking owned by the current user.
+app.post('/api/edit-booking', requireLogin, async (req, res) => {
+  const { bookingId, date, startTime, durationHours } = req.body;
+  if (!bookingId || !date || !startTime || durationHours == null) {
+    return res.status(400).json({ error: 'Booking ID, date, start time and duration are required.' });
+  }
+
+  const duration = Number(durationHours);
+  const timeMatch = /^[0-9]{2}:[0-9]{2}$/.test(startTime);
+  const minute = timeMatch ? Number(startTime.split(':')[1]) : null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'Date must be in YYYY-MM-DD format.' });
+  }
+  if (!timeMatch || minute % 15 !== 0) {
+    return res.status(400).json({ error: 'Start time must be in 15-minute increments.' });
+  }
+  if (!Number.isFinite(duration) || duration <= 0 || duration % 0.25 !== 0) {
+    return res.status(400).json({ error: 'Duration must be in 15-minute increments.' });
+  }
+
+  const existing = await query('SELECT * FROM bookings WHERE id = ? AND userId = ?', [bookingId, req.session.userId]);
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'Booking not found or not owned by user.' });
+  }
+
+  const booking = existing[0];
+  if (booking.status !== 'active') {
+    return res.status(400).json({ error: 'Only active bookings can be edited.' });
+  }
+
+  const requestedDateTime = new Date(`${date}T${startTime}:00`);
+  if (Number.isNaN(requestedDateTime.getTime()) || requestedDateTime <= new Date()) {
+    return res.status(400).json({ error: 'Booking must be in the future.' });
+  }
+
+  const existingBookings = await query(
+    'SELECT id, startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status = ? AND id != ?',
+    [booking.roomId, date, 'active', bookingId]
+  );
+
+  const requestedStart = (() => {
+    const [hours, minutes] = startTime.split(':').map(Number);
+    return hours * 60 + minutes;
+  })();
+  const requestedEnd = requestedStart + duration * 60;
+
+  const hasOverlap = existingBookings.some((item) => {
+    const [hours, minutes] = item.startTime.split(':').map(Number);
+    const existingStart = hours * 60 + minutes;
+    const existingDuration = Number(item.durationHours) || 0;
+    const existingEnd = existingStart + existingDuration * 60;
+    return requestedStart < existingEnd && existingStart < requestedEnd;
+  });
+
+  if (hasOverlap) {
+    return res.status(400).json({ error: 'Selected room is already booked during that time.' });
+  }
+
+  await run(
+    'UPDATE bookings SET date = ?, startTime = ?, durationHours = ? WHERE id = ?',
+    [date, startTime, duration, bookingId]
+  );
+
+  const description = `Updated booking to ${date} at ${startTime} for ${duration} hours`;
+  await logActivity(req.session.userId, 'booking_updated', 'booking', bookingId, description);
+
+  res.json({ message: 'Booking updated successfully.' });
+});
+
+// Edit an equipment loan return date owned by the current user.
+app.post('/api/edit-loan', requireLogin, async (req, res) => {
+  const { loanId, returnDate } = req.body;
+  if (!loanId || !returnDate) {
+    return res.status(400).json({ error: 'Loan ID and return date are required.' });
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(returnDate)) {
+    return res.status(400).json({ error: 'Return date must be in YYYY-MM-DD format.' });
+  }
+
+  const existing = await query('SELECT * FROM loans WHERE id = ? AND userId = ?', [loanId, req.session.userId]);
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'Loan not found or not owned by user.' });
+  }
+
+  const loan = existing[0];
+  if (loan.status !== 'active') {
+    return res.status(400).json({ error: 'Only active loans can be edited.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (loan.returnDate < today) {
+    return res.status(400).json({ error: 'Past loans cannot be edited.' });
+  }
+
+  if (returnDate < today) {
+    return res.status(400).json({ error: 'Return date must be today or later.' });
+  }
+
+  if (returnDate < loan.borrowDate) {
+    return res.status(400).json({ error: 'Return date cannot be before borrow date.' });
+  }
+
+  await run('UPDATE loans SET returnDate = ? WHERE id = ?', [returnDate, loanId]);
+
+  const description = `Updated loan return date to ${returnDate}`;
+  await logActivity(req.session.userId, 'loan_updated', 'loan', loanId, description);
+
+  res.json({ message: 'Loan updated successfully.' });
+});
+
 // Submit a room booking request.
 // Validates future time, 15-minute increments, and overlapping bookings.
 app.post('/api/book-room', requireLogin, async (req, res) => {

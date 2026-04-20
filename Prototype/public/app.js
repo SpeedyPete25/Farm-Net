@@ -190,6 +190,70 @@ async function cancelLoan(loanId) {
 }
 
 /**
+ * Edit an existing room booking for the current user.
+ * @param {{ id: number, date: string, startTime: string, durationHours: number|string }} booking Booking details.
+ */
+async function editBooking(booking) {
+  const date = prompt('Enter a new booking date (YYYY-MM-DD):', booking.date);
+  if (date === null) return;
+
+  const startTime = prompt('Enter a new start time (HH:MM):', booking.startTime);
+  if (startTime === null) return;
+
+  const durationInput = prompt('Enter duration in hours (e.g. 0.5, 1, 1.5):', String(booking.durationHours));
+  if (durationInput === null) return;
+
+  const durationHours = Number(durationInput);
+  if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours % 0.5 !== 0) {
+    alert('Duration must be a positive number in 30-minute increments.');
+    return;
+  }
+
+  const result = await requestJson('/api/edit-booking', {
+    method: 'POST',
+    body: JSON.stringify({
+      bookingId: booking.id,
+      date: date.trim(),
+      startTime: startTime.trim(),
+      durationHours
+    })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+}
+
+/**
+ * Edit an existing equipment loan return date for the current user.
+ * @param {{ id: number, borrowDate: string, returnDate: string }} loan Loan details.
+ */
+async function editLoan(loan) {
+  const returnDate = prompt('Enter a new return date (YYYY-MM-DD):', loan.returnDate);
+  if (returnDate === null) return;
+
+  const result = await requestJson('/api/edit-loan', {
+    method: 'POST',
+    body: JSON.stringify({
+      loanId: loan.id,
+      returnDate: returnDate.trim()
+    })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+}
+
+/**
  * Trigger an equipment borrow request for the selected item.
  * @param {number} equipmentId Equipment identifier.
  * @param {string} equipmentName Equipment display name.
@@ -216,7 +280,9 @@ const dashboardPage = createDashboardPage({
   requestsList,
   formatDuration,
   onCancelBooking: cancelBooking,
-  onCancelLoan: cancelLoan
+  onCancelLoan: cancelLoan,
+  onEditBooking: editBooking,
+  onEditLoan: editLoan
 });
 
 const roomsPage = createRoomsPage({

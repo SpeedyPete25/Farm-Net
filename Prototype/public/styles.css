@@ -235,6 +235,17 @@ button.danger {
   background: #dc2626;
 }
 
+.request-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.action-button {
+  padding: 4px 12px;
+  font-size: 0.9em;
+}
+
 @media (max-width: 860px) {
   .grid {
     grid-template-columns: 1fr;

@@ -10,15 +10,51 @@
  * @param {(duration: number|string) => string} deps.formatDuration Duration formatter.
  * @param {(bookingId: number) => Promise<void>} deps.onCancelBooking Cancel booking callback.
  * @param {(loanId: number) => Promise<void>} deps.onCancelLoan Cancel loan callback.
+ * @param {(booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>} deps.onEditBooking Edit booking callback.
+ * @param {(loan: { id: number, borrowDate: string, returnDate: string }) => Promise<void>} deps.onEditLoan Edit loan callback.
  * @returns {{ render: (requests: any) => void }} Dashboard page API.
  */
-export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelLoan }) {
+export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelLoan, onEditBooking, onEditLoan }) {
   requestsList.addEventListener('click', async (event) => {
+    const editBookingBtn = event.target.closest('[data-action="edit-booking"]');
+    if (editBookingBtn) {
+      const bookingId = Number(editBookingBtn.dataset.bookingId);
+      const date = editBookingBtn.dataset.bookingDate || '';
+      const startTime = editBookingBtn.dataset.bookingStartTime || '';
+      const durationHours = Number(editBookingBtn.dataset.bookingDurationHours);
+
+      if (Number.isFinite(bookingId)) {
+        await onEditBooking({
+          id: bookingId,
+          date,
+          startTime,
+          durationHours
+        });
+      }
+      return;
+    }
+
     const cancelBookingBtn = event.target.closest('[data-action="cancel-booking"]');
     if (cancelBookingBtn) {
       const bookingId = Number(cancelBookingBtn.dataset.bookingId);
       if (Number.isFinite(bookingId)) {
         await onCancelBooking(bookingId);
+      }
+      return;
+    }
+
+    const editLoanBtn = event.target.closest('[data-action="edit-loan"]');
+    if (editLoanBtn) {
+      const loanId = Number(editLoanBtn.dataset.loanId);
+      const borrowDate = editLoanBtn.dataset.loanBorrowDate || '';
+      const returnDate = editLoanBtn.dataset.loanReturnDate || '';
+
+      if (Number.isFinite(loanId)) {
+        await onEditLoan({
+          id: loanId,
+          borrowDate,
+          returnDate
+        });
       }
       return;
     }
@@ -59,7 +95,12 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
               <p>${booking.location}</p>
               <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
               ${statusLabel}
-              ${!isPast && !isCancelled ? `<button class="cancel-button" data-action="cancel-booking" data-booking-id="${booking.id}">Cancel</button>` : ''}
+              ${!isPast && !isCancelled ? `
+                <div class="request-actions">
+                  <button class="secondary action-button" data-action="edit-booking" data-booking-id="${booking.id}" data-booking-date="${booking.date}" data-booking-start-time="${booking.startTime}" data-booking-duration-hours="${booking.durationHours}">Edit</button>
+                  <button class="cancel-button" data-action="cancel-booking" data-booking-id="${booking.id}">Cancel</button>
+                </div>
+              ` : ''}
             </div>
           `;
           }).join('')}
@@ -86,7 +127,12 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
               <p>Borrowed: ${loan.borrowDate}</p>
               <p>Return by: ${loan.returnDate}</p>
               ${statusLabel}
-              ${(!isExpired && !isCancelled) ? `<button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel</button>` : ''}
+              ${(!isExpired && !isCancelled) ? `
+                <div class="request-actions">
+                  <button class="secondary action-button" data-action="edit-loan" data-loan-id="${loan.id}" data-loan-borrow-date="${loan.borrowDate}" data-loan-return-date="${loan.returnDate}">Edit</button>
+                  <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel</button>
+                </div>
+              ` : ''}
             </div>
           `;
           }).join('')}
