@@ -46,6 +46,7 @@
             <button id="nav-dashboard" class="secondary active">User Bookings</button>
             <button id="nav-rooms" class="secondary">Room Bookings</button>
             <button id="nav-equipment" class="secondary">Equipment Loans</button>
+            <button id="nav-settings" class="secondary">Settings</button>
             <button id="nav-admin" class="secondary hidden">User Management</button>
             <button id="nav-room-management" class="secondary hidden">Room Management</button>
             <button id="nav-equipment-management" class="secondary hidden">Equipment Management</button>
@@ -92,6 +93,20 @@
         <article id="page-equipment" class="card page-panel hidden">
           <h2>Equipment Loans</h2>
           <div id="equipment-list"></div>
+        </article>
+
+        <article id="page-settings" class="card page-panel hidden">
+          <h2>Settings</h2>
+          <p>Change your account password.</p>
+
+          <form id="change-password-form" class="settings-form">
+            <label>Current Password<input type="password" id="current-password" required /></label>
+            <label>New Password<input type="password" id="new-password" minlength="8" required /></label>
+            <label>Confirm New Password<input type="password" id="confirm-new-password" minlength="8" required /></label>
+            <button type="submit">Change Password</button>
+            <div id="change-password-error" class="form-error"></div>
+            <div id="change-password-success" class="form-success"></div>
+          </form>
         </article>
 
         <article id="page-admin" class="card page-panel hidden">

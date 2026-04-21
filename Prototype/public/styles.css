@@ -148,6 +148,11 @@ button.danger {
   color: var(--danger);
 }
 
+.form-success {
+  margin-top: 8px;
+  color: #15803d;
+}
+
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -347,6 +352,10 @@ button.danger {
 }
 
 .room-management-form {
+  max-width: 560px;
+}
+
+.settings-form {
   max-width: 560px;
 }
 

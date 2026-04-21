@@ -6,6 +6,7 @@ import { createEquipmentPage } from './js/equipment-page.js';
 import { createAdminPage } from './js/admin-page.js';
 import { createRoomManagementPage } from './js/room-management-page.js';
 import { createEquipmentManagementPage } from './js/equipment-management-page.js';
+import { createSettingsPage } from './js/settings-page.js';
 
 /**
  * Main frontend entrypoint.
@@ -17,12 +18,14 @@ const dashboardSection = document.getElementById('dashboard-section');
 const pageDashboard = document.getElementById('page-dashboard');
 const pageRooms = document.getElementById('page-rooms');
 const pageEquipment = document.getElementById('page-equipment');
+const pageSettings = document.getElementById('page-settings');
 const pageAdmin = document.getElementById('page-admin');
 const pageRoomManagement = document.getElementById('page-room-management');
 const pageEquipmentManagement = document.getElementById('page-equipment-management');
 const navDashboard = document.getElementById('nav-dashboard');
 const navRooms = document.getElementById('nav-rooms');
 const navEquipment = document.getElementById('nav-equipment');
+const navSettings = document.getElementById('nav-settings');
 const navAdmin = document.getElementById('nav-admin');
 const navRoomManagement = document.getElementById('nav-room-management');
 const navEquipmentManagement = document.getElementById('nav-equipment-management');
@@ -57,14 +60,20 @@ const bookingDurationInput = document.getElementById('booking-duration');
 const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
 const scheduleGrid = document.getElementById('schedule-grid');
+const changePasswordForm = document.getElementById('change-password-form');
+const currentPasswordInput = document.getElementById('current-password');
+const newPasswordInput = document.getElementById('new-password');
+const confirmNewPasswordInput = document.getElementById('confirm-new-password');
+const changePasswordError = document.getElementById('change-password-error');
+const changePasswordSuccess = document.getElementById('change-password-success');
 
-const allPages = ['dashboard', 'rooms', 'equipment', 'admin', 'room-management', 'equipment-management'];
+const allPages = ['dashboard', 'rooms', 'equipment', 'settings', 'admin', 'room-management', 'equipment-management'];
 
 let isAdminUser = false;
 
 /**
  * Resolve the active page from URL hash.
- * @returns {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'|'equipment-management'}
+ * @returns {'dashboard'|'rooms'|'equipment'|'settings'|'admin'|'room-management'|'equipment-management'}
  */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
@@ -99,7 +108,7 @@ function resetErrors() {
 
 /**
  * Switch the visible dashboard sub-page and optionally sync URL hash.
- * @param {'dashboard'|'rooms'|'equipment'|'admin'|'room-management'|'equipment-management'} page Target page.
+ * @param {'dashboard'|'rooms'|'equipment'|'settings'|'admin'|'room-management'|'equipment-management'} page Target page.
  * @param {{ updateHash?: boolean }} [options={}] Options for hash behavior.
  */
 function setActivePage(page, options = {}) {
@@ -112,6 +121,7 @@ function setActivePage(page, options = {}) {
   pageDashboard.classList.toggle('hidden', nextPage !== 'dashboard');
   pageRooms.classList.toggle('hidden', nextPage !== 'rooms');
   pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
+  pageSettings.classList.toggle('hidden', nextPage !== 'settings');
   pageAdmin.classList.toggle('hidden', nextPage !== 'admin');
   pageRoomManagement.classList.toggle('hidden', nextPage !== 'room-management');
   pageEquipmentManagement.classList.toggle('hidden', nextPage !== 'equipment-management');
@@ -119,6 +129,7 @@ function setActivePage(page, options = {}) {
   navDashboard.classList.toggle('active', nextPage === 'dashboard');
   navRooms.classList.toggle('active', nextPage === 'rooms');
   navEquipment.classList.toggle('active', nextPage === 'equipment');
+  navSettings.classList.toggle('active', nextPage === 'settings');
   navAdmin.classList.toggle('active', nextPage === 'admin');
   navRoomManagement.classList.toggle('active', nextPage === 'room-management');
   navEquipmentManagement.classList.toggle('active', nextPage === 'equipment-management');
@@ -334,6 +345,16 @@ const equipmentManagementPage = createEquipmentManagementPage({
   onEquipmentChanged: async () => refreshDashboard(bookingFilter.value)
 });
 
+const settingsPage = createSettingsPage({
+  changePasswordForm,
+  currentPasswordInput,
+  newPasswordInput,
+  confirmNewPasswordInput,
+  changePasswordError,
+  changePasswordSuccess,
+  requestJson
+});
+
 /**
  * Refresh profile-dependent page state and render all page modules.
  * @param {'active'|'all'} [statusFilter='active'] Request filter for dashboard cards.
@@ -428,6 +449,8 @@ bookingFilter.addEventListener('change', async () => {
 logoutButton.addEventListener('click', async () => {
   await requestJson('/api/logout', { method: 'POST' });
   isAdminUser = false;
+  settingsPage.clearMessages();
+  changePasswordForm.reset();
   navAdmin.classList.add('hidden');
   navRoomManagement.classList.add('hidden');
   navEquipmentManagement.classList.add('hidden');
@@ -444,6 +467,10 @@ navRooms.addEventListener('click', () => {
 
 navEquipment.addEventListener('click', () => {
   setActivePage('equipment');
+});
+
+navSettings.addEventListener('click', () => {
+  setActivePage('settings');
 });
 
 navAdmin.addEventListener('click', () => {

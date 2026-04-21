@@ -272,6 +272,42 @@ app.get('/api/profile', (req, res) => {
   res.json({ authenticated: true, email: req.session.email, role: req.session.role });
 });
 
+// Change password for the currently authenticated user.
+app.post('/api/change-password', requireLogin, async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '').trim();
+  const newPassword = String(req.body?.newPassword || '').trim();
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required.' });
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters long.' });
+  }
+
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ error: 'New password must be different from current password.' });
+  }
+
+  const users = await query('SELECT id, passwordHash FROM users WHERE id = ?', [req.session.userId]);
+  if (users.length === 0) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  const user = users[0];
+  const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!valid) {
+    return res.status(400).json({ error: 'Current password is incorrect.' });
+  }
+
+  const newPasswordHash = await bcrypt.hash(newPassword, 10);
+  await run('UPDATE users SET passwordHash = ? WHERE id = ?', [newPasswordHash, user.id]);
+
+  await logActivity(req.session.userId, 'password_changed', 'user', req.session.userId, `${req.session.email} changed account password`);
+
+  res.json({ message: 'Password changed successfully.' });
+});
+
 // Return available rooms and equipment for the dashboard.
 app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
