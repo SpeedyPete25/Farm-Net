@@ -84,6 +84,18 @@ async function initDatabase() {
     await run(`ALTER TABLE users RENAME COLUMN username TO email`);
   }
 
+  // Rename legacy password column to passwordHash if present.
+  const hasPasswordHashColumn = columns.some(col => col.name === 'passwordHash');
+  const hasLegacyPasswordColumn = columns.some(col => col.name === 'password');
+  if (!hasPasswordHashColumn && hasLegacyPasswordColumn) {
+    await run(`ALTER TABLE users RENAME COLUMN password TO passwordHash`);
+  }
+
+  // If both are missing (unexpected legacy state), add passwordHash to keep auth functional.
+  if (!hasPasswordHashColumn && !hasLegacyPasswordColumn) {
+    await run(`ALTER TABLE users ADD COLUMN passwordHash TEXT`);
+  }
+
   // Add role column if it doesn't exist
   const hasRoleColumn = columns.some(col => col.name === 'role');
   if (!hasRoleColumn) {

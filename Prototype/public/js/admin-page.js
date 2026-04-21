@@ -15,7 +15,7 @@
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>
  * }} deps
  */
-export function createUserManagementPage(deps) {
+export function createAdminPage(deps) {
   const { usersList, auditLogList, requestJson } = deps;
 
   /**
