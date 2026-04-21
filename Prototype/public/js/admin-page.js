@@ -1,5 +1,5 @@
 /**
- * Admin users page module.
+ * User management page module.
  * Renders users and allows admins to change roles.
  */
 
@@ -8,14 +8,14 @@
  */
 
 /**
- * Create admin page renderer and actions.
+ * Create user management page renderer and actions.
  * @param {{
  *   usersList: HTMLElement,
  *   auditLogList: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>
  * }} deps
  */
-export function createAdminPage(deps) {
+export function createUserManagementPage(deps) {
   const { usersList, auditLogList, requestJson } = deps;
 
   /**
