@@ -26,7 +26,7 @@ export function createEquipmentManagementPage(deps) {
     onEquipmentChanged
   } = deps;
 
-  /** @type {Array<{ id: number, name: string, quantity: number }>} */
+  /** @type {Array<{ id: number, name: string, quantity: number, codes?: string[] }>} */
   let equipment = [];
 
   function render() {
@@ -52,6 +52,14 @@ export function createEquipmentManagementPage(deps) {
               />
               <button data-action="update-equipment" data-equipment-id="${item.id}">Update</button>
             </p>
+            <details class="equipment-codes-panel">
+              <summary>Item codes (${Array.isArray(item.codes) ? item.codes.length : 0})</summary>
+              <div class="equipment-codes-list">
+                ${Array.isArray(item.codes) && item.codes.length > 0
+                  ? item.codes.map((code) => `<span class="equipment-code-chip">${code}</span>`).join('')
+                  : '<span class="equipment-code-empty">No item codes found.</span>'}
+              </div>
+            </details>
           </div>
           <button class="danger" data-action="remove-equipment" data-equipment-id="${item.id}">Remove</button>
         </div>

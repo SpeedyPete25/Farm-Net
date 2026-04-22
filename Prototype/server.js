@@ -906,7 +906,7 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
 
 // Return all equipment for admin equipment management.
 app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
-  const equipment = await query(
+  const equipmentRows = await query(
     `SELECT e.id, e.name,
             COALESCE(unitCounts.totalUnits, 0) AS quantity
      FROM equipment e
@@ -917,6 +917,26 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
      ) unitCounts ON unitCounts.equipmentId = e.id
      ORDER BY e.name ASC`
   );
+
+  const codeRows = await query(
+    `SELECT equipmentId, code
+     FROM equipment_units
+     ORDER BY code ASC`
+  );
+
+  const codesByEquipmentId = codeRows.reduce((acc, row) => {
+    if (!acc[row.equipmentId]) {
+      acc[row.equipmentId] = [];
+    }
+    acc[row.equipmentId].push(row.code);
+    return acc;
+  }, {});
+
+  const equipment = equipmentRows.map((item) => ({
+    ...item,
+    codes: codesByEquipmentId[item.id] || []
+  }));
+
   res.json({ equipment });
 });
 
