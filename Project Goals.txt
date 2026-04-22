@@ -1,8 +1,8 @@
 ---Admin---
-Admin login
+*Admin login
 Manage bookings
 Cancel bookings
-Add or remove rooms and equipment
+*Add or remove rooms and equipment
 
 ---Equipment---
 Return equipment page
@@ -13,7 +13,7 @@ Submit photos with return
 *Cancel bookings
 *Archive old bookings
 *Visualise booked periods for rooms
-Edit booking times
+*Edit booking times
 Timetable engine
 
 ---Notifications---
@@ -21,7 +21,7 @@ Sends email notifications for confirmed and cancelled bookings
 
 --Accounts--
 *User IDs are emails not usernames
-Passwords have requirements
+*Passwords have requirements
 *Email format validation
 *Email domain validation
 Confirm domain has mail servers

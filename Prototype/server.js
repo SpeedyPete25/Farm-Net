@@ -66,6 +66,79 @@ function run(sql, params = []) {
 }
 
 /**
+ * Create a short stable prefix for equipment codes.
+ * Example: "Laptop" -> "lap", "Microscope" -> "mic".
+ * @param {string} name
+ * @returns {string}
+ */
+function buildEquipmentCodePrefix(name) {
+  const cleaned = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!cleaned) return 'eqp';
+  return cleaned.slice(0, 3).padEnd(3, 'x');
+}
+
+/**
+ * Add missing coded equipment units for a category.
+ * @param {number} equipmentId
+ * @param {string} equipmentName
+ * @param {number} count
+ * @returns {Promise<void>}
+ */
+async function addEquipmentUnits(equipmentId, equipmentName, count) {
+  if (!Number.isInteger(count) || count <= 0) return;
+
+  const prefix = buildEquipmentCodePrefix(equipmentName);
+  const existingRows = await query('SELECT code FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
+  const existingCodes = new Set(existingRows.map((row) => String(row.code || '').toLowerCase()));
+
+  let nextNumber = 1;
+  let created = 0;
+
+  while (created < count) {
+    const code = `${prefix}${String(nextNumber).padStart(3, '0')}`;
+    if (!existingCodes.has(code)) {
+      await run('INSERT INTO equipment_units (equipmentId, code) VALUES (?, ?)', [equipmentId, code]);
+      existingCodes.add(code);
+      created += 1;
+    }
+    nextNumber += 1;
+  }
+}
+
+/**
+ * Remove unassigned equipment units from a category.
+ * @param {number} equipmentId
+ * @param {number} count
+ * @returns {Promise<boolean>} True if units were removed successfully.
+ */
+async function removeUnassignedEquipmentUnits(equipmentId, count) {
+  if (!Number.isInteger(count) || count <= 0) return true;
+
+  const removable = await query(
+    `SELECT eu.id
+     FROM equipment_units eu
+     LEFT JOIN loans l
+       ON l.equipmentUnitId = eu.id
+      AND l.status = 'active'
+      AND l.returnDate >= date("now")
+     WHERE eu.equipmentId = ?
+       AND l.id IS NULL
+     ORDER BY eu.id DESC
+     LIMIT ?`,
+    [equipmentId, count]
+  );
+
+  if (removable.length < count) {
+    return false;
+  }
+
+  for (const unit of removable) {
+    await run('DELETE FROM equipment_units WHERE id = ?', [unit.id]);
+  }
+  return true;
+}
+
+/**
  * Ensure the SQLite schema exists and seed default data.
  * This uses CREATE TABLE IF NOT EXISTS so it is safe to run every startup.
  */
@@ -114,6 +187,13 @@ async function initDatabase() {
     quantity INTEGER NOT NULL
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS equipment_units (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    equipmentId INTEGER NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    FOREIGN KEY(equipmentId) REFERENCES equipment(id)
+  )`);
+
   await run(`CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     userId INTEGER NOT NULL,
@@ -138,12 +218,14 @@ async function initDatabase() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     userId INTEGER NOT NULL,
     equipmentId INTEGER NOT NULL,
+    equipmentUnitId INTEGER,
     borrowDate TEXT NOT NULL,
     returnDate TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(userId) REFERENCES users(id),
-    FOREIGN KEY(equipmentId) REFERENCES equipment(id)
+    FOREIGN KEY(equipmentId) REFERENCES equipment(id),
+    FOREIGN KEY(equipmentUnitId) REFERENCES equipment_units(id)
   )`);
 
   // Check if status column exists, add it if not
@@ -151,6 +233,11 @@ async function initDatabase() {
   const hasLoanStatus = loanColumns.some(col => col.name === 'status');
   if (!hasLoanStatus) {
     await run(`ALTER TABLE loans ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
+  }
+
+  const hasEquipmentUnitId = loanColumns.some(col => col.name === 'equipmentUnitId');
+  if (!hasEquipmentUnitId) {
+    await run(`ALTER TABLE loans ADD COLUMN equipmentUnitId INTEGER`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS activity_history (
@@ -176,6 +263,17 @@ async function initDatabase() {
     await run('INSERT INTO equipment (name, quantity) VALUES (?, ?)', ['Laptop', 10]);
     await run('INSERT INTO equipment (name, quantity) VALUES (?, ?)', ['Microscope', 6]);
     await run('INSERT INTO equipment (name, quantity) VALUES (?, ?)', ['Oscilloscope', 4]);
+  }
+
+  // Backfill coded equipment units for existing equipment rows.
+  const equipmentRows = await query('SELECT id, name, quantity FROM equipment');
+  for (const item of equipmentRows) {
+    const currentUnitCountRows = await query('SELECT COUNT(*) AS count FROM equipment_units WHERE equipmentId = ?', [item.id]);
+    const currentUnitCount = Number(currentUnitCountRows[0]?.count || 0);
+    const targetQuantity = Number(item.quantity || 0);
+    if (targetQuantity > currentUnitCount) {
+      await addEquipmentUnits(item.id, item.name, targetQuantity - currentUnitCount);
+    }
   }
 }
 
@@ -323,7 +421,16 @@ app.post('/api/change-password', requireLogin, async (req, res) => {
 // Return available rooms and equipment for the dashboard.
 app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
-  const equipment = await query('SELECT * FROM equipment');
+  const equipment = await query(
+    `SELECT e.id, e.name, e.quantity,
+            COALESCE(unitCounts.totalUnits, 0) AS totalUnits
+     FROM equipment e
+     LEFT JOIN (
+       SELECT equipmentId, COUNT(*) AS totalUnits
+       FROM equipment_units
+       GROUP BY equipmentId
+     ) unitCounts ON unitCounts.equipmentId = e.id`
+  );
 
   const loans = await query('SELECT equipmentId, COUNT(*) AS activeLoans FROM loans WHERE returnDate >= date("now") AND status = ? GROUP BY equipmentId', ['active']);
   const loanMap = loans.reduce((acc, item) => {
@@ -334,7 +441,13 @@ app.get('/api/resources', requireLogin, async (req, res) => {
   // Calculate available equipment by subtracting active loans from total quantity.
   const equipmentWithAvailability = equipment.map((item) => {
     const activeLoans = loanMap[item.id] || 0;
-    return { ...item, available: Math.max(0, item.quantity - activeLoans) };
+    const totalQuantity = Number(item.totalUnits || item.quantity || 0);
+    return {
+      id: item.id,
+      name: item.name,
+      quantity: totalQuantity,
+      available: Math.max(0, totalQuantity - activeLoans)
+    };
   });
 
   res.json({ rooms, equipment: equipmentWithAvailability });
@@ -374,9 +487,10 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   let loans;
   if (statusFilter === 'all') {
     loans = await query(
-      `SELECT l.id, e.name AS equipmentName, l.borrowDate, l.returnDate, l.status
+      `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
+       LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
        WHERE l.userId = ?
        ORDER BY l.borrowDate DESC`,
       [userId]
@@ -384,9 +498,10 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   } else {
     const today = new Date().toISOString().slice(0, 10);
     loans = await query(
-      `SELECT l.id, e.name AS equipmentName, l.borrowDate, l.returnDate, l.status
+      `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
+       LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
        WHERE l.userId = ?
          AND l.status = 'active'
          AND l.returnDate >= ?
@@ -638,29 +753,63 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Equipment and borrow duration are required.' });
   }
 
+  const parsedDays = Number(days);
+  if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
+    return res.status(400).json({ error: 'Borrow duration must be a whole number of days.' });
+  }
+
   const equip = await query('SELECT * FROM equipment WHERE id = ?', [equipmentId]);
   if (equip.length === 0) {
     return res.status(404).json({ error: 'Equipment not found.' });
   }
 
+  const equipmentRow = equip[0];
+  const unitCountRows = await query('SELECT COUNT(*) AS count FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
+  const unitCount = Number(unitCountRows[0]?.count || 0);
+  const requiredUnits = Number(equipmentRow.quantity || 0);
+
+  if (unitCount < requiredUnits) {
+    await addEquipmentUnits(equipmentId, equipmentRow.name, requiredUnits - unitCount);
+  }
+
+  const allUnits = await query('SELECT id, code FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
   const activeLoans = await query(
-    'SELECT COUNT(*) AS count FROM loans WHERE equipmentId = ? AND returnDate >= date("now")',
+    `SELECT equipmentUnitId
+     FROM loans
+     WHERE equipmentId = ?
+       AND status = 'active'
+       AND returnDate >= date("now")`,
     [equipmentId]
   );
 
-  const available = equip[0].quantity - activeLoans[0].count;
-  if (available <= 0) {
+  const assignedUnitIds = new Set(
+    activeLoans
+      .map((loan) => Number(loan.equipmentUnitId))
+      .filter((unitId) => Number.isFinite(unitId) && unitId > 0)
+  );
+  const legacyActiveLoans = activeLoans.filter((loan) => !loan.equipmentUnitId).length;
+
+  const unassignedUnits = allUnits.filter((unit) => !assignedUnitIds.has(Number(unit.id)));
+  for (let i = unassignedUnits.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [unassignedUnits[i], unassignedUnits[j]] = [unassignedUnits[j], unassignedUnits[i]];
+  }
+
+  const availablePool = unassignedUnits.slice(legacyActiveLoans);
+  if (availablePool.length <= 0) {
     return res.status(400).json({ error: 'No equipment available to borrow right now.' });
   }
 
+  const assignedUnit = availablePool[0];
+
   const borrowDate = new Date().toISOString().slice(0, 10);
-  const returnDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const returnDate = new Date(Date.now() + parsedDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   await run(
-    'INSERT INTO loans (userId, equipmentId, borrowDate, returnDate) VALUES (?, ?, ?, ?)',
-    [req.session.userId, equipmentId, borrowDate, returnDate]
+    'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate) VALUES (?, ?, ?, ?, ?)',
+    [req.session.userId, equipmentId, assignedUnit.id, borrowDate, returnDate]
   );
-  res.json({ message: 'Equipment borrowed successfully.' });
+  res.json({ message: `Equipment borrowed successfully. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
 });
 
 // Return all bookings for a room on a given date for the schedule visualisation.
@@ -757,7 +906,17 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
 
 // Return all equipment for admin equipment management.
 app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
-  const equipment = await query('SELECT id, name, quantity FROM equipment ORDER BY name ASC');
+  const equipment = await query(
+    `SELECT e.id, e.name,
+            COALESCE(unitCounts.totalUnits, 0) AS quantity
+     FROM equipment e
+     LEFT JOIN (
+       SELECT equipmentId, COUNT(*) AS totalUnits
+       FROM equipment_units
+       GROUP BY equipmentId
+     ) unitCounts ON unitCounts.equipmentId = e.id
+     ORDER BY e.name ASC`
+  );
   res.json({ equipment });
 });
 
@@ -779,6 +938,7 @@ app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
   }
 
   const result = await run('INSERT INTO equipment (name, quantity) VALUES (?, ?)', [name, quantity]);
+  await addEquipmentUnits(result.lastID, name, quantity);
   const description = `${req.session.email} added equipment ${name} (quantity: ${quantity})`;
   await logActivity(req.session.userId, 'equipment_added', 'equipment', result.lastID, description);
 
@@ -819,9 +979,28 @@ app.patch('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
     });
   }
 
-  const previousQuantity = Number(equipmentRows[0].quantity);
+  const previousQuantityRows = await query('SELECT COUNT(*) AS count FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
+  const previousQuantity = Number(previousQuantityRows[0]?.count || 0);
   if (previousQuantity === quantity) {
-    return res.json({ message: 'Quantity already set.', equipment: equipmentRows[0] });
+    return res.json({
+      message: 'Quantity already set.',
+      equipment: {
+        id: equipmentId,
+        name: equipmentRows[0].name,
+        quantity: previousQuantity
+      }
+    });
+  }
+
+  if (quantity > previousQuantity) {
+    await addEquipmentUnits(equipmentId, equipmentRows[0].name, quantity - previousQuantity);
+  } else {
+    const removed = await removeUnassignedEquipmentUnits(equipmentId, previousQuantity - quantity);
+    if (!removed) {
+      return res.status(400).json({
+        error: 'Cannot reduce quantity because not enough unassigned item codes are available.'
+      });
+    }
   }
 
   await run('UPDATE equipment SET quantity = ? WHERE id = ?', [quantity, equipmentId]);
@@ -866,6 +1045,7 @@ app.delete('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Cannot remove equipment that has active loans.' });
   }
 
+  await run('DELETE FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
   await run('DELETE FROM equipment WHERE id = ?', [equipmentId]);
 
   const equipment = equipmentRows[0];

@@ -124,6 +124,7 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
             return `
             <div class="request-card ${isCancelled ? 'cancelled' : ''}">
               <strong>${loan.equipmentName}</strong>
+              ${loan.equipmentCode ? `<p>Assigned item: ${loan.equipmentCode}</p>` : ''}
               <p>Borrowed: ${loan.borrowDate}</p>
               <p>Return by: ${loan.returnDate}</p>
               ${statusLabel}
