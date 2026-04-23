@@ -7,6 +7,7 @@
  * Create equipment management controller.
  * @param {{
  *   equipmentManagementList: HTMLElement,
+ *   bookedOutEquipmentList: HTMLElement,
  *   equipmentManagementForm: HTMLFormElement,
  *   equipmentNameInput: HTMLInputElement,
  *   equipmentQuantityInput: HTMLInputElement,
@@ -18,6 +19,7 @@
 export function createEquipmentManagementPage(deps) {
   const {
     equipmentManagementList,
+    bookedOutEquipmentList,
     equipmentManagementForm,
     equipmentNameInput,
     equipmentQuantityInput,
@@ -28,6 +30,8 @@ export function createEquipmentManagementPage(deps) {
 
   /** @type {Array<{ id: number, name: string, quantity: number, codes?: string[] }>} */
   let equipment = [];
+  /** @type {Array<{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string }>} */
+  let bookedOutLoans = [];
 
   function render() {
     if (!equipment || equipment.length === 0) {
@@ -67,18 +71,50 @@ export function createEquipmentManagementPage(deps) {
     }).join('');
   }
 
-  async function load() {
-    equipmentManagementError.textContent = '';
-    equipmentManagementList.innerHTML = '<p>Loading equipment...</p>';
-
-    const result = await requestJson('/api/admin/equipment');
-    if (result.error) {
-      equipmentManagementList.innerHTML = `<p class="form-error">${result.error}</p>`;
+  function renderBookedOutLoans() {
+    if (!bookedOutLoans || bookedOutLoans.length === 0) {
+      bookedOutEquipmentList.innerHTML = '<p>No equipment is currently booked out.</p>';
       return;
     }
 
-    equipment = Array.isArray(result.equipment) ? result.equipment : [];
-    render();
+    bookedOutEquipmentList.innerHTML = bookedOutLoans.map((loan) => {
+      return `
+        <div class="item-row">
+          <div>
+            <strong>${loan.equipmentName}</strong>
+            ${loan.equipmentCode ? `<p>Assigned item: ${loan.equipmentCode}</p>` : ''}
+            <p>Borrowed by: ${loan.borrowerEmail}</p>
+            <p>Borrowed: ${loan.borrowDate} · Return by: ${loan.returnDate}</p>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function load() {
+    equipmentManagementError.textContent = '';
+    equipmentManagementList.innerHTML = '<p>Loading equipment...</p>';
+    bookedOutEquipmentList.innerHTML = '<p>Loading booked-out equipment...</p>';
+
+    const [equipmentResult, bookedOutResult] = await Promise.all([
+      requestJson('/api/admin/equipment'),
+      requestJson('/api/admin/equipment/booked-out')
+    ]);
+
+    if (equipmentResult.error) {
+      equipmentManagementList.innerHTML = `<p class="form-error">${equipmentResult.error}</p>`;
+    } else {
+      equipment = Array.isArray(equipmentResult.equipment) ? equipmentResult.equipment : [];
+      render();
+    }
+
+    if (bookedOutResult.error) {
+      bookedOutEquipmentList.innerHTML = `<p class="form-error">${bookedOutResult.error}</p>`;
+      return;
+    }
+
+    bookedOutLoans = Array.isArray(bookedOutResult.loans) ? bookedOutResult.loans : [];
+    renderBookedOutLoans();
   }
 
   equipmentManagementForm.addEventListener('submit', async (event) => {

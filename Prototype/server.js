@@ -940,6 +940,29 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
   res.json({ equipment });
 });
 
+// Return active booked-out equipment and borrower details for admins.
+app.get('/api/admin/equipment/booked-out', requireAdmin, async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const loans = await query(
+    `SELECT l.id,
+            e.name AS equipmentName,
+            eu.code AS equipmentCode,
+            u.email AS borrowerEmail,
+            l.borrowDate,
+            l.returnDate
+     FROM loans l
+     JOIN equipment e ON e.id = l.equipmentId
+     JOIN users u ON u.id = l.userId
+     LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+     WHERE l.status = 'active'
+       AND l.returnDate >= ?
+     ORDER BY e.name ASC, l.returnDate ASC, l.borrowDate ASC`,
+    [today]
+  );
+
+  res.json({ loans });
+});
+
 // Add a new equipment item. Admin only.
 app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
   const name = String(req.body?.name || '').trim();

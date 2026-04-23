@@ -40,6 +40,7 @@ const roomNameInput = document.getElementById('room-name');
 const roomLocationInput = document.getElementById('room-location');
 const roomManagementError = document.getElementById('room-management-error');
 const equipmentManagementList = document.getElementById('equipment-management-list');
+const bookedOutEquipmentList = document.getElementById('booked-out-equipment-list');
 const equipmentManagementForm = document.getElementById('equipment-management-form');
 const equipmentNameInput = document.getElementById('equipment-name');
 const equipmentQuantityInput = document.getElementById('equipment-quantity');
@@ -337,6 +338,7 @@ const roomManagementPage = createRoomManagementPage({
 
 const equipmentManagementPage = createEquipmentManagementPage({
   equipmentManagementList,
+  bookedOutEquipmentList,
   equipmentManagementForm,
   equipmentNameInput,
   equipmentQuantityInput,
