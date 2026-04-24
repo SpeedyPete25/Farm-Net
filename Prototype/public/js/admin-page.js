@@ -11,12 +11,14 @@
  * Create user management page renderer and actions.
  * @param {{
  *   usersList: HTMLElement,
+ *   adminBookingsList: HTMLElement,
+ *   adminLoansList: HTMLElement,
  *   auditLogList: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>
  * }} deps
  */
 export function createAdminPage(deps) {
-  const { usersList, auditLogList, requestJson } = deps;
+  const { usersList, adminBookingsList, adminLoansList, auditLogList, requestJson } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -111,6 +113,181 @@ export function createAdminPage(deps) {
   }
 
   /**
+   * Render booking management table.
+   * @param {Array<{ id: number, userEmail: string, roomName: string, date: string, startTime: string, durationHours: number|string, status: string }>} bookings
+   */
+  function renderBookings(bookings) {
+    if (!bookings || bookings.length === 0) {
+      adminBookingsList.innerHTML = '<p>No bookings found.</p>';
+      return;
+    }
+
+    adminBookingsList.innerHTML = '';
+
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Room</th>
+          <th>When</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    bookings.forEach((booking) => {
+      const row = document.createElement('tr');
+
+      const userCell = document.createElement('td');
+      userCell.textContent = booking.userEmail;
+
+      const roomCell = document.createElement('td');
+      roomCell.textContent = booking.roomName;
+
+      const whenCell = document.createElement('td');
+      whenCell.textContent = `${booking.date} ${booking.startTime} (${formatHours(booking.durationHours)})`;
+
+      const statusCell = document.createElement('td');
+      statusCell.textContent = booking.status;
+
+      const actionsCell = document.createElement('td');
+      const isEditable = booking.status === 'active' && new Date(`${booking.date}T${booking.startTime}:00`) > new Date();
+
+      if (isEditable) {
+        const editButton = document.createElement('button');
+        editButton.className = 'secondary action-button';
+        editButton.textContent = 'Edit';
+        editButton.dataset.action = 'admin-edit-booking';
+        editButton.dataset.bookingId = String(booking.id);
+        editButton.dataset.bookingDate = booking.date;
+        editButton.dataset.bookingStartTime = booking.startTime;
+        editButton.dataset.bookingDurationHours = String(booking.durationHours);
+
+        const cancelButton = document.createElement('button');
+        cancelButton.className = 'cancel-button';
+        cancelButton.textContent = 'Cancel';
+        cancelButton.dataset.action = 'admin-cancel-booking';
+        cancelButton.dataset.bookingId = String(booking.id);
+
+        const actionsWrap = document.createElement('div');
+        actionsWrap.className = 'request-actions';
+        actionsWrap.appendChild(editButton);
+        actionsWrap.appendChild(cancelButton);
+        actionsCell.appendChild(actionsWrap);
+      } else {
+        actionsCell.textContent = '-';
+      }
+
+      row.appendChild(userCell);
+      row.appendChild(roomCell);
+      row.appendChild(whenCell);
+      row.appendChild(statusCell);
+      row.appendChild(actionsCell);
+      tbody.appendChild(row);
+    });
+
+    adminBookingsList.appendChild(table);
+  }
+
+  /**
+   * Render loan management table.
+   * @param {Array<{ id: number, userEmail: string, equipmentName: string, equipmentCode?: string, borrowDate: string, returnDate: string, status: string }>} loans
+   */
+  function renderLoans(loans) {
+    if (!loans || loans.length === 0) {
+      adminLoansList.innerHTML = '<p>No loans found.</p>';
+      return;
+    }
+
+    adminLoansList.innerHTML = '';
+
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Equipment</th>
+          <th>Loan Window</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    loans.forEach((loan) => {
+      const row = document.createElement('tr');
+
+      const userCell = document.createElement('td');
+      userCell.textContent = loan.userEmail;
+
+      const equipmentCell = document.createElement('td');
+      equipmentCell.textContent = loan.equipmentCode
+        ? `${loan.equipmentName} (${loan.equipmentCode})`
+        : loan.equipmentName;
+
+      const windowCell = document.createElement('td');
+      windowCell.textContent = `${loan.borrowDate} to ${loan.returnDate}`;
+
+      const statusCell = document.createElement('td');
+      statusCell.textContent = loan.status;
+
+      const actionsCell = document.createElement('td');
+      const today = new Date().toISOString().slice(0, 10);
+      const isEditable = loan.status === 'active' && loan.returnDate >= today;
+
+      if (isEditable) {
+        const editButton = document.createElement('button');
+        editButton.className = 'secondary action-button';
+        editButton.textContent = 'Edit';
+        editButton.dataset.action = 'admin-edit-loan';
+        editButton.dataset.loanId = String(loan.id);
+        editButton.dataset.loanReturnDate = loan.returnDate;
+
+        const cancelButton = document.createElement('button');
+        cancelButton.className = 'cancel-button';
+        cancelButton.textContent = 'Cancel';
+        cancelButton.dataset.action = 'admin-cancel-loan';
+        cancelButton.dataset.loanId = String(loan.id);
+
+        const actionsWrap = document.createElement('div');
+        actionsWrap.className = 'request-actions';
+        actionsWrap.appendChild(editButton);
+        actionsWrap.appendChild(cancelButton);
+        actionsCell.appendChild(actionsWrap);
+      } else {
+        actionsCell.textContent = '-';
+      }
+
+      row.appendChild(userCell);
+      row.appendChild(equipmentCell);
+      row.appendChild(windowCell);
+      row.appendChild(statusCell);
+      row.appendChild(actionsCell);
+      tbody.appendChild(row);
+    });
+
+    adminLoansList.appendChild(table);
+  }
+
+  /**
+   * Format duration to a compact hour label.
+   * @param {number|string} hours
+   */
+  function formatHours(hours) {
+    const value = Number(hours);
+    if (!Number.isFinite(value)) return 'unknown';
+    return value === 1 ? '1 hour' : `${value} hours`;
+  }
+
+  /**
    * Render audit log entries.
    * @param {Array<{ id: number, description: string, timestamp: string }>} entries
    */
@@ -144,40 +321,160 @@ export function createAdminPage(deps) {
     auditLogList.appendChild(container);
   }
 
+  adminBookingsList.addEventListener('click', async (event) => {
+    const editButton = event.target.closest('[data-action="admin-edit-booking"]');
+    if (editButton) {
+      const bookingId = Number(editButton.dataset.bookingId);
+      const date = editButton.dataset.bookingDate || '';
+      const startTime = editButton.dataset.bookingStartTime || '';
+      const durationHours = editButton.dataset.bookingDurationHours || '';
+
+      const nextDate = prompt('Enter a new booking date (YYYY-MM-DD):', date);
+      if (nextDate === null) return;
+
+      const nextStartTime = prompt('Enter a new booking start time (HH:MM):', startTime);
+      if (nextStartTime === null) return;
+
+      const nextDuration = prompt('Enter a new duration in hours (15-minute increments):', String(durationHours));
+      if (nextDuration === null) return;
+
+      const result = await requestJson(`/api/admin/bookings/${bookingId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          date: nextDate.trim(),
+          startTime: nextStartTime.trim(),
+          durationHours: Number(nextDuration)
+        })
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Booking updated.');
+      }
+
+      await load();
+      return;
+    }
+
+    const cancelButton = event.target.closest('[data-action="admin-cancel-booking"]');
+    if (!cancelButton) return;
+
+    const bookingId = Number(cancelButton.dataset.bookingId);
+    if (!confirm('Cancel this booking?')) {
+      return;
+    }
+
+    const result = await requestJson(`/api/admin/bookings/${bookingId}/cancel`, {
+      method: 'POST'
+    });
+
+    if (result.error) {
+      alert(result.error);
+    } else {
+      alert(result.message || 'Booking cancelled.');
+    }
+
+    await load();
+  });
+
+  adminLoansList.addEventListener('click', async (event) => {
+    const editButton = event.target.closest('[data-action="admin-edit-loan"]');
+    if (editButton) {
+      const loanId = Number(editButton.dataset.loanId);
+      const returnDate = editButton.dataset.loanReturnDate || '';
+
+      const nextReturnDate = prompt('Enter a new return date (YYYY-MM-DD):', returnDate);
+      if (nextReturnDate === null) return;
+
+      const result = await requestJson(`/api/admin/loans/${loanId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ returnDate: nextReturnDate.trim() })
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Loan updated.');
+      }
+
+      await load();
+      return;
+    }
+
+    const cancelButton = event.target.closest('[data-action="admin-cancel-loan"]');
+    if (!cancelButton) return;
+
+    const loanId = Number(cancelButton.dataset.loanId);
+    if (!confirm('Cancel this loan?')) {
+      return;
+    }
+
+    const result = await requestJson(`/api/admin/loans/${loanId}/cancel`, {
+      method: 'POST'
+    });
+
+    if (result.error) {
+      alert(result.error);
+    } else {
+      alert(result.message || 'Loan cancelled.');
+    }
+
+    await load();
+  });
+
   /**
    * Fetch users and render table.
    */
   async function load() {
     usersList.innerHTML = '<p>Loading users...</p>';
+    adminBookingsList.innerHTML = '<p>Loading bookings...</p>';
+    adminLoansList.innerHTML = '<p>Loading loans...</p>';
     auditLogList.innerHTML = '<p>Loading audit log...</p>';
 
     let usersResult;
+    let bookingsResult;
+    let loansResult;
+    let auditResult;
     try {
-      usersResult = await requestJson('/api/admin/users');
+      [usersResult, bookingsResult, loansResult, auditResult] = await Promise.all([
+        requestJson('/api/admin/users'),
+        requestJson('/api/admin/bookings?status=all'),
+        requestJson('/api/admin/loans?status=all'),
+        requestJson('/api/admin/audit-log')
+      ]);
     } catch (err) {
       usersList.innerHTML = '<p class="form-error">Failed to load users.</p>';
+      adminBookingsList.innerHTML = '<p class="form-error">Failed to load bookings.</p>';
+      adminLoansList.innerHTML = '<p class="form-error">Failed to load loans.</p>';
       auditLogList.innerHTML = '<p class="form-error">Audit log unavailable.</p>';
       return;
     }
 
     if (usersResult.error) {
       usersList.innerHTML = `<p class="form-error">${usersResult.error}</p>`;
-      auditLogList.innerHTML = '';
+    } else {
+      render(usersResult.users || []);
+    }
+
+    if (bookingsResult.error) {
+      adminBookingsList.innerHTML = `<p class="form-error">${bookingsResult.error}</p>`;
+    } else {
+      renderBookings(bookingsResult.bookings || []);
+    }
+
+    if (loansResult.error) {
+      adminLoansList.innerHTML = `<p class="form-error">${loansResult.error}</p>`;
+    } else {
+      renderLoans(loansResult.loans || []);
+    }
+
+    if (auditResult.error) {
+      auditLogList.innerHTML = `<p class="form-error">${auditResult.error}</p>`;
       return;
     }
 
-    render(usersResult.users || []);
-
-    try {
-      const auditResult = await requestJson('/api/admin/audit-log');
-      if (auditResult.error) {
-        auditLogList.innerHTML = `<p class="form-error">${auditResult.error}</p>`;
-      } else {
-        renderAuditLog(auditResult.entries || []);
-      }
-    } catch (err) {
-      auditLogList.innerHTML = '<p class="form-error">Audit log unavailable.</p>';
-    }
+    renderAuditLog(auditResult.entries || []);
   }
 
   return {

@@ -1,7 +1,7 @@
 ---Admin---
 *Admin login
-Manage bookings
-Cancel bookings
+*Manage bookings
+*Cancel bookings
 *Add or remove rooms and equipment
 
 ---Equipment---

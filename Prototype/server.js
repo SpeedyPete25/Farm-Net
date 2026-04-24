@@ -837,6 +837,287 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
   res.json({ users });
 });
 
+// Return bookings for admin management.
+app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
+  const statusFilter = req.query.status || 'active'; // 'active' or 'all'
+
+  let bookings;
+  if (statusFilter === 'all') {
+    bookings = await query(
+      `SELECT b.id, b.userId, u.email AS userEmail, r.name AS roomName, r.location,
+              b.date, b.startTime, b.durationHours, b.status, b.createdAt
+       FROM bookings b
+       JOIN users u ON u.id = b.userId
+       JOIN rooms r ON r.id = b.roomId
+       ORDER BY b.date DESC, b.startTime DESC`,
+      []
+    );
+  } else {
+    const today = new Date().toISOString().slice(0, 10);
+    const nowTime = new Date().toTimeString().slice(0, 5);
+    bookings = await query(
+      `SELECT b.id, b.userId, u.email AS userEmail, r.name AS roomName, r.location,
+              b.date, b.startTime, b.durationHours, b.status, b.createdAt
+       FROM bookings b
+       JOIN users u ON u.id = b.userId
+       JOIN rooms r ON r.id = b.roomId
+       WHERE b.status = 'active'
+         AND (b.date > ? OR (b.date = ? AND b.startTime > ?))
+       ORDER BY b.date DESC, b.startTime DESC`,
+      [today, today, nowTime]
+    );
+  }
+
+  res.json({ bookings });
+});
+
+// Return equipment loans for admin management.
+app.get('/api/admin/loans', requireAdmin, async (req, res) => {
+  const statusFilter = req.query.status || 'active'; // 'active' or 'all'
+
+  let loans;
+  if (statusFilter === 'all') {
+    loans = await query(
+      `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
+              eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status, l.createdAt
+       FROM loans l
+       JOIN users u ON u.id = l.userId
+       JOIN equipment e ON e.id = l.equipmentId
+       LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+       ORDER BY l.borrowDate DESC, l.id DESC`,
+      []
+    );
+  } else {
+    const today = new Date().toISOString().slice(0, 10);
+    loans = await query(
+      `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
+              eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status, l.createdAt
+       FROM loans l
+       JOIN users u ON u.id = l.userId
+       JOIN equipment e ON e.id = l.equipmentId
+       LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+       WHERE l.status = 'active'
+         AND l.returnDate >= ?
+       ORDER BY l.borrowDate DESC, l.id DESC`,
+      [today]
+    );
+  }
+
+  res.json({ loans });
+});
+
+// Cancel a booking as admin.
+app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
+  const bookingId = Number(req.params.id);
+  if (!Number.isFinite(bookingId) || bookingId <= 0) {
+    return res.status(400).json({ error: 'Invalid booking ID.' });
+  }
+
+  const rows = await query(
+    `SELECT b.id, b.userId, b.date, b.startTime, b.status, u.email AS userEmail
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     WHERE b.id = ?`,
+    [bookingId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Booking not found.' });
+  }
+
+  const booking = rows[0];
+  if (booking.status !== 'active') {
+    return res.status(400).json({ error: 'Booking is already cancelled.' });
+  }
+
+  const bookingDateTime = new Date(`${booking.date}T${booking.startTime}:00`);
+  if (bookingDateTime <= new Date()) {
+    return res.status(400).json({ error: 'Past bookings cannot be cancelled.' });
+  }
+
+  await run('UPDATE bookings SET status = ? WHERE id = ?', ['cancelled', bookingId]);
+
+  const description = `${req.session.email} cancelled booking #${bookingId} for ${booking.userEmail} (${booking.date} ${booking.startTime})`;
+  await logActivity(req.session.userId, 'admin_booking_cancelled', 'booking', bookingId, description);
+
+  res.json({ message: 'Booking cancelled successfully.' });
+});
+
+// Edit a booking as admin.
+app.patch('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
+  const bookingId = Number(req.params.id);
+  const { date, startTime, durationHours } = req.body;
+
+  if (!Number.isFinite(bookingId) || bookingId <= 0) {
+    return res.status(400).json({ error: 'Invalid booking ID.' });
+  }
+
+  if (!date || !startTime || durationHours == null) {
+    return res.status(400).json({ error: 'Date, start time and duration are required.' });
+  }
+
+  const duration = Number(durationHours);
+  const timeMatch = /^[0-9]{2}:[0-9]{2}$/.test(startTime);
+  const minute = timeMatch ? Number(startTime.split(':')[1]) : null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'Date must be in YYYY-MM-DD format.' });
+  }
+  if (!timeMatch || minute % 15 !== 0) {
+    return res.status(400).json({ error: 'Start time must be in 15-minute increments.' });
+  }
+  if (!Number.isFinite(duration) || duration <= 0 || duration % 0.25 !== 0) {
+    return res.status(400).json({ error: 'Duration must be in 15-minute increments.' });
+  }
+
+  const existingRows = await query(
+    `SELECT b.id, b.userId, b.roomId, b.date, b.startTime, b.durationHours, b.status, u.email AS userEmail
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     WHERE b.id = ?`,
+    [bookingId]
+  );
+
+  if (existingRows.length === 0) {
+    return res.status(404).json({ error: 'Booking not found.' });
+  }
+
+  const booking = existingRows[0];
+  if (booking.status !== 'active') {
+    return res.status(400).json({ error: 'Only active bookings can be edited.' });
+  }
+
+  const requestedDateTime = new Date(`${date}T${startTime}:00`);
+  if (Number.isNaN(requestedDateTime.getTime()) || requestedDateTime <= new Date()) {
+    return res.status(400).json({ error: 'Booking must be in the future.' });
+  }
+
+  const existingBookings = await query(
+    'SELECT id, startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status = ? AND id != ?',
+    [booking.roomId, date, 'active', bookingId]
+  );
+
+  const requestedStart = (() => {
+    const [hours, minutes] = startTime.split(':').map(Number);
+    return hours * 60 + minutes;
+  })();
+  const requestedEnd = requestedStart + duration * 60;
+
+  const hasOverlap = existingBookings.some((item) => {
+    const [hours, minutes] = item.startTime.split(':').map(Number);
+    const existingStart = hours * 60 + minutes;
+    const existingDuration = Number(item.durationHours) || 0;
+    const existingEnd = existingStart + existingDuration * 60;
+    return requestedStart < existingEnd && existingStart < requestedEnd;
+  });
+
+  if (hasOverlap) {
+    return res.status(400).json({ error: 'Selected room is already booked during that time.' });
+  }
+
+  await run(
+    'UPDATE bookings SET date = ?, startTime = ?, durationHours = ? WHERE id = ?',
+    [date, startTime, duration, bookingId]
+  );
+
+  const description = `${req.session.email} edited booking #${bookingId} for ${booking.userEmail} from ${booking.date} ${booking.startTime} (${booking.durationHours}h) to ${date} ${startTime} (${duration}h)`;
+  await logActivity(req.session.userId, 'admin_booking_updated', 'booking', bookingId, description);
+
+  res.json({ message: 'Booking updated successfully.' });
+});
+
+// Cancel an equipment loan as admin.
+app.post('/api/admin/loans/:id/cancel', requireAdmin, async (req, res) => {
+  const loanId = Number(req.params.id);
+  if (!Number.isFinite(loanId) || loanId <= 0) {
+    return res.status(400).json({ error: 'Invalid loan ID.' });
+  }
+
+  const rows = await query(
+    `SELECT l.id, l.userId, l.borrowDate, l.returnDate, l.status, u.email AS userEmail
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     WHERE l.id = ?`,
+    [loanId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Loan not found.' });
+  }
+
+  const loan = rows[0];
+  if (loan.status !== 'active') {
+    return res.status(400).json({ error: 'Loan is already cancelled.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (loan.returnDate < today) {
+    return res.status(400).json({ error: 'Past loans cannot be cancelled.' });
+  }
+
+  await run('UPDATE loans SET status = ? WHERE id = ?', ['cancelled', loanId]);
+
+  const description = `${req.session.email} cancelled loan #${loanId} for ${loan.userEmail} (borrowed ${loan.borrowDate}, return ${loan.returnDate})`;
+  await logActivity(req.session.userId, 'admin_loan_cancelled', 'loan', loanId, description);
+
+  res.json({ message: 'Loan cancelled successfully.' });
+});
+
+// Edit an equipment loan return date as admin.
+app.patch('/api/admin/loans/:id', requireAdmin, async (req, res) => {
+  const loanId = Number(req.params.id);
+  const returnDate = String(req.body?.returnDate || '').trim();
+
+  if (!Number.isFinite(loanId) || loanId <= 0) {
+    return res.status(400).json({ error: 'Invalid loan ID.' });
+  }
+
+  if (!returnDate) {
+    return res.status(400).json({ error: 'Return date is required.' });
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(returnDate)) {
+    return res.status(400).json({ error: 'Return date must be in YYYY-MM-DD format.' });
+  }
+
+  const rows = await query(
+    `SELECT l.id, l.userId, l.borrowDate, l.returnDate, l.status, u.email AS userEmail
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     WHERE l.id = ?`,
+    [loanId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Loan not found.' });
+  }
+
+  const loan = rows[0];
+  if (loan.status !== 'active') {
+    return res.status(400).json({ error: 'Only active loans can be edited.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (loan.returnDate < today) {
+    return res.status(400).json({ error: 'Past loans cannot be edited.' });
+  }
+
+  if (returnDate < today) {
+    return res.status(400).json({ error: 'Return date must be today or later.' });
+  }
+
+  if (returnDate < loan.borrowDate) {
+    return res.status(400).json({ error: 'Return date cannot be before borrow date.' });
+  }
+
+  await run('UPDATE loans SET returnDate = ? WHERE id = ?', [returnDate, loanId]);
+
+  const description = `${req.session.email} edited loan #${loanId} for ${loan.userEmail} return date from ${loan.returnDate} to ${returnDate}`;
+  await logActivity(req.session.userId, 'admin_loan_updated', 'loan', loanId, description);
+
+  res.json({ message: 'Loan updated successfully.' });
+});
+
 // Return all rooms for admin room management.
 app.get('/api/admin/rooms', requireAdmin, async (req, res) => {
   const rooms = await query('SELECT id, name, location FROM rooms ORDER BY name ASC');
@@ -1170,7 +1451,6 @@ app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
      FROM activity_history ah
      JOIN users actor ON actor.id = ah.userId
      LEFT JOIN users target ON target.id = ah.resourceId
-     WHERE ah.resourceType = 'user'
      ORDER BY ah.timestamp DESC, ah.id DESC
      LIMIT 100`
   );

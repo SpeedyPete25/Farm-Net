@@ -33,6 +33,8 @@ const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
 const usersList = document.getElementById('users-list');
+const adminBookingsList = document.getElementById('admin-bookings-list');
+const adminLoansList = document.getElementById('admin-loans-list');
 const auditLogList = document.getElementById('audit-log-list');
 const roomManagementList = document.getElementById('room-management-list');
 const roomManagementForm = document.getElementById('room-management-form');
@@ -322,6 +324,8 @@ const equipmentPage = createEquipmentPage({
 
 const adminPage = createAdminPage({
   usersList,
+  adminBookingsList,
+  adminLoansList,
   auditLogList,
   requestJson
 });
