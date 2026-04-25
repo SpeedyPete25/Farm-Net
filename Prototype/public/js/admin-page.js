@@ -196,7 +196,7 @@ export function createAdminPage(deps) {
 
   /**
    * Render loan management table.
-   * @param {Array<{ id: number, userEmail: string, equipmentName: string, equipmentCode?: string, borrowDate: string, returnDate: string, status: string }>} loans
+    * @param {Array<{ id: number, userEmail: string, equipmentName: string, equipmentCode?: string, borrowDate: string, returnDate: string, status: string, returnCondition?: string, returnConditionPhotoPath?: string }>} loans
    */
   function renderLoans(loans) {
     if (!loans || loans.length === 0) {
@@ -214,6 +214,7 @@ export function createAdminPage(deps) {
           <th>User</th>
           <th>Equipment</th>
           <th>Loan Window</th>
+          <th>Return Condition / Photo</th>
           <th>Status</th>
           <th>Actions</th>
         </tr>
@@ -235,6 +236,37 @@ export function createAdminPage(deps) {
 
       const windowCell = document.createElement('td');
       windowCell.textContent = `${loan.borrowDate} to ${loan.returnDate}`;
+
+      const returnStateCell = document.createElement('td');
+      const conditionText = typeof loan.returnCondition === 'string' ? loan.returnCondition.trim() : '';
+      const photoPath = typeof loan.returnConditionPhotoPath === 'string' ? loan.returnConditionPhotoPath.trim() : '';
+
+      if (loan.status === 'returned') {
+        const conditionLine = document.createElement('p');
+        conditionLine.textContent = conditionText
+          ? `Condition: ${conditionText}`
+          : 'Condition: Not provided';
+
+        const photoLine = document.createElement('p');
+        if (photoPath && /^https?:\/\//i.test(photoPath)) {
+          photoLine.textContent = 'Photo: ';
+          const link = document.createElement('a');
+          link.href = photoPath;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'View reference';
+          photoLine.appendChild(link);
+        } else {
+          photoLine.textContent = photoPath
+            ? `Photo: ${photoPath}`
+            : 'Photo: Can be added later';
+        }
+
+        returnStateCell.appendChild(conditionLine);
+        returnStateCell.appendChild(photoLine);
+      } else {
+        returnStateCell.textContent = '-';
+      }
 
       const statusCell = document.createElement('td');
       statusCell.textContent = loan.status;
@@ -269,6 +301,7 @@ export function createAdminPage(deps) {
       row.appendChild(userCell);
       row.appendChild(equipmentCell);
       row.appendChild(windowCell);
+      row.appendChild(returnStateCell);
       row.appendChild(statusCell);
       row.appendChild(actionsCell);
       tbody.appendChild(row);
