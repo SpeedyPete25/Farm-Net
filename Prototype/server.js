@@ -222,6 +222,9 @@ async function initDatabase() {
     borrowDate TEXT NOT NULL,
     returnDate TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
+    returnCondition TEXT,
+    returnConditionPhotoPath TEXT,
+    returnedAt TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(userId) REFERENCES users(id),
     FOREIGN KEY(equipmentId) REFERENCES equipment(id),
@@ -238,6 +241,21 @@ async function initDatabase() {
   const hasEquipmentUnitId = loanColumns.some(col => col.name === 'equipmentUnitId');
   if (!hasEquipmentUnitId) {
     await run(`ALTER TABLE loans ADD COLUMN equipmentUnitId INTEGER`);
+  }
+
+  const hasReturnCondition = loanColumns.some(col => col.name === 'returnCondition');
+  if (!hasReturnCondition) {
+    await run(`ALTER TABLE loans ADD COLUMN returnCondition TEXT`);
+  }
+
+  const hasReturnConditionPhotoPath = loanColumns.some(col => col.name === 'returnConditionPhotoPath');
+  if (!hasReturnConditionPhotoPath) {
+    await run(`ALTER TABLE loans ADD COLUMN returnConditionPhotoPath TEXT`);
+  }
+
+  const hasReturnedAt = loanColumns.some(col => col.name === 'returnedAt');
+  if (!hasReturnedAt) {
+    await run(`ALTER TABLE loans ADD COLUMN returnedAt TEXT`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS activity_history (
@@ -487,7 +505,8 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   let loans;
   if (statusFilter === 'all') {
     loans = await query(
-      `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status
+      `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate,
+              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
        LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
@@ -498,7 +517,8 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   } else {
     const today = new Date().toISOString().slice(0, 10);
     loans = await query(
-      `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status
+      `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate,
+              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
        LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
@@ -569,6 +589,46 @@ app.post('/api/cancel-loan', requireLogin, async (req, res) => {
 
   await run('UPDATE loans SET status = ? WHERE id = ?', ['cancelled', loanId]);
   res.json({ message: 'Loan cancelled successfully.' });
+});
+
+// Mark an equipment loan as returned and capture return condition notes.
+app.post('/api/return-loan', requireLogin, async (req, res) => {
+  const { loanId, returnCondition, returnConditionPhotoPath } = req.body;
+  if (!loanId) {
+    return res.status(400).json({ error: 'Loan ID is required.' });
+  }
+
+  const existing = await query('SELECT * FROM loans WHERE id = ? AND userId = ?', [loanId, req.session.userId]);
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'Loan not found or not owned by user.' });
+  }
+
+  const loan = existing[0];
+  if (loan.status !== 'active') {
+    return res.status(400).json({ error: 'Only active loans can be returned.' });
+  }
+
+  const conditionText = typeof returnCondition === 'string' ? returnCondition.trim() : '';
+  if (!conditionText) {
+    return res.status(400).json({ error: 'Condition description is required when returning equipment.' });
+  }
+  if (conditionText.length > 1000) {
+    return res.status(400).json({ error: 'Condition description is too long (max 1000 characters).' });
+  }
+
+  const photoPath = typeof returnConditionPhotoPath === 'string' && returnConditionPhotoPath.trim()
+    ? returnConditionPhotoPath.trim()
+    : null;
+
+  await run(
+    'UPDATE loans SET status = ?, returnCondition = ?, returnConditionPhotoPath = ?, returnedAt = CURRENT_TIMESTAMP WHERE id = ?',
+    ['returned', conditionText, photoPath, loanId]
+  );
+
+  const description = `Returned equipment loan ${loanId}. Condition: ${conditionText}`;
+  await logActivity(req.session.userId, 'loan_returned', 'loan', loanId, description);
+
+  res.json({ message: 'Equipment returned successfully.' });
 });
 
 // Edit a room booking owned by the current user.
@@ -879,7 +939,8 @@ app.get('/api/admin/loans', requireAdmin, async (req, res) => {
   if (statusFilter === 'all') {
     loans = await query(
       `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
-              eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status, l.createdAt
+              eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status,
+              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt
        FROM loans l
        JOIN users u ON u.id = l.userId
        JOIN equipment e ON e.id = l.equipmentId
@@ -891,7 +952,8 @@ app.get('/api/admin/loans', requireAdmin, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     loans = await query(
       `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
-              eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status, l.createdAt
+              eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status,
+              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt
        FROM loans l
        JOIN users u ON u.id = l.userId
        JOIN equipment e ON e.id = l.equipmentId

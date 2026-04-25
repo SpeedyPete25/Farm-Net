@@ -204,6 +204,42 @@ async function cancelLoan(loanId) {
 }
 
 /**
+ * Mark an active equipment loan as returned with condition details.
+ * @param {number} loanId Loan identifier.
+ */
+async function returnLoan(loanId) {
+  const returnCondition = prompt('Describe the equipment condition on return:');
+  if (returnCondition === null) return;
+
+  const conditionText = returnCondition.trim();
+  if (!conditionText) {
+    alert('Please include a condition description.');
+    return;
+  }
+
+  // Photo upload is a future enhancement; users can supply a reference path now or leave blank.
+  const photoPathInput = prompt('Optional: add a photo path/reference now (or leave blank to add later):', '');
+  if (photoPathInput === null) return;
+
+  const result = await requestJson('/api/return-loan', {
+    method: 'POST',
+    body: JSON.stringify({
+      loanId,
+      returnCondition: conditionText,
+      returnConditionPhotoPath: photoPathInput.trim() || null
+    })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+}
+
+/**
  * Edit an existing room booking for the current user.
  * @param {{ id: number, date: string, startTime: string, durationHours: number|string }} booking Booking details.
  */
@@ -295,6 +331,7 @@ const dashboardPage = createDashboardPage({
   formatDuration,
   onCancelBooking: cancelBooking,
   onCancelLoan: cancelLoan,
+  onReturnLoan: returnLoan,
   onEditBooking: editBooking,
   onEditLoan: editLoan
 });

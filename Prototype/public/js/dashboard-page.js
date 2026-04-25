@@ -10,11 +10,12 @@
  * @param {(duration: number|string) => string} deps.formatDuration Duration formatter.
  * @param {(bookingId: number) => Promise<void>} deps.onCancelBooking Cancel booking callback.
  * @param {(loanId: number) => Promise<void>} deps.onCancelLoan Cancel loan callback.
+ * @param {(loanId: number) => Promise<void>} deps.onReturnLoan Return loan callback.
  * @param {(booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>} deps.onEditBooking Edit booking callback.
  * @param {(loan: { id: number, borrowDate: string, returnDate: string }) => Promise<void>} deps.onEditLoan Edit loan callback.
  * @returns {{ render: (requests: any) => void }} Dashboard page API.
  */
-export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelLoan, onEditBooking, onEditLoan }) {
+export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelLoan, onReturnLoan, onEditBooking, onEditLoan }) {
   requestsList.addEventListener('click', async (event) => {
     const editBookingBtn = event.target.closest('[data-action="edit-booking"]');
     if (editBookingBtn) {
@@ -65,6 +66,15 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
       if (Number.isFinite(loanId)) {
         await onCancelLoan(loanId);
       }
+      return;
+    }
+
+    const returnLoanBtn = event.target.closest('[data-action="return-loan"]');
+    if (returnLoanBtn) {
+      const loanId = Number(returnLoanBtn.dataset.loanId);
+      if (Number.isFinite(loanId)) {
+        await onReturnLoan(loanId);
+      }
     }
   });
 
@@ -113,13 +123,21 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
             const today = new Date().toISOString().slice(0, 10);
             const isExpired = loan.returnDate < today;
             const isCancelled = loan.status === 'cancelled';
+            const isReturned = loan.status === 'returned';
             let statusLabel = '';
 
             if (isCancelled) {
               statusLabel = '<span class="status-label cancelled">Cancelled</span>';
+            } else if (isReturned) {
+              statusLabel = '<span class="status-label returned">Returned</span>';
             } else if (isExpired) {
               statusLabel = '<span class="status-label past">Expired</span>';
             }
+
+            const hasCondition = typeof loan.returnCondition === 'string' && loan.returnCondition.trim().length > 0;
+            const photoText = loan.returnConditionPhotoPath
+              ? `Photo: ${loan.returnConditionPhotoPath}`
+              : 'Photo: Can be added later';
 
             return `
             <div class="request-card ${isCancelled ? 'cancelled' : ''}">
@@ -127,10 +145,14 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
               ${loan.equipmentCode ? `<p>Assigned item: ${loan.equipmentCode}</p>` : ''}
               <p>Borrowed: ${loan.borrowDate}</p>
               <p>Return by: ${loan.returnDate}</p>
+              ${loan.returnedAt ? `<p>Returned at: ${new Date(loan.returnedAt).toLocaleString()}</p>` : ''}
+              ${hasCondition ? `<p>Condition: ${loan.returnCondition}</p>` : ''}
+              ${(isReturned || hasCondition) ? `<p>${photoText}</p>` : ''}
               ${statusLabel}
-              ${(!isExpired && !isCancelled) ? `
+              ${(loan.status === 'active') ? `
                 <div class="request-actions">
                   <button class="secondary action-button" data-action="edit-loan" data-loan-id="${loan.id}" data-loan-borrow-date="${loan.borrowDate}" data-loan-return-date="${loan.returnDate}">Edit</button>
+                  <button class="action-button" data-action="return-loan" data-loan-id="${loan.id}">Return</button>
                   <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel</button>
                 </div>
               ` : ''}
