@@ -147,7 +147,8 @@ async function initDatabase() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
     passwordHash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'user'
+    role TEXT NOT NULL DEFAULT 'user',
+    theme TEXT NOT NULL DEFAULT 'dark'
   )`);
 
   // Rename username column to email if it exists
@@ -173,6 +174,11 @@ async function initDatabase() {
   const hasRoleColumn = columns.some(col => col.name === 'role');
   if (!hasRoleColumn) {
     await run(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`);
+  }
+
+  const hasThemeColumn = columns.some(col => col.name === 'theme');
+  if (!hasThemeColumn) {
+    await run(`ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'dark'`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS rooms (
@@ -381,7 +387,13 @@ app.post('/api/login', async (req, res) => {
   req.session.userId = user.id;
   req.session.email = user.email;
   req.session.role = user.role;
-  res.json({ message: 'Login successful.', email: user.email, role: user.role });
+  req.session.theme = user.theme || 'dark';
+  res.json({
+    message: 'Login successful.',
+    email: user.email,
+    role: user.role,
+    theme: req.session.theme
+  });
 });
 
 // Logout endpoint clears the current session.
@@ -397,7 +409,30 @@ app.get('/api/profile', (req, res) => {
   if (!req.session.userId) {
     return res.json({ authenticated: false });
   }
-  res.json({ authenticated: true, email: req.session.email, role: req.session.role });
+  res.json({
+    authenticated: true,
+    email: req.session.email,
+    role: req.session.role,
+    theme: req.session.theme || 'dark'
+  });
+});
+
+// Read and update persisted user preferences.
+app.patch('/api/preferences', requireLogin, async (req, res) => {
+  const theme = String(req.body?.theme || '').trim().toLowerCase();
+  const allowedThemes = ['dark', 'light'];
+
+  if (!allowedThemes.includes(theme)) {
+    return res.status(400).json({ error: 'Invalid theme. Allowed values are dark and light.' });
+  }
+
+  await run('UPDATE users SET theme = ? WHERE id = ?', [theme, req.session.userId]);
+  req.session.theme = theme;
+
+  res.json({
+    message: 'Preferences updated successfully.',
+    preferences: { theme }
+  });
 });
 
 // Change password for the currently authenticated user.

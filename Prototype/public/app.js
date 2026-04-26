@@ -69,10 +69,25 @@ const newPasswordInput = document.getElementById('new-password');
 const confirmNewPasswordInput = document.getElementById('confirm-new-password');
 const changePasswordError = document.getElementById('change-password-error');
 const changePasswordSuccess = document.getElementById('change-password-success');
+const themeDarkToggle = document.getElementById('theme-dark-toggle');
+const themeSettingsError = document.getElementById('theme-settings-error');
+const themeSettingsSuccess = document.getElementById('theme-settings-success');
 
 const allPages = ['dashboard', 'rooms', 'equipment', 'settings', 'admin', 'room-management', 'equipment-management'];
 
 let isAdminUser = false;
+
+/**
+ * Apply visual theme to the document.
+ * @param {'dark'|'light'|string} theme
+ */
+function applyTheme(theme) {
+  const normalizedTheme = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', normalizedTheme);
+}
+
+// Default to dark mode for signed-out users and first-time visitors.
+applyTheme('dark');
 
 /**
  * Resolve the active page from URL hash.
@@ -395,6 +410,10 @@ const settingsPage = createSettingsPage({
   confirmNewPasswordInput,
   changePasswordError,
   changePasswordSuccess,
+  themeDarkToggle,
+  themeSettingsError,
+  themeSettingsSuccess,
+  applyTheme,
   requestJson
 });
 
@@ -405,6 +424,7 @@ const settingsPage = createSettingsPage({
 async function refreshDashboard(statusFilter = 'active') {
   const profile = await requestJson('/api/profile');
   if (!profile.authenticated) {
+    applyTheme('dark');
     isAdminUser = false;
     navAdmin.classList.add('hidden');
     navRoomManagement.classList.add('hidden');
@@ -418,6 +438,7 @@ async function refreshDashboard(statusFilter = 'active') {
 
   authSection.classList.add('hidden');
   dashboardSection.classList.remove('hidden');
+  settingsPage.setTheme(profile.theme || 'dark');
   isAdminUser = profile.role === 'admin';
   navAdmin.classList.toggle('hidden', !isAdminUser);
   navRoomManagement.classList.toggle('hidden', !isAdminUser);

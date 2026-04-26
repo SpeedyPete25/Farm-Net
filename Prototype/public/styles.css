@@ -1,4 +1,24 @@
 :root {
+  --bg: #0b1220;
+  --card: #111a2b;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --primary: #60a5fa;
+  --danger: #f87171;
+  --border: #334155;
+  --card-shadow: 0 8px 24px rgba(2, 6, 23, 0.5);
+  --soft-surface: #1f2937;
+  --panel-surface: #0f172a;
+  --line: #334155;
+  --success: #4ade80;
+  --slot-free: #052e16;
+  --slot-free-hover: #14532d;
+  --slot-selected: #166534;
+  --slot-busy-bg: #3f1d1d;
+  --slot-busy-text: #fecaca;
+}
+
+[data-theme='light'] {
   --bg: #f5f7fb;
   --card: #ffffff;
   --text: #1f2937;
@@ -6,6 +26,16 @@
   --primary: #2563eb;
   --danger: #ef4444;
   --border: #d1d5db;
+  --card-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  --soft-surface: #e5e7eb;
+  --panel-surface: #fcfdff;
+  --line: #e5e7eb;
+  --success: #15803d;
+  --slot-free: #f0fdf4;
+  --slot-free-hover: #bbf7d0;
+  --slot-selected: #86efac;
+  --slot-busy-bg: #fee2e2;
+  --slot-busy-text: #991b1b;
 }
 
 * {
@@ -43,7 +73,7 @@ h1 {
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 24px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--card-shadow);
 }
 
 .tabs {
@@ -57,7 +87,7 @@ h1 {
   padding: 10px 14px;
   border: 1px solid var(--border);
   background: none;
-  color: black;
+  color: var(--text);
   cursor: pointer;
   border-radius: 10px;
 }
@@ -92,6 +122,8 @@ input {
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
+  background: var(--panel-surface);
+  color: var(--text);
 }
 
 button {
@@ -104,7 +136,7 @@ button {
 }
 
 button.secondary {
-  background: #e5e7eb;
+  background: var(--soft-surface);
   color: var(--text);
 }
 
@@ -132,7 +164,7 @@ button.danger {
   grid-template-columns: 1fr auto;
   gap: 12px;
   padding: 14px 0;
-  border-bottom: 1px solid #eceff4;
+  border-bottom: 1px solid var(--line);
 }
 
 .item-row:last-child {
@@ -150,7 +182,7 @@ button.danger {
 
 .form-success {
   margin-top: 8px;
-  color: #15803d;
+  color: var(--success);
 }
 
 .toolbar {
@@ -168,7 +200,7 @@ button.danger {
 }
 
 .page-nav .secondary {
-  background: #e5e7eb;
+  background: var(--soft-surface);
   color: var(--text);
 }
 
@@ -195,15 +227,15 @@ button.danger {
 }
 
 .request-card {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--line);
   border-radius: 12px;
   padding: 14px;
-  background: #fcfdff;
+  background: var(--panel-surface);
 }
 
 .request-card.cancelled {
   opacity: 0.7;
-  background: #f9f9f9;
+  background: var(--soft-surface);
 }
 
 .status-label {
@@ -216,7 +248,7 @@ button.danger {
 }
 
 .status-label.past {
-  background: #e5e7eb;
+  background: var(--soft-surface);
   color: #6b7280;
 }
 
@@ -282,7 +314,7 @@ button.danger {
   justify-content: space-between;
   align-items: center;
   padding: 6px 12px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--line);
 }
 
 .slot:last-child {
@@ -290,22 +322,22 @@ button.danger {
 }
 
 .slot-free {
-  background: #f0fdf4;
+  background: var(--slot-free);
   cursor: pointer;
 }
 
 .slot-free:hover {
-  background: #bbf7d0;
+  background: var(--slot-free-hover);
 }
 
 .slot-selected {
-  background: #86efac !important;
+  background: var(--slot-selected) !important;
   font-weight: 600;
 }
 
 .slot-busy {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--slot-busy-bg);
+  color: var(--slot-busy-text);
   cursor: not-allowed;
 }
 
@@ -318,7 +350,7 @@ button.danger {
 .admin-users-table th,
 .admin-users-table td {
   text-align: left;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--line);
   padding: 10px 12px;
 }
 
@@ -331,7 +363,8 @@ button.danger {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel-surface);
+  color: var(--text);
 }
 
 .audit-log-list {
@@ -340,9 +373,9 @@ button.danger {
 }
 
 .audit-log-item {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fcfdff;
+  background: var(--panel-surface);
   padding: 12px;
 }
 
@@ -389,7 +422,7 @@ button.danger {
   padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: #f8fafc;
+  background: var(--panel-surface);
   font-size: 0.8rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }

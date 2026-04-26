@@ -5,8 +5,8 @@
 *Add or remove rooms and equipment
 
 ---Equipment---
-Return equipment page
-Submit status with return
+*Return equipment page
+*Submit status with return
 Submit photos with return
 
 ---Bookings---
@@ -30,5 +30,5 @@ Send confirmation emails and user has to click link to confirm
 
 --Settings--
 *Change password
-Dark mode
+*Dark mode
 Notification settings

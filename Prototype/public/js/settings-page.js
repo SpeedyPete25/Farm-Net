@@ -12,6 +12,10 @@
  *   confirmNewPasswordInput: HTMLInputElement,
  *   changePasswordError: HTMLElement,
  *   changePasswordSuccess: HTMLElement,
+ *   themeDarkToggle: HTMLInputElement,
+ *   themeSettingsError: HTMLElement,
+ *   themeSettingsSuccess: HTMLElement,
+ *   applyTheme: (theme: string) => void,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>
  * }} deps
  */
@@ -23,13 +27,55 @@ export function createSettingsPage(deps) {
     confirmNewPasswordInput,
     changePasswordError,
     changePasswordSuccess,
+    themeDarkToggle,
+    themeSettingsError,
+    themeSettingsSuccess,
+    applyTheme,
     requestJson
   } = deps;
+
+  let syncingThemeInput = false;
 
   function clearMessages() {
     changePasswordError.textContent = '';
     changePasswordSuccess.textContent = '';
+    themeSettingsError.textContent = '';
+    themeSettingsSuccess.textContent = '';
   }
+
+  function setTheme(theme) {
+    const normalizedTheme = theme === 'light' ? 'light' : 'dark';
+    syncingThemeInput = true;
+    themeDarkToggle.checked = normalizedTheme === 'dark';
+    syncingThemeInput = false;
+    applyTheme(normalizedTheme);
+  }
+
+  themeDarkToggle.addEventListener('change', async () => {
+    if (syncingThemeInput) {
+      return;
+    }
+
+    themeSettingsError.textContent = '';
+    themeSettingsSuccess.textContent = '';
+
+    const selectedTheme = themeDarkToggle.checked ? 'dark' : 'light';
+    const result = await requestJson('/api/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ theme: selectedTheme })
+    });
+
+    if (result.error) {
+      themeSettingsError.textContent = result.error;
+      syncingThemeInput = true;
+      themeDarkToggle.checked = !themeDarkToggle.checked;
+      syncingThemeInput = false;
+      return;
+    }
+
+    applyTheme(selectedTheme);
+    themeSettingsSuccess.textContent = 'Theme preference saved.';
+  });
 
   changePasswordForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -69,6 +115,7 @@ export function createSettingsPage(deps) {
   });
 
   return {
-    clearMessages
+    clearMessages,
+    setTheme
   };
 }
