@@ -7,7 +7,7 @@
 ---Equipment---
 *Return equipment page
 *Submit status with return
-Submit photos with return
+*Submit photos with return
 
 ---Bookings---
 *Cancel bookings

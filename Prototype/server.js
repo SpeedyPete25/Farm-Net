@@ -4,6 +4,7 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3');
 const fs = require('fs');
+const multer = require('multer');
 
 // Simple lab booking backend using Express and SQLite.
 // - Express serves API routes and the static frontend.
@@ -14,6 +15,31 @@ const app = express();
 // Application data directory for SQLite storage.
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+// Directory for equipment return condition photos.
+const photosDir = path.join(dataDir, 'return-photos');
+if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true });
+
+// Multer storage: save files with a randomised name to avoid collisions.
+const photoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, photosDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
+    cb(null, safeName);
+  }
+});
+
+const uploadPhoto = multer({
+  storage: photoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only image files are allowed.'));
+    }
+    cb(null, true);
+  }
+});
 
 const dbFile = path.join(dataDir, 'lab-booking.db');
 const db = new sqlite3.Database(dbFile);
@@ -626,44 +652,83 @@ app.post('/api/cancel-loan', requireLogin, async (req, res) => {
   res.json({ message: 'Loan cancelled successfully.' });
 });
 
-// Mark an equipment loan as returned and capture return condition notes.
-app.post('/api/return-loan', requireLogin, async (req, res) => {
-  const { loanId, returnCondition, returnConditionPhotoPath } = req.body;
+// Mark an equipment loan as returned and capture return condition notes + optional photo.
+// Accepts multipart/form-data so a photo file can be uploaded directly.
+app.post('/api/return-loan', requireLogin, (req, res, next) => {
+  uploadPhoto.single('photo')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ error: `Upload error: ${err.message}` });
+    }
+    if (err) {
+      return res.status(400).json({ error: err.message || 'File upload failed.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  const loanId = Number(req.body.loanId);
   if (!loanId) {
     return res.status(400).json({ error: 'Loan ID is required.' });
   }
 
   const existing = await query('SELECT * FROM loans WHERE id = ? AND userId = ?', [loanId, req.session.userId]);
   if (existing.length === 0) {
+    // Clean up any uploaded file if loan ownership check fails.
+    if (req.file) fs.unlink(req.file.path, () => {});
     return res.status(404).json({ error: 'Loan not found or not owned by user.' });
   }
 
   const loan = existing[0];
   if (loan.status !== 'active') {
+    if (req.file) fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: 'Only active loans can be returned.' });
   }
 
-  const conditionText = typeof returnCondition === 'string' ? returnCondition.trim() : '';
+  const conditionText = typeof req.body.returnCondition === 'string' ? req.body.returnCondition.trim() : '';
   if (!conditionText) {
+    if (req.file) fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: 'Condition description is required when returning equipment.' });
   }
   if (conditionText.length > 1000) {
+    if (req.file) fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: 'Condition description is too long (max 1000 characters).' });
   }
 
-  const photoPath = typeof returnConditionPhotoPath === 'string' && returnConditionPhotoPath.trim()
-    ? returnConditionPhotoPath.trim()
-    : null;
+  // Store only the filename (not full path) to avoid path traversal on retrieval.
+  const photoFilename = req.file ? req.file.filename : null;
 
   await run(
     'UPDATE loans SET status = ?, returnCondition = ?, returnConditionPhotoPath = ?, returnedAt = CURRENT_TIMESTAMP WHERE id = ?',
-    ['returned', conditionText, photoPath, loanId]
+    ['returned', conditionText, photoFilename, loanId]
   );
 
   const description = `Returned equipment loan ${loanId}. Condition: ${conditionText}`;
   await logActivity(req.session.userId, 'loan_returned', 'loan', loanId, description);
 
   res.json({ message: 'Equipment returned successfully.' });
+});
+
+// Serve a return-condition photo for a specific loan. Admin only.
+app.get('/api/admin/loans/:id/photo', requireAdmin, async (req, res) => {
+  const loanId = Number(req.params.id);
+  if (!Number.isFinite(loanId) || loanId <= 0) {
+    return res.status(400).json({ error: 'Invalid loan ID.' });
+  }
+
+  const rows = await query('SELECT returnConditionPhotoPath FROM loans WHERE id = ?', [loanId]);
+  if (rows.length === 0 || !rows[0].returnConditionPhotoPath) {
+    return res.status(404).json({ error: 'No photo found for this loan.' });
+  }
+
+  // Use only the stored filename joined against the known photos directory
+  // to prevent path traversal attacks.
+  const filename = path.basename(rows[0].returnConditionPhotoPath);
+  const filePath = path.join(photosDir, filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Photo file not found on server.' });
+  }
+
+  res.sendFile(filePath);
 });
 
 // Edit a room booking owned by the current user.

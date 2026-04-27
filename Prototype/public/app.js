@@ -219,39 +219,16 @@ async function cancelLoan(loanId) {
 }
 
 /**
- * Mark an active equipment loan as returned with condition details.
+ * Open the return equipment modal for the given loan.
  * @param {number} loanId Loan identifier.
  */
-async function returnLoan(loanId) {
-  const returnCondition = prompt('Describe the equipment condition on return:');
-  if (returnCondition === null) return;
-
-  const conditionText = returnCondition.trim();
-  if (!conditionText) {
-    alert('Please include a condition description.');
-    return;
-  }
-
-  // Photo upload is a future enhancement; users can supply a reference path now or leave blank.
-  const photoPathInput = prompt('Optional: add a photo path/reference now (or leave blank to add later):', '');
-  if (photoPathInput === null) return;
-
-  const result = await requestJson('/api/return-loan', {
-    method: 'POST',
-    body: JSON.stringify({
-      loanId,
-      returnCondition: conditionText,
-      returnConditionPhotoPath: photoPathInput.trim() || null
-    })
-  });
-
-  if (result.error) {
-    alert(result.error);
-    return;
-  }
-
-  alert(result.message);
-  await refreshDashboard(bookingFilter.value);
+function returnLoan(loanId) {
+  const modal = document.getElementById('return-loan-modal');
+  document.getElementById('return-loan-id').value = String(loanId);
+  document.getElementById('return-condition').value = '';
+  document.getElementById('return-photo').value = '';
+  document.getElementById('return-loan-error').textContent = '';
+  modal.classList.remove('hidden');
 }
 
 /**
@@ -507,6 +484,63 @@ registerForm.addEventListener('submit', async (event) => {
 });
 
 bookingFilter.addEventListener('change', async () => {
+  await refreshDashboard(bookingFilter.value);
+});
+
+// Return loan modal — submit and cancel handlers.
+const returnLoanModal = document.getElementById('return-loan-modal');
+const returnLoanForm = document.getElementById('return-loan-form');
+const returnLoanCancelBtn = document.getElementById('return-loan-cancel');
+
+returnLoanCancelBtn.addEventListener('click', () => {
+  returnLoanModal.classList.add('hidden');
+});
+
+returnLoanModal.addEventListener('click', (event) => {
+  if (event.target === returnLoanModal) {
+    returnLoanModal.classList.add('hidden');
+  }
+});
+
+returnLoanForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorEl = document.getElementById('return-loan-error');
+  errorEl.textContent = '';
+
+  const loanId = document.getElementById('return-loan-id').value;
+  const condition = document.getElementById('return-condition').value.trim();
+  const photoFile = document.getElementById('return-photo').files[0];
+
+  if (!condition) {
+    errorEl.textContent = 'Please describe the equipment condition.';
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('loanId', loanId);
+  formData.append('returnCondition', condition);
+  if (photoFile) {
+    formData.append('photo', photoFile);
+  }
+
+  const submitBtn = returnLoanForm.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+
+  const response = await fetch('/api/return-loan', {
+    method: 'POST',
+    body: formData,
+    credentials: 'include'
+  });
+  const result = await response.json();
+  submitBtn.disabled = false;
+
+  if (result.error) {
+    errorEl.textContent = result.error;
+    return;
+  }
+
+  returnLoanModal.classList.add('hidden');
+  alert(result.message);
   await refreshDashboard(bookingFilter.value);
 });
 

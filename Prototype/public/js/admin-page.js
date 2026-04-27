@@ -248,18 +248,16 @@ export function createAdminPage(deps) {
           : 'Condition: Not provided';
 
         const photoLine = document.createElement('p');
-        if (photoPath && /^https?:\/\//i.test(photoPath)) {
+        if (photoPath) {
           photoLine.textContent = 'Photo: ';
           const link = document.createElement('a');
-          link.href = photoPath;
+          link.href = `/api/admin/loans/${loan.id}/photo`;
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
-          link.textContent = 'View reference';
+          link.textContent = 'View photo';
           photoLine.appendChild(link);
         } else {
-          photoLine.textContent = photoPath
-            ? `Photo: ${photoPath}`
-            : 'Photo: Can be added later';
+          photoLine.textContent = 'Photo: None';
         }
 
         returnStateCell.appendChild(conditionLine);
