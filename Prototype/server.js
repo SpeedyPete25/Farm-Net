@@ -4,6 +4,8 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3');
 const fs = require('fs');
+const dns = require('dns').promises;
+const net = require('net');
 const multer = require('multer');
 
 // Simple lab booking backend using Express and SQLite.
@@ -43,6 +45,10 @@ const uploadPhoto = multer({
 
 const dbFile = path.join(dataDir, 'lab-booking.db');
 const db = new sqlite3.Database(dbFile);
+
+const EMAIL_VERIFICATION_ENABLED = process.env.EMAIL_VERIFICATION_ENABLED !== 'false';
+const EMAIL_VERIFICATION_TIMEOUT_MS = Number(process.env.EMAIL_VERIFICATION_TIMEOUT_MS || 8000);
+const EMAIL_VERIFICATION_MAX_MX = Number(process.env.EMAIL_VERIFICATION_MAX_MX || 3);
 
 // Handle database errors
 db.on('error', (err) => {
@@ -89,6 +95,228 @@ function run(sql, params = []) {
       else resolve(this);
     });
   });
+}
+
+/**
+ * Wait for a complete SMTP response line (supports multiline responses).
+ * @param {import('net').Socket} socket
+ * @param {{ buffer: string }} state
+ * @param {number} timeoutMs
+ * @returns {Promise<{ code: number, message: string }>}
+ */
+function readSmtpResponse(socket, state, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let timeoutId = null;
+
+    function cleanup() {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      socket.off('data', onData);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+    }
+
+    function parseResponseFromBuffer() {
+      const lines = state.buffer.split(/\r?\n/);
+      if (!state.buffer.endsWith('\n')) {
+        state.buffer = lines.pop() || '';
+      } else {
+        state.buffer = '';
+      }
+
+      if (lines.length === 0) {
+        return null;
+      }
+
+      let candidateCode = null;
+      let candidateMessage = null;
+      for (const line of lines) {
+        const match = line.match(/^(\d{3})([\s-])(.*)$/);
+        if (!match) {
+          continue;
+        }
+
+        const code = Number(match[1]);
+        const separator = match[2];
+        const message = match[3] || '';
+        if (separator === ' ') {
+          return { code, message };
+        }
+
+        candidateCode = code;
+        candidateMessage = message;
+      }
+
+      if (candidateCode != null) {
+        return { code: candidateCode, message: candidateMessage || '' };
+      }
+
+      return null;
+    }
+
+    function onData(chunk) {
+      state.buffer += chunk.toString('utf8');
+      const parsed = parseResponseFromBuffer();
+      if (parsed) {
+        cleanup();
+        resolve(parsed);
+      }
+    }
+
+    function onError(err) {
+      cleanup();
+      reject(err);
+    }
+
+    function onClose() {
+      cleanup();
+      reject(new Error('SMTP connection closed unexpectedly.'));
+    }
+
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('SMTP response timed out.'));
+    }, timeoutMs);
+
+    socket.on('data', onData);
+    socket.on('error', onError);
+    socket.on('close', onClose);
+
+    const immediate = parseResponseFromBuffer();
+    if (immediate) {
+      cleanup();
+      resolve(immediate);
+    }
+  });
+}
+
+/**
+ * Send a single SMTP command and await response.
+ * @param {import('net').Socket} socket
+ * @param {{ buffer: string }} state
+ * @param {string} command
+ * @param {number} timeoutMs
+ * @returns {Promise<{ code: number, message: string }>}
+ */
+async function sendSmtpCommand(socket, state, command, timeoutMs) {
+  socket.write(`${command}\r\n`);
+  return readSmtpResponse(socket, state, timeoutMs);
+}
+
+/**
+ * Validate mailbox using SMTP RCPT for one MX server.
+ * @param {string} mxHost
+ * @param {string} email
+ * @returns {Promise<{ status: 'valid'|'invalid'|'indeterminate', reason?: string }>}
+ */
+async function verifyMailboxAgainstMx(mxHost, email) {
+  const timeoutMs = EMAIL_VERIFICATION_TIMEOUT_MS;
+  const socket = net.createConnection({ host: mxHost, port: 25, timeout: timeoutMs });
+
+  await new Promise((resolve, reject) => {
+    socket.once('connect', resolve);
+    socket.once('error', reject);
+    socket.once('timeout', () => reject(new Error('SMTP connect timeout.')));
+  });
+
+  const state = { buffer: '' };
+
+  try {
+    const greeting = await readSmtpResponse(socket, state, timeoutMs);
+    if (greeting.code !== 220) {
+      return { status: 'indeterminate', reason: `SMTP greeting failed (${greeting.code}).` };
+    }
+
+    const ehloHost = 'farm-net.local';
+    const ehlo = await sendSmtpCommand(socket, state, `EHLO ${ehloHost}`, timeoutMs);
+    if (ehlo.code < 200 || ehlo.code >= 400) {
+      const helo = await sendSmtpCommand(socket, state, `HELO ${ehloHost}`, timeoutMs);
+      if (helo.code < 200 || helo.code >= 400) {
+        return { status: 'indeterminate', reason: `SMTP HELO failed (${helo.code}).` };
+      }
+    }
+
+    const mailFrom = await sendSmtpCommand(socket, state, 'MAIL FROM:<>', timeoutMs);
+    if (mailFrom.code < 200 || mailFrom.code >= 400) {
+      return { status: 'indeterminate', reason: `SMTP MAIL FROM failed (${mailFrom.code}).` };
+    }
+
+    const rcptTo = await sendSmtpCommand(socket, state, `RCPT TO:<${email}>`, timeoutMs);
+    if (rcptTo.code === 250 || rcptTo.code === 251 || rcptTo.code === 252) {
+      return { status: 'valid' };
+    }
+
+    if (rcptTo.code >= 500 && rcptTo.code < 600) {
+      return { status: 'invalid', reason: `Mailbox rejected by mail server (${rcptTo.code}).` };
+    }
+
+    return { status: 'indeterminate', reason: `Mailbox verification returned ${rcptTo.code}.` };
+  } finally {
+    try {
+      socket.write('QUIT\r\n');
+    } catch {
+      // Ignore write failures when closing a transient verification socket.
+    }
+    socket.end();
+    socket.destroy();
+  }
+}
+
+/**
+ * Verify that an email domain has MX records and mailbox is accepted by SMTP server.
+ * @param {string} email
+ * @returns {Promise<{ valid: boolean, error?: string }>}
+ */
+async function verifyEmailAddressExists(email) {
+  const parts = String(email || '').split('@');
+  const domain = String(parts[1] || '').toLowerCase().trim();
+
+  if (!domain) {
+    return { valid: false, error: 'Email domain is invalid.' };
+  }
+
+  let mxRecords;
+  try {
+    mxRecords = await dns.resolveMx(domain);
+  } catch {
+    return { valid: false, error: 'Could not find mail servers for this email domain.' };
+  }
+
+  if (!Array.isArray(mxRecords) || mxRecords.length === 0) {
+    return { valid: false, error: 'Email domain does not publish mail servers (MX records).' };
+  }
+
+  const sortedMx = [...mxRecords]
+    .filter((row) => row && row.exchange)
+    .sort((a, b) => a.priority - b.priority)
+    .slice(0, Math.max(1, EMAIL_VERIFICATION_MAX_MX));
+
+  if (sortedMx.length === 0) {
+    return { valid: false, error: 'Email domain does not publish usable mail servers.' };
+  }
+
+  let lastIndeterminateReason = 'Mailbox could not be verified.';
+
+  for (const mx of sortedMx) {
+    try {
+      const result = await verifyMailboxAgainstMx(mx.exchange, email);
+      if (result.status === 'valid') {
+        return { valid: true };
+      }
+      if (result.status === 'invalid') {
+        return { valid: false, error: result.reason || 'Mailbox does not exist.' };
+      }
+      lastIndeterminateReason = result.reason || lastIndeterminateReason;
+    } catch (err) {
+      lastIndeterminateReason = err.message || lastIndeterminateReason;
+    }
+  }
+
+  return {
+    valid: false,
+    error: `Mailbox could not be verified via SMTP. ${lastIndeterminateReason}`
+  };
 }
 
 /**
@@ -377,6 +605,13 @@ app.post('/api/register', async (req, res) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  if (EMAIL_VERIFICATION_ENABLED) {
+    const verification = await verifyEmailAddressExists(email);
+    if (!verification.valid) {
+      return res.status(400).json({ error: verification.error || 'Email mailbox could not be verified.' });
+    }
   }
 
   const passwordHash = await bcrypt.hash(password, 10);

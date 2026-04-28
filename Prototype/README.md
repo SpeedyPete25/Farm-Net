@@ -47,12 +47,19 @@ npm start
 ## How it works
 
 - Users register and log in through `/api/register` and `/api/login`.
+- Registration performs MX lookup and SMTP mailbox verification before account creation.
 - Authenticated users can load resources from `/api/resources`.
 - Room booking requests are sent to `/api/book-room`.
 - Room cancellation requests are sent to `/api/cancel-booking` (only your upcoming bookings can be cancelled).
 - View bookings with `/api/my-requests?status=active` (default) or `/api/my-requests?status=all` for historical view.
 - Equipment borrowing requests are sent to `/api/borrow-equipment`.
 - The server validates 15-minute booking increments and prevents overlapping room reservations.
+
+## Email Verification Controls
+
+- `EMAIL_VERIFICATION_ENABLED`: defaults to `true`. Set to `false` to bypass MX/SMTP mailbox checks (useful in offline local development).
+- `EMAIL_VERIFICATION_TIMEOUT_MS`: defaults to `8000`.
+- `EMAIL_VERIFICATION_MAX_MX`: defaults to `3`.
 
 ## Modify rooms or equipment
 
