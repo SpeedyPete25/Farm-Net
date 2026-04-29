@@ -16,12 +16,19 @@
  * @param {HTMLElement} deps.bookingError Booking error message element.
  * @param {HTMLElement} deps.bookingCancel Booking cancel button.
  * @param {HTMLElement} deps.scheduleGrid Schedule grid container.
+ * @param {HTMLSelectElement} deps.timetableRoomSelect Room dropdown for timetable.
+ * @param {HTMLElement} deps.timetableWeekLabel Week label span element.
+ * @param {HTMLElement} deps.timetableWeekNav Week navigation bar element.
+ * @param {HTMLElement} deps.timetableGrid Timetable grid container.
+ * @param {HTMLButtonElement} deps.timetablePrev Timetable previous-week button.
+ * @param {HTMLButtonElement} deps.timetableNext Timetable next-week button.
+ * @param {HTMLButtonElement} deps.timetableToday Timetable this-week button.
  * @param {(url: string, options?: RequestInit) => Promise<any>} deps.requestJson API request helper.
  * @param {() => string} deps.getTodayDateString Returns today's date in YYYY-MM-DD.
  * @param {() => string} deps.getNextQuarterTime Returns next quarter-hour in HH:MM.
  * @param {(duration: number|string) => string} deps.formatDuration Duration formatter.
  * @param {() => Promise<void>} deps.onBookingCreated Callback after successful booking.
- * @returns {{ render: (rooms: any[]) => void, hideBookingPanel: () => void }} Rooms page API.
+ * @returns {{ render: (rooms: any[]) => void, hideBookingPanel: () => void, loadTimetable: () => void }} Rooms page API.
  */
 export function createRoomsPage({
   roomsList,
@@ -34,6 +41,13 @@ export function createRoomsPage({
   bookingError,
   bookingCancel,
   scheduleGrid,
+  timetableRoomSelect,
+  timetableWeekLabel,
+  timetableWeekNav,
+  timetableGrid,
+  timetablePrev,
+  timetableNext,
+  timetableToday,
   requestJson,
   getTodayDateString,
   getNextQuarterTime,
@@ -42,9 +56,151 @@ export function createRoomsPage({
 }) {
   let activeBookingRoomId = null;
 
-  /**
-   * Constrain minimum selectable booking time based on selected date.
-   */
+  // ── Timetable ──────────────────────────────────────────────────────────────
+
+  const TIMETABLE_START_HOUR = 8;
+  const TIMETABLE_END_HOUR = 20; // exclusive
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  /** Returns the Monday of the week containing the given YYYY-MM-DD string. */
+  function getMondayOf(dateStr) {
+    const d = new Date(`${dateStr}T00:00:00`);
+    const dow = d.getDay(); // 0=Sun,1=Mon,...,6=Sat
+    const diff = (dow === 0 ? -6 : 1 - dow);
+    d.setDate(d.getDate() + diff);
+    return d.toISOString().slice(0, 10);
+  }
+
+  /** Shift a YYYY-MM-DD string by `days` days. */
+  function shiftDate(dateStr, days) {
+    const d = new Date(`${dateStr}T00:00:00`);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+
+  /** Format a YYYY-MM-DD as a short human label, e.g. "Mon 28 Apr". */
+  function formatDayLabel(dateStr) {
+    const d = new Date(`${dateStr}T00:00:00`);
+    return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  // Track current week start (always a Monday) and selected room.
+  let weekStart = getMondayOf(getTodayDateString());
+  let timetableRoomId = null;
+  let timetableRoomName = '';
+
+  /** Update the week label text. */
+  function updateWeekLabel() {
+    const end = shiftDate(weekStart, 6);
+    const startLabel = new Date(`${weekStart}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    const endLabel = new Date(`${end}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+    timetableWeekLabel.textContent = `${startLabel} – ${endLabel}`;
+  }
+
+  /** Render the 7-day timetable grid for the selected room and week. */
+  async function renderTimetable() {
+    if (!timetableRoomId) return;
+
+    timetableGrid.innerHTML = '<p style="color:var(--muted);padding:12px;">Loading…</p>';
+    updateWeekLabel();
+
+    const data = await requestJson(`/api/timetable?roomId=${timetableRoomId}&weekStart=${weekStart}`);
+    if (!data || !Array.isArray(data.dates)) {
+      timetableGrid.innerHTML = '<p style="color:var(--muted);padding:12px;">Could not load timetable.</p>';
+      return;
+    }
+
+    const { dates, bookings } = data;
+    const today = getTodayDateString();
+
+    // Build occupied set: key = `${date}:${slotLabel}`
+    const occupied = new Set();
+    for (const booking of bookings) {
+      const [hour, minute] = booking.startTime.split(':').map(Number);
+      const totalSlots = Math.round(Number(booking.durationHours) / 0.5);
+      for (let i = 0; i < totalSlots; i++) {
+        const mins = hour * 60 + minute + i * 30;
+        const label = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+        occupied.add(`${booking.date}:${label}`);
+      }
+    }
+
+    // 8 columns: time label + 7 days
+    let html = '<div class="timetable" style="--tt-cols:8;">';
+
+    // Header row: blank corner + day headers
+    html += '<div class="tt-header tt-corner"></div>';
+    for (let i = 0; i < 7; i++) {
+      const dateStr = dates[i];
+      const isToday = dateStr === today;
+      html += `<div class="tt-header${isToday ? ' tt-today' : ''}">${DAY_NAMES[i]}<span class="tt-location">${formatDayLabel(dateStr)}</span></div>`;
+    }
+
+    // Time rows
+    for (let mins = TIMETABLE_START_HOUR * 60; mins < TIMETABLE_END_HOUR * 60; mins += 30) {
+      const slotLabel = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+      html += `<div class="tt-time">${slotLabel}</div>`;
+
+      for (let i = 0; i < 7; i++) {
+        const dateStr = dates[i];
+        const busy = occupied.has(`${dateStr}:${slotLabel}`);
+        const isPast = dateStr < today || (dateStr === today && slotLabel < getTodayDateString().slice(0, 5));
+
+        if (busy) {
+          html += `<div class="tt-cell tt-busy" title="Booked"></div>`;
+        } else if (isPast) {
+          html += `<div class="tt-cell tt-past"></div>`;
+        } else {
+          html += `<div class="tt-cell tt-free" data-date="${dateStr}" data-slot-time="${slotLabel}" title="Book at ${slotLabel} on ${formatDayLabel(dateStr)}"></div>`;
+        }
+      }
+    }
+
+    html += '</div>';
+    timetableGrid.innerHTML = html;
+  }
+
+  timetableRoomSelect.addEventListener('change', () => {
+    const selected = timetableRoomSelect.options[timetableRoomSelect.selectedIndex];
+    timetableRoomId = selected.value ? Number(selected.value) : null;
+    timetableRoomName = selected.text;
+
+    if (timetableRoomId) {
+      timetableWeekNav.classList.remove('hidden');
+      renderTimetable();
+    } else {
+      timetableWeekNav.classList.add('hidden');
+      timetableGrid.innerHTML = '';
+    }
+  });
+
+  timetablePrev.addEventListener('click', () => {
+    weekStart = shiftDate(weekStart, -7);
+    renderTimetable();
+  });
+
+  timetableNext.addEventListener('click', () => {
+    weekStart = shiftDate(weekStart, 7);
+    renderTimetable();
+  });
+
+  timetableToday.addEventListener('click', () => {
+    weekStart = getMondayOf(getTodayDateString());
+    renderTimetable();
+  });
+
+  // Clicking a free timetable cell opens the booking form pre-filled
+  timetableGrid.addEventListener('click', (event) => {
+    const cell = event.target.closest('.tt-free[data-date]');
+    if (!cell) return;
+    const date = cell.dataset.date;
+    const slotTime = cell.dataset.slotTime;
+    bookingDateInput.value = date;
+    openBookingPanel(timetableRoomId, timetableRoomName, slotTime);
+  });
+
+  // ── Booking form ───────────────────────────────────────────────────────────
   function updateBookingTimeMin() {
     const today = getTodayDateString();
     const selected = bookingDateInput.value;
@@ -138,27 +294,21 @@ export function createRoomsPage({
    * Open the booking panel for a room and load its schedule.
    * @param {number} roomId Room identifier.
    * @param {string} roomName Room display name.
+   * @param {string} [presetTime] Optional HH:MM to pre-fill the start time.
    */
-  function openBookingPanel(roomId, roomName) {
+  function openBookingPanel(roomId, roomName, presetTime) {
     activeBookingRoomId = roomId;
     bookingRoomName.textContent = roomName;
     bookingDurationInput.value = '0.5';
     bookingError.textContent = '';
     setBookingConstraints();
+    if (presetTime) {
+      bookingStartTimeInput.value = presetTime;
+    }
     bookingPanel.classList.remove('hidden');
+    bookingPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     renderSchedule(roomId, bookingDateInput.value);
   }
-
-  roomsList.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-action="book-room"]');
-    if (!button) return;
-
-    const roomId = Number(button.dataset.roomId);
-    const roomName = button.dataset.roomName || 'Room';
-    if (!Number.isFinite(roomId)) return;
-
-    openBookingPanel(roomId, roomName);
-  });
 
   scheduleGrid.addEventListener('click', (event) => {
     const slot = event.target.closest('[data-slot-time]');
@@ -226,11 +376,12 @@ export function createRoomsPage({
     const durationLabel = formatDuration(durationHours);
     alert(`Booking confirmed!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}`);
     hideBookingPanel();
+    renderTimetable();
     await onBookingCreated();
   });
 
   /**
-   * Render available room cards.
+   * Render available room cards and populate the timetable room dropdown.
    * @param {Array<{id: number, name: string, location: string}>} rooms Rooms list.
    */
   function render(rooms) {
@@ -241,14 +392,22 @@ export function createRoomsPage({
             <strong>${room.name}</strong>
             <p>${room.location}</p>
           </div>
-          <button data-action="book-room" data-room-id="${room.id}" data-room-name="${room.name}">Book</button>
         </div>
       `;
     }).join('');
+
+    // Repopulate the timetable room dropdown, preserving selection if still valid.
+    const prevValue = timetableRoomSelect.value;
+    timetableRoomSelect.innerHTML = '<option value="">— Select a room —</option>'
+      + rooms.map((room) => `<option value="${room.id}">${room.name} — ${room.location}</option>`).join('');
+    if (prevValue && rooms.some((r) => String(r.id) === prevValue)) {
+      timetableRoomSelect.value = prevValue;
+    }
   }
 
   return {
     render,
-    hideBookingPanel
+    hideBookingPanel,
+    loadTimetable: renderTimetable
   };
 }

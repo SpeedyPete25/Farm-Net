@@ -473,3 +473,139 @@ textarea {
   gap: 12px;
   margin-top: 16px;
 }
+
+/* ── Timetable calendar ────────────────────────────────────────────────────── */
+
+#timetable-section {
+  margin-bottom: 8px;
+}
+
+.timetable-controls {
+  margin-bottom: 12px;
+}
+
+.timetable-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  max-width: 360px;
+}
+
+.timetable-controls select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-surface);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.timetable-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+#timetable-week-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  min-width: 160px;
+  text-align: center;
+}
+
+#timetable-grid-container {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.timetable {
+  display: grid;
+  grid-template-columns: 60px repeat(7, minmax(100px, 1fr));
+  min-width: 500px;
+  font-size: 0.82rem;
+}
+
+.tt-header {
+  position: sticky;
+  top: 0;
+  background: var(--soft-surface);
+  color: var(--text);
+  font-weight: 600;
+  padding: 8px 6px;
+  border-bottom: 2px solid var(--border);
+  border-right: 1px solid var(--line);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2;
+}
+
+.tt-header.tt-corner {
+  z-index: 3;
+  background: var(--soft-surface);
+}
+
+.tt-header.tt-today {
+  background: color-mix(in srgb, var(--primary) 15%, var(--soft-surface));
+  color: var(--primary);
+}
+
+.tt-location {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.tt-today .tt-location {
+  color: var(--primary);
+  opacity: 0.8;
+}
+
+.tt-time {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: right;
+  white-space: nowrap;
+  background: var(--panel-surface);
+}
+
+.tt-cell {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  min-height: 28px;
+}
+
+.tt-cell:last-child {
+  border-right: none;
+}
+
+.tt-free {
+  background: var(--slot-free);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tt-free:hover {
+  background: var(--slot-free-hover);
+}
+
+.tt-busy {
+  background: var(--slot-busy-bg);
+  cursor: not-allowed;
+}
+
+.tt-past {
+  background: var(--soft-surface);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+

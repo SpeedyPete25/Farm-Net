@@ -1207,6 +1207,40 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   res.json({ message: `Equipment borrowed successfully. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
 });
 
+// Return bookings for a single room across a 7-day week for the timetable view.
+// weekStart must be a Monday in YYYY-MM-DD format.
+app.get('/api/timetable', requireLogin, async (req, res) => {
+  const { roomId: roomIdParam, weekStart } = req.query;
+  const roomId = Number(roomIdParam);
+  if (!Number.isFinite(roomId) || roomId <= 0) {
+    return res.status(400).json({ error: 'A valid roomId is required.' });
+  }
+  if (!weekStart || !/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+    return res.status(400).json({ error: 'A valid weekStart date (YYYY-MM-DD) is required.' });
+  }
+
+  // Build array of 7 date strings starting from weekStart.
+  const dates = [];
+  const base = new Date(`${weekStart}T00:00:00`);
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+
+  const weekEnd = dates[6];
+
+  const bookings = await query(
+    `SELECT b.date, b.startTime, b.durationHours
+     FROM bookings b
+     WHERE b.roomId = ? AND b.date >= ? AND b.date <= ? AND b.status != 'cancelled'
+     ORDER BY b.date, b.startTime`,
+    [roomId, weekStart, weekEnd]
+  );
+
+  res.json({ dates, bookings });
+});
+
 // Return all bookings for a room on a given date for the schedule visualisation.
 app.get('/api/rooms/:roomId/schedule', requireLogin, async (req, res) => {
   const roomId = Number(req.params.roomId);

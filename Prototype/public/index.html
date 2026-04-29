@@ -69,7 +69,28 @@
 
         <article id="page-rooms" class="card page-panel hidden">
           <h2>Room Bookings</h2>
-          <div id="rooms-list"></div>
+
+          <!-- Timetable calendar view -->
+          <div id="timetable-section">
+            <div class="timetable-controls">
+              <label for="timetable-room-select">View room availability
+                <select id="timetable-room-select">
+                  <option value="">— Select a room —</option>
+                </select>
+              </label>
+            </div>
+            <div id="timetable-week-nav" class="timetable-nav hidden">
+              <button id="timetable-prev" class="secondary">&#8592; Prev week</button>
+              <span id="timetable-week-label"></span>
+              <button id="timetable-next" class="secondary">Next week &#8594;</button>
+              <button id="timetable-today" class="secondary">This week</button>
+            </div>
+            <div id="timetable-grid-container">
+              <div id="timetable-grid"></div>
+            </div>
+          </div>
+
+          <div id="rooms-list" class="hidden"></div>
           <!-- Hidden booking panel shown after selecting a room -->
           <div id="booking-panel" class="hidden" style="margin-top: 24px;">
             <h3>Book a room</h3>

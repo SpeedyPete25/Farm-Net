@@ -156,6 +156,10 @@ function setActivePage(page, options = {}) {
     roomsPage.hideBookingPanel();
   }
 
+  if (nextPage === 'rooms') {
+    roomsPage.loadTimetable();
+  }
+
   if (nextPage === 'admin' && isAdminUser) {
     adminPage.load();
   }
@@ -339,6 +343,13 @@ const roomsPage = createRoomsPage({
   bookingError,
   bookingCancel,
   scheduleGrid,
+  timetableRoomSelect: document.getElementById('timetable-room-select'),
+  timetableWeekLabel: document.getElementById('timetable-week-label'),
+  timetableWeekNav: document.getElementById('timetable-week-nav'),
+  timetableGrid: document.getElementById('timetable-grid'),
+  timetablePrev: document.getElementById('timetable-prev'),
+  timetableNext: document.getElementById('timetable-next'),
+  timetableToday: document.getElementById('timetable-today'),
   requestJson,
   getTodayDateString,
   getNextQuarterTime,
