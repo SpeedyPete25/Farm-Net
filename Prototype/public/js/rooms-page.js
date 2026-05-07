@@ -65,25 +65,25 @@ export function createRoomsPage({
   /** Returns the Monday of the week containing the given YYYY-MM-DD string. */
   function getMondayOf(dateStr) {
     const [year, month, day] = dateStr.split('-').map(Number);
-    const d = new Date(Date.UTC(year, month - 1, day));
-    const dow = d.getUTCDay(); // 0=Sun,1=Mon,...,6=Sat
+    const d = new Date(year, month - 1, day); // local time
+    const dow = d.getDay(); // 0=Sun,1=Mon,...,6=Sat
     const diff = (dow === 0 ? -6 : 1 - dow);
-    d.setUTCDate(d.getUTCDate() + diff);
-    return d.toISOString().slice(0, 10);
+    d.setDate(d.getDate() + diff);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   /** Shift a YYYY-MM-DD string by `days` days. */
   function shiftDate(dateStr, days) {
     const [year, month, day] = dateStr.split('-').map(Number);
-    const d = new Date(Date.UTC(year, month - 1, day));
-    d.setUTCDate(d.getUTCDate() + days);
-    return d.toISOString().slice(0, 10);
+    const d = new Date(year, month - 1, day); // local time
+    d.setDate(d.getDate() + days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   /** Format a YYYY-MM-DD as a short human label, e.g. "Mon 28 Apr". */
   function formatDayLabel(dateStr) {
     const [year, month, day] = dateStr.split('-').map(Number);
-    const d = new Date(Date.UTC(year, month - 1, day));
+    const d = new Date(year, month - 1, day); // local time
     return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
   }
 
@@ -97,8 +97,8 @@ export function createRoomsPage({
     const end = shiftDate(weekStart, 6);
     const [sYear, sMonth, sDay] = weekStart.split('-').map(Number);
     const [eYear, eMonth, eDay] = end.split('-').map(Number);
-    const startLabel = new Date(Date.UTC(sYear, sMonth - 1, sDay)).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
-    const endLabel = new Date(Date.UTC(eYear, eMonth - 1, eDay)).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+    const startLabel = new Date(sYear, sMonth - 1, sDay).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    const endLabel = new Date(eYear, eMonth - 1, eDay).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
     timetableWeekLabel.textContent = `${startLabel} – ${endLabel}`;
   }
 
@@ -115,8 +115,19 @@ export function createRoomsPage({
       return;
     }
 
-    const { dates, bookings } = data;
+    let { dates, bookings } = data;
     const today = getTodayDateString();
+
+    // Ensure dates start on Monday and end on Sunday
+    if (dates.length === 7) {
+      const [year, month, day] = dates[0].split('-').map(Number);
+      const firstDayOfWeek = new Date(year, month - 1, day).getDay();
+      if (firstDayOfWeek === 0) { // Sunday from previous week
+        dates = dates.slice(1); // Remove that Sunday
+        // Add the correct Sunday (6 days after the new first date)
+        dates.push(shiftDate(dates[0], 6));
+      }
+    }
 
     // Build occupied set: key = `${date}:${slotLabel}`
     const occupied = new Set();
@@ -138,7 +149,10 @@ export function createRoomsPage({
     for (let i = 0; i < 7; i++) {
       const dateStr = dates[i];
       const isToday = dateStr === today;
-      html += `<div class="tt-header${isToday ? ' tt-today' : ''}">${DAY_NAMES[i]}<span class="tt-location">${formatDayLabel(dateStr)}</span></div>`;
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const dayOfWeek = new Date(year, month - 1, day).getDay();
+      const dayName = DAY_NAMES[(dayOfWeek + 6) % 7]; // Convert Sunday=0 to Monday=0
+      html += `<div class="tt-header${isToday ? ' tt-today' : ''}">${dayName}<span class="tt-location">${formatDayLabel(dateStr)}</span></div>`;
     }
 
     // Time rows
