@@ -80,11 +80,11 @@ export function createRoomsPage({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
-  /** Format a YYYY-MM-DD as a short human label, e.g. "Mon 28 Apr". */
+  /** Format a YYYY-MM-DD as a short human label, e.g. "28 Apr". */
   function formatDayLabel(dateStr) {
     const [year, month, day] = dateStr.split('-').map(Number);
     const d = new Date(year, month - 1, day); // local time
-    return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+    return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
   }
 
   // Track current week start (always a Monday) and selected room.
