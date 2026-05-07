@@ -64,23 +64,26 @@ export function createRoomsPage({
 
   /** Returns the Monday of the week containing the given YYYY-MM-DD string. */
   function getMondayOf(dateStr) {
-    const d = new Date(`${dateStr}T00:00:00`);
-    const dow = d.getDay(); // 0=Sun,1=Mon,...,6=Sat
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const d = new Date(Date.UTC(year, month - 1, day));
+    const dow = d.getUTCDay(); // 0=Sun,1=Mon,...,6=Sat
     const diff = (dow === 0 ? -6 : 1 - dow);
-    d.setDate(d.getDate() + diff);
+    d.setUTCDate(d.getUTCDate() + diff);
     return d.toISOString().slice(0, 10);
   }
 
   /** Shift a YYYY-MM-DD string by `days` days. */
   function shiftDate(dateStr, days) {
-    const d = new Date(`${dateStr}T00:00:00`);
-    d.setDate(d.getDate() + days);
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const d = new Date(Date.UTC(year, month - 1, day));
+    d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
   }
 
   /** Format a YYYY-MM-DD as a short human label, e.g. "Mon 28 Apr". */
   function formatDayLabel(dateStr) {
-    const d = new Date(`${dateStr}T00:00:00`);
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const d = new Date(Date.UTC(year, month - 1, day));
     return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
   }
 
@@ -92,8 +95,10 @@ export function createRoomsPage({
   /** Update the week label text. */
   function updateWeekLabel() {
     const end = shiftDate(weekStart, 6);
-    const startLabel = new Date(`${weekStart}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
-    const endLabel = new Date(`${end}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+    const [sYear, sMonth, sDay] = weekStart.split('-').map(Number);
+    const [eYear, eMonth, eDay] = end.split('-').map(Number);
+    const startLabel = new Date(Date.UTC(sYear, sMonth - 1, sDay)).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+    const endLabel = new Date(Date.UTC(eYear, eMonth - 1, eDay)).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
     timetableWeekLabel.textContent = `${startLabel} – ${endLabel}`;
   }
 
