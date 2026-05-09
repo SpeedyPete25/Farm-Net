@@ -62,7 +62,6 @@ const bookingStartTimeInput = document.getElementById('booking-start-time');
 const bookingDurationInput = document.getElementById('booking-duration');
 const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
-const scheduleGrid = document.getElementById('schedule-grid');
 const changePasswordForm = document.getElementById('change-password-form');
 const currentPasswordInput = document.getElementById('current-password');
 const newPasswordInput = document.getElementById('new-password');
@@ -342,7 +341,6 @@ const roomsPage = createRoomsPage({
   bookingDurationInput,
   bookingError,
   bookingCancel,
-  scheduleGrid,
   timetableRoomSelect: document.getElementById('timetable-room-select'),
   timetableWeekLabel: document.getElementById('timetable-week-label'),
   timetableWeekNav: document.getElementById('timetable-week-nav'),

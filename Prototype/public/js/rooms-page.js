@@ -1,6 +1,6 @@
 /**
  * Room bookings page module.
- * Handles room list rendering, booking form state, schedule rendering, and booking submission.
+ * Handles room list rendering, booking form state, timetable rendering, and booking submission.
  */
 
 /**
@@ -15,7 +15,6 @@
  * @param {HTMLInputElement} deps.bookingDurationInput Booking duration input.
  * @param {HTMLElement} deps.bookingError Booking error message element.
  * @param {HTMLElement} deps.bookingCancel Booking cancel button.
- * @param {HTMLElement} deps.scheduleGrid Schedule grid container.
  * @param {HTMLSelectElement} deps.timetableRoomSelect Room dropdown for timetable.
  * @param {HTMLElement} deps.timetableWeekLabel Week label span element.
  * @param {HTMLElement} deps.timetableWeekNav Week navigation bar element.
@@ -40,7 +39,6 @@ export function createRoomsPage({
   bookingDurationInput,
   bookingError,
   bookingCancel,
-  scheduleGrid,
   timetableRoomSelect,
   timetableWeekLabel,
   timetableWeekNav,
@@ -251,58 +249,6 @@ export function createRoomsPage({
   }
 
   /**
-   * Render the daily schedule grid for the selected room.
-   * @param {number} roomId Room identifier.
-   * @param {string} date Date string in YYYY-MM-DD.
-   * @returns {Promise<void>}
-   */
-  async function renderSchedule(roomId, date) {
-    if (!roomId || !date) {
-      scheduleGrid.innerHTML = '';
-      return;
-    }
-
-    const bookings = await requestJson(`/api/rooms/${roomId}/schedule?date=${date}`);
-    if (!Array.isArray(bookings)) {
-      scheduleGrid.innerHTML = '';
-      return;
-    }
-
-    const occupied = new Map();
-    for (const booking of bookings) {
-      const [hour, minute] = booking.startTime.split(':').map(Number);
-      const totalSlots = Math.round(Number(booking.durationHours) / 0.5);
-
-      for (let i = 0; i < totalSlots; i++) {
-        const mins = hour * 60 + minute + i * 30;
-        const label = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
-        if (!occupied.has(label)) {
-          occupied.set(label, booking.email);
-        }
-      }
-    }
-
-    const currentSelection = bookingStartTimeInput.value;
-    let html = '<div class="schedule-grid">';
-
-    for (let mins = 8 * 60; mins < 20 * 60; mins += 30) {
-      const label = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
-      const busy = occupied.has(label);
-      const selected = !busy && label === currentSelection;
-      const classes = busy ? 'slot slot-busy' : selected ? 'slot slot-free slot-selected' : 'slot slot-free';
-      const dataAttr = busy ? '' : ` data-slot-time="${label}"`;
-
-      html += `<div class="${classes}"${dataAttr}>`
-        + `<span>${label}</span>`
-        + `<span>${busy ? 'Booked' : selected ? 'Selected' : 'Available'}</span>`
-        + '</div>';
-    }
-
-    html += '</div>';
-    scheduleGrid.innerHTML = html;
-  }
-
-  /**
    * Hide the booking panel.
    */
   function hideBookingPanel() {
@@ -310,7 +256,7 @@ export function createRoomsPage({
   }
 
   /**
-   * Open the booking panel for a room and load its schedule.
+   * Open the booking panel for a room.
    * @param {number} roomId Room identifier.
    * @param {string} roomName Room display name.
    * @param {string} [presetTime] Optional HH:MM to pre-fill the start time.
@@ -326,21 +272,11 @@ export function createRoomsPage({
     }
     bookingPanel.classList.remove('hidden');
     bookingPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    renderSchedule(roomId, bookingDateInput.value);
   }
-
-  scheduleGrid.addEventListener('click', (event) => {
-    const slot = event.target.closest('[data-slot-time]');
-    if (!slot) return;
-
-    bookingStartTimeInput.value = slot.dataset.slotTime;
-    bookingError.textContent = '';
-    renderSchedule(activeBookingRoomId, bookingDateInput.value);
-  });
 
   bookingDateInput.addEventListener('change', () => {
     updateBookingTimeMin();
-    renderSchedule(activeBookingRoomId, bookingDateInput.value);
+    bookingError.textContent = '';
   });
 
   bookingCancel.addEventListener('click', () => {
