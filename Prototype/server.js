@@ -8,10 +8,10 @@ const dns = require('dns').promises;
 const net = require('net');
 const multer = require('multer');
 
-// Simple lab booking backend using Express and SQLite.
-// - Express serves API routes and the static frontend.
-// - Sessions keep users logged in.
-// - SQLite stores users, rooms, equipment, bookings, and loans.
+// Farm-Net backend.
+// - Serves the static frontend and JSON API.
+// - Handles login sessions, password hashing, and account preferences.
+// - Stores users, rooms, equipment, bookings, loans, return photos, and audit data in SQLite.
 const app = express();
 
 // Application data directory for SQLite storage.
