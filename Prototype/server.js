@@ -279,12 +279,34 @@ async function verifyEmailAddressExists(email) {
   let mxRecords;
   try {
     mxRecords = await dns.resolveMx(domain);
-  } catch {
-    return { valid: false, error: 'Could not find mail servers for this email domain.' };
+  } catch (err) {
+    const dnsCode = String(err?.code || '').toUpperCase();
+    const hardFailCodes = new Set(['ENOTFOUND', 'NXDOMAIN', 'ENODATA']);
+    if (hardFailCodes.has(dnsCode)) {
+      return { valid: false, error: 'Could not find mail servers for this email domain.' };
+    }
+
+    const knownProviderDomains = new Set([
+      'gmail.com',
+      'googlemail.com',
+      'outlook.com',
+      'hotmail.com',
+      'live.com',
+      'yahoo.com',
+      'icloud.com'
+    ]);
+    if (!knownProviderDomains.has(domain)) {
+      return { valid: false, error: 'Could not verify this email domain right now. Please try again later.' };
+    }
+
+    // Resolver/network failures are indeterminate and can happen in restricted
+    // environments even for valid domains (for example gmail.com).
+    console.warn(`Email MX lookup indeterminate for ${email} (${dnsCode || 'UNKNOWN'}): ${err?.message || 'lookup failed'}`);
+    return { valid: true };
   }
 
   if (!Array.isArray(mxRecords) || mxRecords.length === 0) {
-    return { valid: false, error: 'Email domain does not publish mail servers (MX records).' };
+    return { valid: false, error: 'Could not find mail servers for this email domain.' };
   }
 
   const sortedMx = [...mxRecords]
@@ -313,10 +335,11 @@ async function verifyEmailAddressExists(email) {
     }
   }
 
-  return {
-    valid: false,
-    error: `Mailbox could not be verified via SMTP. ${lastIndeterminateReason}`
-  };
+  // Some providers (including Gmail) can return inconclusive responses to
+  // unauthenticated SMTP RCPT probing. If MX records exist, treat this as
+  // deliverable to avoid false negatives while still rejecting explicit invalids.
+  console.warn(`Email verification indeterminate for ${email}: ${lastIndeterminateReason}`);
+  return { valid: true };
 }
 
 /**
