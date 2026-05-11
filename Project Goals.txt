@@ -3,6 +3,7 @@
 *Manage bookings
 *Cancel bookings
 *Add or remove rooms and equipment
+*Admin account deletion
 
 ---Equipment---
 *Return equipment page

@@ -76,3 +76,4 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 - Room booking uses a weekly timetable rather than the older per-day slot picker.
 - The prototype already supports booking edits, booking archives/history, and admin management flows.
 - Remaining roadmap items from the project brief are email notifications and registration confirmation.
+- Only admins can create admins. Teast login for admins is "admin@gmail.com" & "admin1234"

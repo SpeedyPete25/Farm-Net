@@ -1890,6 +1890,57 @@ app.patch('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
   });
 });
 
+// Delete a user account. Admins only.
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const targetUserId = Number(req.params.id);
+  if (!Number.isFinite(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ error: 'Invalid user ID.' });
+  }
+
+  if (req.session.userId === targetUserId) {
+    return res.status(400).json({ error: 'You cannot delete your own account while signed in.' });
+  }
+
+  const targetUserRows = await query('SELECT id, email, role FROM users WHERE id = ?', [targetUserId]);
+  if (targetUserRows.length === 0) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  const targetUser = targetUserRows[0];
+
+  // Prevent deleting the last admin account.
+  if (targetUser.role === 'admin') {
+    const adminCountRows = await query('SELECT COUNT(*) AS count FROM users WHERE role = ?', ['admin']);
+    const adminCount = Number(adminCountRows[0]?.count || 0);
+    if (adminCount <= 1) {
+      return res.status(400).json({ error: 'Cannot delete the last admin user.' });
+    }
+  }
+
+  try {
+    await run('BEGIN TRANSACTION');
+    await run('DELETE FROM bookings WHERE userId = ?', [targetUserId]);
+    await run('DELETE FROM loans WHERE userId = ?', [targetUserId]);
+    await run('DELETE FROM activity_history WHERE userId = ?', [targetUserId]);
+    await run('DELETE FROM users WHERE id = ?', [targetUserId]);
+    await run('COMMIT');
+  } catch (err) {
+    try {
+      await run('ROLLBACK');
+    } catch {
+      // Ignore rollback failures after an already failed transaction.
+    }
+    console.error('Failed to delete user account:', err);
+    return res.status(500).json({ error: 'Could not delete user account.' });
+  }
+
+  const actingUserEmail = req.session.email || 'unknown';
+  const description = `${actingUserEmail} deleted user account ${targetUser.email} (#${targetUserId})`;
+  await logActivity(req.session.userId, 'user_deleted', 'user', targetUserId, description);
+
+  res.json({ message: 'User account deleted successfully.' });
+});
+
 // Return recent admin audit log entries.
 app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   const entries = await query(

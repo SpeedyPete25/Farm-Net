@@ -61,6 +61,7 @@ export function createAdminPage(deps) {
           <th>Email</th>
           <th>Current role</th>
           <th>Change role</th>
+          <th>Delete account</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -103,9 +104,20 @@ export function createAdminPage(deps) {
       });
 
       actionCell.appendChild(select);
+
+      const deleteCell = document.createElement('td');
+      const deleteButton = document.createElement('button');
+      deleteButton.className = 'cancel-button';
+      deleteButton.textContent = 'Delete';
+      deleteButton.dataset.action = 'admin-delete-user';
+      deleteButton.dataset.userId = String(user.id);
+      deleteButton.dataset.userEmail = user.email;
+      deleteCell.appendChild(deleteButton);
+
       row.appendChild(emailCell);
       row.appendChild(roleCell);
       row.appendChild(actionCell);
+      row.appendChild(deleteCell);
       tbody.appendChild(row);
     });
 
@@ -351,6 +363,30 @@ export function createAdminPage(deps) {
     auditLogList.innerHTML = '';
     auditLogList.appendChild(container);
   }
+
+  usersList.addEventListener('click', async (event) => {
+    const deleteButton = event.target.closest('[data-action="admin-delete-user"]');
+    if (!deleteButton) return;
+
+    const userId = Number(deleteButton.dataset.userId);
+    const userEmail = deleteButton.dataset.userEmail || 'this user';
+
+    if (!confirm(`Delete account for ${userEmail}? This also removes their bookings, loans, and activity history.`)) {
+      return;
+    }
+
+    const result = await requestJson(`/api/admin/users/${userId}`, {
+      method: 'DELETE'
+    });
+
+    if (result.error) {
+      alert(result.error);
+    } else {
+      alert(result.message || 'User account deleted.');
+    }
+
+    await load();
+  });
 
   adminBookingsList.addEventListener('click', async (event) => {
     const editButton = event.target.closest('[data-action="admin-edit-booking"]');
