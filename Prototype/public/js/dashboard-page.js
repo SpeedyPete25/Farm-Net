@@ -136,8 +136,8 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
 
             const hasCondition = typeof loan.returnCondition === 'string' && loan.returnCondition.trim().length > 0;
             const photoText = loan.returnConditionPhotoPath
-              ? `Photo: ${loan.returnConditionPhotoPath}`
-              : 'Photo: Can be added later';
+              ? `Photo: <a href="/api/loans/${loan.id}/photo" target="_blank" rel="noopener noreferrer">View photo</a>`
+              : 'Photo: None';
 
             return `
             <div class="request-card ${isCancelled ? 'cancelled' : ''}">

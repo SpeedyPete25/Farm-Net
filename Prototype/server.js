@@ -898,7 +898,7 @@ app.post('/api/cancel-loan', requireLogin, async (req, res) => {
 
   const loan = existing[0];
   if (loan.status !== 'active') {
-    return res.status(400).json({ error: 'Loan is already cancelled.' });
+    return res.status(400).json({ error: 'Only active loans can be cancelled.' });
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -963,6 +963,33 @@ app.post('/api/return-loan', requireLogin, (req, res, next) => {
   await logActivity(req.session.userId, 'loan_returned', 'loan', loanId, description);
 
   res.json({ message: 'Equipment returned successfully.' });
+});
+
+// Serve a return-condition photo for the current user's own loan.
+app.get('/api/loans/:id/photo', requireLogin, async (req, res) => {
+  const loanId = Number(req.params.id);
+  if (!Number.isFinite(loanId) || loanId <= 0) {
+    return res.status(400).json({ error: 'Invalid loan ID.' });
+  }
+
+  const rows = await query(
+    'SELECT returnConditionPhotoPath FROM loans WHERE id = ? AND userId = ?',
+    [loanId, req.session.userId]
+  );
+  if (rows.length === 0 || !rows[0].returnConditionPhotoPath) {
+    return res.status(404).json({ error: 'No photo found for this loan.' });
+  }
+
+  // Use only the stored filename joined against the known photos directory
+  // to prevent path traversal attacks.
+  const filename = path.basename(rows[0].returnConditionPhotoPath);
+  const filePath = path.join(photosDir, filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Photo file not found on server.' });
+  }
+
+  res.sendFile(filePath);
 });
 
 // Serve a return-condition photo for a specific loan. Admin only.
@@ -1501,7 +1528,7 @@ app.post('/api/admin/loans/:id/cancel', requireAdmin, async (req, res) => {
 
   const loan = rows[0];
   if (loan.status !== 'active') {
-    return res.status(400).json({ error: 'Loan is already cancelled.' });
+    return res.status(400).json({ error: 'Only active loans can be cancelled.' });
   }
 
   const today = new Date().toISOString().slice(0, 10);
