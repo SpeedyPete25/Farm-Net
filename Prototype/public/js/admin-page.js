@@ -8,14 +8,37 @@
  */
 
 /**
- * Create user management page renderer and actions.
- * @param {{
+ * @typedef {{ id: number, userEmail: string, roomName: string, date: string, startTime: string, durationHours: number|string, status: string }} AdminBooking
+ */
+
+/**
+ * @typedef {{ id: number, userEmail: string, equipmentName: string, equipmentCode?: string, borrowDate: string, returnDate: string, status: string, returnCondition?: string, returnConditionPhotoPath?: string }} AdminLoan
+ */
+
+/**
+ * @typedef {{ id: number, description: string, timestamp: string }} AuditLogEntry
+ */
+
+/**
+ * @typedef {{
  *   usersList: HTMLElement,
  *   adminBookingsList: HTMLElement,
  *   adminLoansList: HTMLElement,
  *   auditLogList: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>
- * }} deps
+ * }} AdminPageDeps
+ */
+
+/**
+ * @typedef {{
+ *   load: () => Promise<void>
+ * }} AdminPageApi
+ */
+
+/**
+ * Create user management page renderer and actions.
+ * @param {AdminPageDeps} deps
+ * @returns {AdminPageApi}
  */
 export function createAdminPage(deps) {
   const { usersList, adminBookingsList, adminLoansList, auditLogList, requestJson } = deps;
@@ -25,6 +48,7 @@ export function createAdminPage(deps) {
    * @param {number} userId
    * @param {'user'|'admin'} role
    * @param {HTMLSelectElement} select
+    * @returns {Promise<void>}
    */
   async function updateRole(userId, role, select) {
     const result = await requestJson(`/api/admin/users/${userId}/role`, {
@@ -44,6 +68,7 @@ export function createAdminPage(deps) {
   /**
    * Render users table.
    * @param {User[]} users
+    * @returns {void}
    */
   function render(users) {
     if (!users || users.length === 0) {
@@ -126,7 +151,8 @@ export function createAdminPage(deps) {
 
   /**
    * Render booking management table.
-   * @param {Array<{ id: number, userEmail: string, roomName: string, date: string, startTime: string, durationHours: number|string, status: string }>} bookings
+    * @param {AdminBooking[]} bookings
+    * @returns {void}
    */
   function renderBookings(bookings) {
     if (!bookings || bookings.length === 0) {
@@ -208,7 +234,8 @@ export function createAdminPage(deps) {
 
   /**
    * Render loan management table.
-    * @param {Array<{ id: number, userEmail: string, equipmentName: string, equipmentCode?: string, borrowDate: string, returnDate: string, status: string, returnCondition?: string, returnConditionPhotoPath?: string }>} loans
+    * @param {AdminLoan[]} loans
+    * @returns {void}
    */
   function renderLoans(loans) {
     if (!loans || loans.length === 0) {
@@ -323,6 +350,7 @@ export function createAdminPage(deps) {
   /**
    * Format duration to a compact hour label.
    * @param {number|string} hours
+    * @returns {string}
    */
   function formatHours(hours) {
     const value = Number(hours);
@@ -332,7 +360,8 @@ export function createAdminPage(deps) {
 
   /**
    * Render audit log entries.
-   * @param {Array<{ id: number, description: string, timestamp: string }>} entries
+    * @param {AuditLogEntry[]} entries
+    * @returns {void}
    */
   function renderAuditLog(entries) {
     if (!entries || entries.length === 0) {
@@ -364,8 +393,17 @@ export function createAdminPage(deps) {
     auditLogList.appendChild(container);
   }
 
-  usersList.addEventListener('click', async (event) => {
-    const deleteButton = event.target.closest('[data-action="admin-delete-user"]');
+  /**
+   * Handle clicks in the users table.
+   * Uses event delegation to process delete actions from dynamic rows.
+   * @param {MouseEvent} event
+    * @returns {Promise<void>}
+   */
+  async function handleUsersListClick(event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) return;
+
+    const deleteButton = target.closest('[data-action="admin-delete-user"]');
     if (!deleteButton) return;
 
     const userId = Number(deleteButton.dataset.userId);
@@ -386,10 +424,21 @@ export function createAdminPage(deps) {
     }
 
     await load();
-  });
+  }
 
-  adminBookingsList.addEventListener('click', async (event) => {
-    const editButton = event.target.closest('[data-action="admin-edit-booking"]');
+  usersList.addEventListener('click', handleUsersListClick);
+
+  /**
+   * Handle clicks in the bookings table.
+   * Uses event delegation for edit and cancel operations.
+   * @param {MouseEvent} event
+    * @returns {Promise<void>}
+   */
+  async function handleAdminBookingsListClick(event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) return;
+
+    const editButton = target.closest('[data-action="admin-edit-booking"]');
     if (editButton) {
       const bookingId = Number(editButton.dataset.bookingId);
       const date = editButton.dataset.bookingDate || '';
@@ -424,7 +473,7 @@ export function createAdminPage(deps) {
       return;
     }
 
-    const cancelButton = event.target.closest('[data-action="admin-cancel-booking"]');
+    const cancelButton = target.closest('[data-action="admin-cancel-booking"]');
     if (!cancelButton) return;
 
     const bookingId = Number(cancelButton.dataset.bookingId);
@@ -443,10 +492,21 @@ export function createAdminPage(deps) {
     }
 
     await load();
-  });
+  }
 
-  adminLoansList.addEventListener('click', async (event) => {
-    const editButton = event.target.closest('[data-action="admin-edit-loan"]');
+  adminBookingsList.addEventListener('click', handleAdminBookingsListClick);
+
+  /**
+   * Handle clicks in the loans table.
+   * Uses event delegation for edit and cancel operations.
+   * @param {MouseEvent} event
+    * @returns {Promise<void>}
+   */
+  async function handleAdminLoansListClick(event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) return;
+
+    const editButton = target.closest('[data-action="admin-edit-loan"]');
     if (editButton) {
       const loanId = Number(editButton.dataset.loanId);
       const returnDate = editButton.dataset.loanReturnDate || '';
@@ -469,7 +529,7 @@ export function createAdminPage(deps) {
       return;
     }
 
-    const cancelButton = event.target.closest('[data-action="admin-cancel-loan"]');
+    const cancelButton = target.closest('[data-action="admin-cancel-loan"]');
     if (!cancelButton) return;
 
     const loanId = Number(cancelButton.dataset.loanId);
@@ -488,10 +548,15 @@ export function createAdminPage(deps) {
     }
 
     await load();
-  });
+  }
+
+  adminLoansList.addEventListener('click', handleAdminLoansListClick);
 
   /**
-   * Fetch users and render table.
+   * Fetch all admin datasets in parallel and update each section.
+   * This keeps sections resilient: one failed endpoint does not block
+   * rendering of successful sections.
+   * @returns {Promise<void>}
    */
   async function load() {
     usersList.innerHTML = '<p>Loading users...</p>';
