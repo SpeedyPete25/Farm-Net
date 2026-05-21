@@ -4,8 +4,15 @@
  */
 
 /**
- * Create equipment management controller.
- * @param {{
+ * @typedef {{ id: number, name: string, quantity: number, codes?: string[] }} EquipmentItem
+ */
+
+/**
+ * @typedef {{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string }} BookedOutLoan
+ */
+
+/**
+ * @typedef {{
  *   equipmentManagementList: HTMLElement,
  *   bookedOutEquipmentList: HTMLElement,
  *   equipmentManagementForm: HTMLFormElement,
@@ -14,7 +21,19 @@
  *   equipmentManagementError: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onEquipmentChanged: () => Promise<void>
- * }} deps
+ * }} EquipmentManagementPageDeps
+ */
+
+/**
+ * @typedef {{
+ *   load: () => Promise<void>
+ * }} EquipmentManagementPageApi
+ */
+
+/**
+ * Create equipment management controller.
+ * @param {EquipmentManagementPageDeps} deps
+ * @returns {EquipmentManagementPageApi}
  */
 export function createEquipmentManagementPage(deps) {
   const {
@@ -28,11 +47,17 @@ export function createEquipmentManagementPage(deps) {
     onEquipmentChanged
   } = deps;
 
-  /** @type {Array<{ id: number, name: string, quantity: number, codes?: string[] }>} */
+  /** @type {EquipmentItem[]} */
   let equipment = [];
-  /** @type {Array<{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string }>} */
+  /** @type {BookedOutLoan[]} */
   let bookedOutLoans = [];
 
+  /**
+   * Render the editable equipment inventory list.
+   * Each row exposes quantity updates, removal, and a collapsible list of
+   * generated per-item equipment codes.
+   * @returns {void}
+   */
   function render() {
     if (!equipment || equipment.length === 0) {
       equipmentManagementList.innerHTML = '<p>No equipment found.</p>';
@@ -71,6 +96,10 @@ export function createEquipmentManagementPage(deps) {
     }).join('');
   }
 
+  /**
+   * Render the list of equipment currently assigned to active loans.
+   * @returns {void}
+   */
   function renderBookedOutLoans() {
     if (!bookedOutLoans || bookedOutLoans.length === 0) {
       bookedOutEquipmentList.innerHTML = '<p>No equipment is currently booked out.</p>';
@@ -91,6 +120,11 @@ export function createEquipmentManagementPage(deps) {
     }).join('');
   }
 
+  /**
+   * Load inventory and booked-out equipment data in parallel, then render both
+   * sections independently so one failed request does not block the other.
+   * @returns {Promise<void>}
+   */
   async function load() {
     equipmentManagementError.textContent = '';
     equipmentManagementList.innerHTML = '<p>Loading equipment...</p>';
@@ -117,7 +151,13 @@ export function createEquipmentManagementPage(deps) {
     renderBookedOutLoans();
   }
 
-  equipmentManagementForm.addEventListener('submit', async (event) => {
+  /**
+   * Handle new equipment submissions from the admin form.
+   * Validates basic input client-side before creating inventory records.
+   * @param {SubmitEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleEquipmentManagementFormSubmit(event) {
     event.preventDefault();
     equipmentManagementError.textContent = '';
 
@@ -143,10 +183,21 @@ export function createEquipmentManagementPage(deps) {
     equipmentQuantityInput.value = '';
     await load();
     await onEquipmentChanged();
-  });
+  }
 
-  equipmentManagementList.addEventListener('click', async (event) => {
-    const updateButton = event.target.closest('[data-action="update-equipment"]');
+  equipmentManagementForm.addEventListener('submit', handleEquipmentManagementFormSubmit);
+
+  /**
+   * Handle update and removal actions from the rendered equipment list.
+   * Uses event delegation because rows are rebuilt on each render.
+   * @param {MouseEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleEquipmentManagementListClick(event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) return;
+
+    const updateButton = target.closest('[data-action="update-equipment"]');
     if (updateButton) {
       const equipmentId = Number(updateButton.dataset.equipmentId);
       if (!Number.isFinite(equipmentId)) return;
@@ -175,7 +226,7 @@ export function createEquipmentManagementPage(deps) {
       return;
     }
 
-    const button = event.target.closest('[data-action="remove-equipment"]');
+    const button = target.closest('[data-action="remove-equipment"]');
     if (!button) return;
 
     const equipmentId = Number(button.dataset.equipmentId);
@@ -200,7 +251,9 @@ export function createEquipmentManagementPage(deps) {
     equipmentManagementError.textContent = '';
     await load();
     await onEquipmentChanged();
-  });
+  }
+
+  equipmentManagementList.addEventListener('click', handleEquipmentManagementListClick);
 
   return {
     load
