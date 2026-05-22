@@ -7,6 +7,7 @@ const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
 const multer = require('multer');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // Farm-Net backend.
 // - Serves the static frontend and JSON API.
@@ -46,9 +47,23 @@ const uploadPhoto = multer({
 const dbFile = path.join(dataDir, 'lab-booking.db');
 const db = new sqlite3.Database(dbFile);
 
-const EMAIL_VERIFICATION_ENABLED = process.env.EMAIL_VERIFICATION_ENABLED !== 'false';
-const EMAIL_VERIFICATION_TIMEOUT_MS = Number(process.env.EMAIL_VERIFICATION_TIMEOUT_MS || 8000);
-const EMAIL_VERIFICATION_MAX_MX = Number(process.env.EMAIL_VERIFICATION_MAX_MX || 3);
+function parseBooleanEnv(value, defaultValue) {
+  if (value == null) return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+}
+
+function parseNumberEnv(value, defaultValue) {
+  if (value == null || String(value).trim() === '') return defaultValue;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
+const EMAIL_VERIFICATION_ENABLED = parseBooleanEnv(process.env.EMAIL_VERIFICATION_ENABLED, true);
+const EMAIL_VERIFICATION_TIMEOUT_MS = parseNumberEnv(process.env.EMAIL_VERIFICATION_TIMEOUT_MS, 8000);
+const EMAIL_VERIFICATION_MAX_MX = Math.max(1, Math.trunc(parseNumberEnv(process.env.EMAIL_VERIFICATION_MAX_MX, 3)));
 
 // Handle database errors
 db.on('error', (err) => {

@@ -19,6 +19,14 @@ npm start
 
 4. Open `http://localhost:3000`.
 
+Optional: create `Prototype/.env` to override configuration values.
+
+```env
+EMAIL_VERIFICATION_ENABLED=false
+EMAIL_VERIFICATION_TIMEOUT_MS=8000
+EMAIL_VERIFICATION_MAX_MX=3
+```
+
 Node.js 18+ is recommended. The prototype uses only the packages listed in `package.json`.
 
 ## What The App Does
@@ -65,6 +73,8 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 - `EMAIL_VERIFICATION_ENABLED`: defaults to `true`. Set to `false` to bypass MX and SMTP mailbox verification during offline development.
 - `EMAIL_VERIFICATION_TIMEOUT_MS`: defaults to `8000`.
 - `EMAIL_VERIFICATION_MAX_MX`: defaults to `3`.
+
+`EMAIL_VERIFICATION_ENABLED` accepts `true/false`, `1/0`, `yes/no`, and `on/off` (case-insensitive).
 
 ## Resetting Data
 
