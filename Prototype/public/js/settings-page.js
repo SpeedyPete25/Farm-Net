@@ -1,6 +1,6 @@
 /**
  * User settings page module.
- * Handles password change workflow for the signed-in user.
+ * Handles password and theme preference workflows for the signed-in user.
  */
 
 /**
@@ -18,6 +18,10 @@
  *   applyTheme: (theme: string) => void,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>
  * }} deps
+ * @returns {{
+ *   clearMessages: () => void,
+ *   setTheme: (theme: string) => void
+ * }} Settings page controller API.
  */
 export function createSettingsPage(deps) {
   const {
@@ -34,8 +38,12 @@ export function createSettingsPage(deps) {
     requestJson
   } = deps;
 
+  // Prevents recursive theme toggle events when the UI is updated programmatically.
   let syncingThemeInput = false;
 
+  /**
+   * Clear all success/error messages on the settings page.
+   */
   function clearMessages() {
     changePasswordError.textContent = '';
     changePasswordSuccess.textContent = '';
@@ -43,6 +51,11 @@ export function createSettingsPage(deps) {
     themeSettingsSuccess.textContent = '';
   }
 
+  /**
+   * Apply a theme value to both UI state and global app theme.
+   * Any non-"light" value is treated as "dark" for safety.
+   * @param {string} theme Requested theme name.
+   */
   function setTheme(theme) {
     const normalizedTheme = theme === 'light' ? 'light' : 'dark';
     syncingThemeInput = true;
@@ -51,6 +64,10 @@ export function createSettingsPage(deps) {
     applyTheme(normalizedTheme);
   }
 
+  /**
+   * Persist theme selection when the toggle changes.
+   * Reverts the toggle on API failure to keep UI and server state in sync.
+   */
   themeDarkToggle.addEventListener('change', async () => {
     if (syncingThemeInput) {
       return;
@@ -77,6 +94,10 @@ export function createSettingsPage(deps) {
     themeSettingsSuccess.textContent = 'Theme preference saved.';
   });
 
+  /**
+   * Submit password change request with client-side validation.
+   * Validates required fields, minimum password length, and confirmation match.
+   */
   changePasswordForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     clearMessages();
