@@ -4,30 +4,47 @@
  */
 
 /**
+ * @typedef {{ id: number, name: string, location: string }} RoomSummary
+ */
+
+/**
+ * @typedef {{
+ *   render: (rooms: RoomSummary[]) => void,
+ *   hideBookingPanel: () => void,
+ *   loadTimetable: () => Promise<void>
+ * }} RoomsPageApi
+ */
+
+/**
+ * @typedef {{
+ *   roomsList: HTMLElement,
+ *   bookingPanel: HTMLElement,
+ *   bookingForm: HTMLFormElement,
+ *   bookingRoomName: HTMLElement,
+ *   bookingDateInput: HTMLInputElement,
+ *   bookingStartTimeInput: HTMLInputElement,
+ *   bookingDurationInput: HTMLInputElement,
+ *   bookingError: HTMLElement,
+ *   bookingCancel: HTMLElement,
+ *   timetableRoomSelect: HTMLSelectElement,
+ *   timetableWeekLabel: HTMLElement,
+ *   timetableWeekNav: HTMLElement,
+ *   timetableGrid: HTMLElement,
+ *   timetablePrev: HTMLButtonElement,
+ *   timetableNext: HTMLButtonElement,
+ *   timetableToday: HTMLButtonElement,
+ *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
+ *   getTodayDateString: () => string,
+ *   getNextQuarterTime: () => string,
+ *   formatDuration: (duration: number|string) => string,
+ *   onBookingCreated: () => Promise<void>
+ * }} RoomsPageDeps
+ */
+
+/**
  * Build the room bookings page controller.
- * @param {Object} deps Dependency bag.
- * @param {HTMLElement} deps.roomsList Room list container.
- * @param {HTMLElement} deps.bookingPanel Booking panel container.
- * @param {HTMLFormElement} deps.bookingForm Booking form element.
- * @param {HTMLElement} deps.bookingRoomName Selected room title element.
- * @param {HTMLInputElement} deps.bookingDateInput Booking date input.
- * @param {HTMLInputElement} deps.bookingStartTimeInput Booking start time input.
- * @param {HTMLInputElement} deps.bookingDurationInput Booking duration input.
- * @param {HTMLElement} deps.bookingError Booking error message element.
- * @param {HTMLElement} deps.bookingCancel Booking cancel button.
- * @param {HTMLSelectElement} deps.timetableRoomSelect Room dropdown for timetable.
- * @param {HTMLElement} deps.timetableWeekLabel Week label span element.
- * @param {HTMLElement} deps.timetableWeekNav Week navigation bar element.
- * @param {HTMLElement} deps.timetableGrid Timetable grid container.
- * @param {HTMLButtonElement} deps.timetablePrev Timetable previous-week button.
- * @param {HTMLButtonElement} deps.timetableNext Timetable next-week button.
- * @param {HTMLButtonElement} deps.timetableToday Timetable this-week button.
- * @param {(url: string, options?: RequestInit) => Promise<any>} deps.requestJson API request helper.
- * @param {() => string} deps.getTodayDateString Returns today's date in YYYY-MM-DD.
- * @param {() => string} deps.getNextQuarterTime Returns next quarter-hour in HH:MM.
- * @param {(duration: number|string) => string} deps.formatDuration Duration formatter.
- * @param {() => Promise<void>} deps.onBookingCreated Callback after successful booking.
- * @returns {{ render: (rooms: any[]) => void, hideBookingPanel: () => void, loadTimetable: () => void }} Rooms page API.
+ * @param {RoomsPageDeps} deps Dependency bag.
+ * @returns {RoomsPageApi} Rooms page API.
  */
 export function createRoomsPage({
   roomsList,
@@ -60,7 +77,11 @@ export function createRoomsPage({
   const TIMETABLE_END_HOUR = 20; // exclusive
   const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  /** Returns the Monday of the week containing the given YYYY-MM-DD string. */
+  /**
+   * Returns the Monday for the week containing the given YYYY-MM-DD date.
+   * @param {string} dateStr Date in YYYY-MM-DD.
+   * @returns {string} Monday in YYYY-MM-DD.
+   */
   function getMondayOf(dateStr) {
     const [year, month, day] = dateStr.split('-').map(Number);
     const d = new Date(year, month - 1, day); // local time
@@ -70,7 +91,12 @@ export function createRoomsPage({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
-  /** Shift a YYYY-MM-DD string by `days` days. */
+  /**
+   * Shift a YYYY-MM-DD date string by a number of days.
+   * @param {string} dateStr Date in YYYY-MM-DD.
+   * @param {number} days Signed day offset.
+   * @returns {string} Shifted date in YYYY-MM-DD.
+   */
   function shiftDate(dateStr, days) {
     const [year, month, day] = dateStr.split('-').map(Number);
     const d = new Date(year, month - 1, day); // local time
@@ -78,7 +104,11 @@ export function createRoomsPage({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
-  /** Format a YYYY-MM-DD as a short human label, e.g. "28 Apr". */
+  /**
+   * Format YYYY-MM-DD to a short localized label for column headers.
+   * @param {string} dateStr Date in YYYY-MM-DD.
+   * @returns {string} Human-readable date label.
+   */
   function formatDayLabel(dateStr) {
     const [year, month, day] = dateStr.split('-').map(Number);
     const d = new Date(year, month - 1, day); // local time
@@ -90,7 +120,10 @@ export function createRoomsPage({
   let timetableRoomId = null;
   let timetableRoomName = '';
 
-  /** Update the week label text. */
+  /**
+   * Update the visible timetable week range label.
+   * @returns {void}
+   */
   function updateWeekLabel() {
     const end = shiftDate(weekStart, 6);
     const [sYear, sMonth, sDay] = weekStart.split('-').map(Number);
@@ -100,7 +133,11 @@ export function createRoomsPage({
     timetableWeekLabel.textContent = `${startLabel} – ${endLabel}`;
   }
 
-  /** Render the 7-day timetable grid for the selected room and week. */
+  /**
+   * Render the seven-day timetable grid for the selected room and week.
+   * Marks each half-hour slot as busy, past, or selectable.
+   * @returns {Promise<void>}
+   */
   async function renderTimetable() {
     if (!timetableRoomId) return;
 
@@ -178,6 +215,10 @@ export function createRoomsPage({
     timetableGrid.innerHTML = html;
   }
 
+  /**
+   * Handle timetable room selection changes and refresh timetable state.
+   * @returns {void}
+   */
   timetableRoomSelect.addEventListener('change', () => {
     const selected = timetableRoomSelect.options[timetableRoomSelect.selectedIndex];
     timetableRoomId = selected.value ? Number(selected.value) : null;
@@ -192,22 +233,25 @@ export function createRoomsPage({
     }
   });
 
+  /** Navigate one week backward in the timetable. */
   timetablePrev.addEventListener('click', () => {
     weekStart = shiftDate(weekStart, -7);
     renderTimetable();
   });
 
+  /** Navigate one week forward in the timetable. */
   timetableNext.addEventListener('click', () => {
     weekStart = shiftDate(weekStart, 7);
     renderTimetable();
   });
 
+  /** Jump the timetable to the current week. */
   timetableToday.addEventListener('click', () => {
     weekStart = getMondayOf(getTodayDateString());
     renderTimetable();
   });
 
-  // Clicking a free timetable cell opens the booking form pre-filled
+  // Clicking a free timetable cell opens the booking form pre-filled.
   timetableGrid.addEventListener('click', (event) => {
     const cell = event.target.closest('.tt-free[data-date]');
     if (!cell) return;
@@ -218,6 +262,11 @@ export function createRoomsPage({
   });
 
   // ── Booking form ───────────────────────────────────────────────────────────
+  /**
+   * Keep start-time minimum aligned with selected booking date.
+   * Uses next quarter-hour for today and a default morning value for future dates.
+   * @returns {void}
+   */
   function updateBookingTimeMin() {
     const today = getTodayDateString();
     const selected = bookingDateInput.value;
@@ -279,10 +328,16 @@ export function createRoomsPage({
     bookingError.textContent = '';
   });
 
+  /** Close the booking panel when cancel is clicked. */
   bookingCancel.addEventListener('click', () => {
     hideBookingPanel();
   });
 
+  /**
+   * Submit room booking after validating date/time/duration fields.
+   * @param {SubmitEvent} event
+   * @returns {Promise<void>}
+   */
   bookingForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!activeBookingRoomId) return;
@@ -337,7 +392,8 @@ export function createRoomsPage({
 
   /**
    * Render available room cards and populate the timetable room dropdown.
-   * @param {Array<{id: number, name: string, location: string}>} rooms Rooms list.
+    * @param {RoomSummary[]} rooms Rooms list.
+    * @returns {void}
    */
   function render(rooms) {
     roomsList.innerHTML = rooms.map((room) => {

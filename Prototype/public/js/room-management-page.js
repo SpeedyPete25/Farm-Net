@@ -4,8 +4,11 @@
  */
 
 /**
- * Create room management controller.
- * @param {{
+ * @typedef {{ id: number, name: string, location: string }} ManagedRoom
+ */
+
+/**
+ * @typedef {{
  *   roomManagementList: HTMLElement,
  *   roomManagementForm: HTMLFormElement,
  *   roomNameInput: HTMLInputElement,
@@ -13,7 +16,19 @@
  *   roomManagementError: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onRoomsChanged: () => Promise<void>
- * }} deps
+ * }} RoomManagementPageDeps
+ */
+
+/**
+ * @typedef {{
+ *   load: () => Promise<void>
+ * }} RoomManagementPageApi
+ */
+
+/**
+ * Create room management controller.
+ * @param {RoomManagementPageDeps} deps
+ * @returns {RoomManagementPageApi}
  */
 export function createRoomManagementPage(deps) {
   const {
@@ -26,9 +41,13 @@ export function createRoomManagementPage(deps) {
     onRoomsChanged
   } = deps;
 
-  /** @type {Array<{ id: number, name: string, location: string }>} */
+  /** @type {ManagedRoom[]} */
   let rooms = [];
 
+  /**
+   * Render the current room inventory table.
+   * @returns {void}
+   */
   function render() {
     if (!rooms || rooms.length === 0) {
       roomManagementList.innerHTML = '<p>No rooms found.</p>';
@@ -48,6 +67,10 @@ export function createRoomManagementPage(deps) {
     }).join('');
   }
 
+  /**
+   * Load room data from the admin API and refresh the rendered list.
+   * @returns {Promise<void>}
+   */
   async function load() {
     roomManagementError.textContent = '';
     roomManagementList.innerHTML = '<p>Loading rooms...</p>';
@@ -62,7 +85,12 @@ export function createRoomManagementPage(deps) {
     render();
   }
 
-  roomManagementForm.addEventListener('submit', async (event) => {
+  /**
+   * Handle add-room submissions from the management form.
+   * @param {SubmitEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleRoomManagementFormSubmit(event) {
     event.preventDefault();
     roomManagementError.textContent = '';
 
@@ -88,9 +116,16 @@ export function createRoomManagementPage(deps) {
     roomLocationInput.value = '';
     await load();
     await onRoomsChanged();
-  });
+  }
 
-  roomManagementList.addEventListener('click', async (event) => {
+  roomManagementForm.addEventListener('submit', handleRoomManagementFormSubmit);
+
+  /**
+   * Handle delegated click actions for room removal buttons.
+   * @param {MouseEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleRoomManagementListClick(event) {
     const button = event.target.closest('[data-action="remove-room"]');
     if (!button) return;
 
@@ -116,7 +151,9 @@ export function createRoomManagementPage(deps) {
     roomManagementError.textContent = '';
     await load();
     await onRoomsChanged();
-  });
+  }
+
+  roomManagementList.addEventListener('click', handleRoomManagementListClick);
 
   return {
     load
