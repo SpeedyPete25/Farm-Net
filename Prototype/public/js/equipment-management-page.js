@@ -12,6 +12,14 @@
  */
 
 /**
+ * @typedef {{ equipment?: EquipmentItem[], error?: string }} EquipmentListResponse
+ */
+
+/**
+ * @typedef {{ loans?: BookedOutLoan[], error?: string }} BookedOutLoansResponse
+ */
+
+/**
  * @typedef {{
  *   equipmentManagementList: HTMLElement,
  *   bookedOutEquipmentList: HTMLElement,
@@ -33,7 +41,7 @@
 /**
  * Create equipment management controller.
  * @param {EquipmentManagementPageDeps} deps
- * @returns {EquipmentManagementPageApi}
+ * @returns {EquipmentManagementPageApi} Equipment management API.
  */
 export function createEquipmentManagementPage(deps) {
   const {
@@ -130,6 +138,7 @@ export function createEquipmentManagementPage(deps) {
     equipmentManagementList.innerHTML = '<p>Loading equipment...</p>';
     bookedOutEquipmentList.innerHTML = '<p>Loading booked-out equipment...</p>';
 
+    /** @type {[EquipmentListResponse, BookedOutLoansResponse]} */
     const [equipmentResult, bookedOutResult] = await Promise.all([
       requestJson('/api/admin/equipment'),
       requestJson('/api/admin/equipment/booked-out')

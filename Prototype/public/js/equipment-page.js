@@ -4,14 +4,39 @@
  */
 
 /**
+ * @typedef {{
+ *   id: number,
+ *   name: string,
+ *   quantity: number,
+ *   available: number
+ * }} EquipmentAvailability
+ */
+
+/**
+ * @typedef {{
+ *   equipmentList: HTMLElement,
+ *   onBorrow: (equipmentId: number, equipmentName: string) => Promise<void>
+ * }} EquipmentPageDeps
+ */
+
+/**
+ * @typedef {{
+ *   render: (equipment: EquipmentAvailability[]) => void
+ * }} EquipmentPageApi
+ */
+
+/**
  * Build the equipment page controller.
- * @param {Object} deps Dependency bag.
- * @param {HTMLElement} deps.equipmentList Equipment list container.
- * @param {(equipmentId: number, equipmentName: string) => Promise<void>} deps.onBorrow Borrow callback.
- * @returns {{ render: (equipment: any[]) => void }} Equipment page API.
+ * @param {EquipmentPageDeps} deps Dependency bag.
+ * @returns {EquipmentPageApi} Equipment page API.
  */
 export function createEquipmentPage({ equipmentList, onBorrow }) {
-  equipmentList.addEventListener('click', async (event) => {
+  /**
+   * Handle delegated clicks for borrow buttons in the equipment list.
+   * @param {MouseEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleEquipmentListClick(event) {
     const button = event.target.closest('[data-action="borrow-equipment"]');
     if (!button) return;
 
@@ -20,11 +45,14 @@ export function createEquipmentPage({ equipmentList, onBorrow }) {
     if (!Number.isFinite(equipmentId)) return;
 
     await onBorrow(equipmentId, equipmentName);
-  });
+  }
+
+  equipmentList.addEventListener('click', handleEquipmentListClick);
 
   /**
    * Render available equipment cards.
-   * @param {Array<{id: number, name: string, quantity: number, available: number}>} equipment Equipment list.
+   * @param {EquipmentAvailability[]} equipment Equipment list with current availability.
+   * @returns {void}
    */
   function render(equipment) {
     equipmentList.innerHTML = equipment.map((item) => {
