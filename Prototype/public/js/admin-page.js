@@ -1,6 +1,6 @@
 /**
  * User management page module.
- * Renders users and allows admins to change roles.
+ * Renders users, bookings, loans, and audit data for admin actions.
  */
 
 /**
@@ -17,6 +17,34 @@
 
 /**
  * @typedef {{ id: number, description: string, timestamp: string }} AuditLogEntry
+ */
+
+/**
+ * @typedef {{
+ *   users?: User[],
+ *   error?: string
+ * }} UsersResponse
+ */
+
+/**
+ * @typedef {{
+ *   bookings?: AdminBooking[],
+ *   error?: string
+ * }} AdminBookingsResponse
+ */
+
+/**
+ * @typedef {{
+ *   loans?: AdminLoan[],
+ *   error?: string
+ * }} AdminLoansResponse
+ */
+
+/**
+ * @typedef {{
+ *   entries?: AuditLogEntry[],
+ *   error?: string
+ * }} AuditLogResponse
  */
 
 /**
@@ -38,7 +66,7 @@
 /**
  * Create user management page renderer and actions.
  * @param {AdminPageDeps} deps
- * @returns {AdminPageApi}
+ * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
   const { usersList, adminBookingsList, adminLoansList, auditLogList, requestJson } = deps;
@@ -67,7 +95,7 @@ export function createAdminPage(deps) {
 
   /**
    * Render users table.
-   * @param {User[]} users
+    * @param {User[]} users
     * @returns {void}
    */
   function render(users) {
@@ -564,9 +592,13 @@ export function createAdminPage(deps) {
     adminLoansList.innerHTML = '<p>Loading loans...</p>';
     auditLogList.innerHTML = '<p>Loading audit log...</p>';
 
+    /** @type {UsersResponse} */
     let usersResult;
+    /** @type {AdminBookingsResponse} */
     let bookingsResult;
+    /** @type {AdminLoansResponse} */
     let loansResult;
+    /** @type {AuditLogResponse} */
     let auditResult;
     try {
       [usersResult, bookingsResult, loansResult, auditResult] = await Promise.all([

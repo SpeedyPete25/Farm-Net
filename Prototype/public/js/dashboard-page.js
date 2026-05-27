@@ -4,16 +4,60 @@
  */
 
 /**
+ * @typedef {{
+ *   id: number,
+ *   date: string,
+ *   startTime: string,
+ *   durationHours: number|string,
+ *   roomName: string,
+ *   location: string,
+ *   status: string,
+ *   returnCondition?: string,
+ *   returnConditionPhotoPath?: string,
+ *   returnedAt?: string
+ * }} DashboardBooking
+ */
+
+/**
+ * @typedef {{
+ *   id: number,
+ *   borrowDate: string,
+ *   returnDate: string,
+ *   equipmentName: string,
+ *   equipmentCode?: string,
+ *   status: string,
+ *   returnCondition?: string,
+ *   returnConditionPhotoPath?: string,
+ *   returnedAt?: string
+ * }} DashboardLoan
+ */
+
+/**
+ * @typedef {{ bookings: DashboardBooking[], loans: DashboardLoan[] }} DashboardRequests
+ */
+
+/**
+ * @typedef {{
+ *   requestsList: HTMLElement,
+ *   formatDuration: (duration: number|string) => string,
+ *   onCancelBooking: (bookingId: number) => Promise<void>,
+ *   onCancelLoan: (loanId: number) => Promise<void>,
+ *   onReturnLoan: (loanId: number) => Promise<void>,
+ *   onEditBooking: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
+ *   onEditLoan: (loan: { id: number, borrowDate: string, returnDate: string }) => Promise<void>
+ * }} DashboardPageDeps
+ */
+
+/**
+ * @typedef {{
+ *   render: (requests: DashboardRequests) => void
+ * }} DashboardPageApi
+ */
+
+/**
  * Build the dashboard page controller.
- * @param {Object} deps Dependency bag.
- * @param {HTMLElement} deps.requestsList Container for bookings/loans cards.
- * @param {(duration: number|string) => string} deps.formatDuration Duration formatter.
- * @param {(bookingId: number) => Promise<void>} deps.onCancelBooking Cancel booking callback.
- * @param {(loanId: number) => Promise<void>} deps.onCancelLoan Cancel loan callback.
- * @param {(loanId: number) => Promise<void>} deps.onReturnLoan Return loan callback.
- * @param {(booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>} deps.onEditBooking Edit booking callback.
- * @param {(loan: { id: number, borrowDate: string, returnDate: string }) => Promise<void>} deps.onEditLoan Edit loan callback.
- * @returns {{ render: (requests: any) => void }} Dashboard page API.
+ * @param {DashboardPageDeps} deps Dependency bag.
+ * @returns {DashboardPageApi} Dashboard page API.
  */
 export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelLoan, onReturnLoan, onEditBooking, onEditLoan }) {
   requestsList.addEventListener('click', async (event) => {
@@ -80,7 +124,8 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
 
   /**
    * Render bookings and loans cards for the dashboard page.
-   * @param {{ bookings: any[], loans: any[] }} requests Request data from the API.
+    * @param {DashboardRequests} requests Request data from the API.
+    * @returns {void}
    */
   function render(requests) {
     requestsList.innerHTML = `
