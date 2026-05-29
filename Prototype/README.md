@@ -38,7 +38,7 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 - Borrow equipment and return it with condition notes and an optional photo.
 - Review active and historical bookings, loans, and request status.
 - Change your password and save a light or dark theme preference.
-- Use admin pages to manage users, bookings, loans, rooms, and equipment.
+- Use admin pages to manage users, bookings, loans, rooms, equipment, and audit history.
 
 ## Key Screens
 
@@ -46,7 +46,7 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 - `Room Bookings`: weekly timetable plus booking form.
 - `Equipment Loans`: current equipment inventory and borrowing actions.
 - `Settings`: password change and theme preference.
-- `Admin`: user, booking, loan, and audit log management.
+- `User Management`: role management plus booking, loan, and audit log administration.
 - `Room Management` and `Equipment Management`: admin-only inventory administration.
 
 ## Project Structure
@@ -65,14 +65,15 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 - `/api/preferences`, `/api/change-password`
 - `/api/resources`, `/api/my-requests`, `/api/book-room`, `/api/cancel-booking`, `/api/edit-booking`
 - `/api/borrow-equipment`, `/api/cancel-loan`, `/api/return-loan`, `/api/edit-loan`
-- `/api/timetable`, `/api/rooms/:roomId/schedule`
-- Admin routes under `/api/admin/*` for users, bookings, loans, rooms, equipment, and audit logging
+- `/api/loans/:id/photo`, `/api/timetable`, `/api/rooms/:roomId/schedule`
+- Admin routes under `/api/admin/*` for users, bookings, loans, rooms, equipment, booked-out equipment, return photos, and audit logging
 
 ## Configuration
 
 - `EMAIL_VERIFICATION_ENABLED`: defaults to `true`. Set to `false` to bypass MX and SMTP mailbox verification during offline development.
 - `EMAIL_VERIFICATION_TIMEOUT_MS`: defaults to `8000`.
 - `EMAIL_VERIFICATION_MAX_MX`: defaults to `3`.
+- `PORT`: defaults to `3000`.
 
 `EMAIL_VERIFICATION_ENABLED` accepts `true/false`, `1/0`, `yes/no`, and `on/off` (case-insensitive).
 
@@ -85,5 +86,6 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 
 - Room booking uses a weekly timetable rather than the older per-day slot picker.
 - The prototype already supports booking edits, booking archives/history, and admin management flows.
-- Remaining roadmap items from the project brief are email notifications and registration confirmation.
-- Only admins can create admins. Teast login for admins is "admin@gmail.com" & "admin1234"
+- Registration currently validates mailbox reachability (MX + SMTP checks when enabled) but does not yet send click-to-confirm emails.
+- Remaining roadmap items from the project brief are booking email notifications, email confirmation links, and notification preferences.
+- Only admins can create admins. No default admin account is seeded automatically.
