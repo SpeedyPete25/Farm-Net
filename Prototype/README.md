@@ -82,6 +82,21 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 - Delete `Prototype/data/lab-booking.db` to recreate the seeded database on the next launch.
 - Delete files in `Prototype/data/return-photos/` if you want to clear uploaded return photos during local development.
 
+## Troubleshooting
+
+- App does not start because port `3000` is already in use:
+	- Set a different port in `Prototype/.env`, for example `PORT=3001`, then restart with `npm start`.
+	- Or stop the process currently using port `3000` and start the app again.
+- Registration fails while testing offline or on restricted networks:
+	- Set `EMAIL_VERIFICATION_ENABLED=false` in `Prototype/.env` to bypass MX/SMTP mailbox checks during development.
+	- Restart the server after changing environment variables.
+- Login/auth issues after schema changes or old local data:
+	- Remove `Prototype/data/lab-booking.db` and restart to rebuild the database from the current schema.
+	- Re-register users after a reset because local accounts are deleted with the database file.
+- Return photo upload problems:
+	- Ensure uploads are image files and under 5 MB.
+	- Confirm `Prototype/data/return-photos/` exists and is writable by the running process.
+
 ## Notes
 
 - Room booking uses a weekly timetable rather than the older per-day slot picker.
