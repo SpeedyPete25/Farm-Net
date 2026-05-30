@@ -9,6 +9,7 @@
 *Return equipment page
 *Submit status with return
 *Submit photos with return
+Loan verification confirmation email
 
 ---Bookings---
 *Cancel bookings
@@ -16,6 +17,7 @@
 *Visualise booked periods for rooms
 *Edit booking times
 Timetable engine
+Booking verification confirmation email
 
 ---Notifications---
 Sends email notifications for confirmed and cancelled bookings
@@ -27,9 +29,31 @@ Sends email notifications for confirmed and cancelled bookings
 *Email domain validation
 *Confirm domain has mail servers
 *Connect to mail server to verify mailbox existence
-Send confirmation emails and user has to click link to confirm
+Confirmation emails for account creation
 
 --Settings--
 *Change password
 *Dark mode
 Notification settings
+
+--Testing--
+Automated testing features
+API inegration features for core flows: auth, booking create/edit/cancel, loan borrow/return, admin edits
+A small frontend smoke test pass for critical user journeys
+Seed/reset test database workflow so tests are repeatable
+
+--Security--
+Security hardening
+Move session secret and other sensitive config fully to env vars in server.js
+Request rate limiting on auth and mutation endpoints
+CSRF protection for session-authenticated POST/PATCH/DELETE routes
+Tighter payload validation on all write endpoints
+Structured server logging and error IDs for support/debugging
+Backup/restore process docs for SQLite data and return-photo files
+Startup health checks and a basic deployment checklist
+
+--User--
+UX polish that reduces support load
+Better inline validation messages and recovery guidance on failed actions
+More consistent empty/loading/error states across admin/user lists
+Accessibility pass (keyboard navigation, focus order, labels, contrast)
