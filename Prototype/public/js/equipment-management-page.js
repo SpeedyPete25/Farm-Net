@@ -149,8 +149,8 @@ export function createEquipmentManagementPage(deps) {
         requestJson('/api/admin/equipment/booked-out')
       ]);
     } catch (error) {
-      renderListState(equipmentManagementList, { kind: 'error', message: 'Failed to load equipment.' });
-      renderListState(bookedOutEquipmentList, { kind: 'error', message: 'Failed to load booked-out equipment.' });
+      renderListState(equipmentManagementList, { kind: 'error', message: 'Unable to load equipment.' });
+      renderListState(bookedOutEquipmentList, { kind: 'error', message: 'Unable to load booked-out equipment.' });
       return;
     }
 

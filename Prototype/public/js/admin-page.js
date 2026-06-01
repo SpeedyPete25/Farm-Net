@@ -610,9 +610,9 @@ export function createAdminPage(deps) {
         requestJson('/api/admin/audit-log')
       ]);
     } catch (err) {
-      renderListState(usersList, { kind: 'error', message: 'Failed to load users.' });
-      renderListState(adminBookingsList, { kind: 'error', message: 'Failed to load bookings.' });
-      renderListState(adminLoansList, { kind: 'error', message: 'Failed to load loans.' });
+      renderListState(usersList, { kind: 'error', message: 'Unable to load users.' });
+      renderListState(adminBookingsList, { kind: 'error', message: 'Unable to load bookings.' });
+      renderListState(adminLoansList, { kind: 'error', message: 'Unable to load loans.' });
       renderListState(auditLogList, { kind: 'error', message: 'Audit log unavailable.' });
       return;
     }

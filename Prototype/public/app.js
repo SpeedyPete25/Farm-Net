@@ -488,9 +488,9 @@ async function refreshDashboard(statusFilter = 'active') {
       requestJson(`/api/my-requests?status=${statusFilter}`)
     ]);
   } catch (error) {
-    renderListState(roomsList, { kind: 'error', message: 'Unable to load rooms right now.' });
-    renderListState(equipmentList, { kind: 'error', message: 'Unable to load equipment right now.' });
-    renderListState(requestsList, { kind: 'error', message: 'Unable to load your requests right now.' });
+    renderListState(roomsList, { kind: 'error', message: 'Unable to load rooms.' });
+    renderListState(equipmentList, { kind: 'error', message: 'Unable to load equipment.' });
+    renderListState(requestsList, { kind: 'error', message: 'Unable to load your requests.' });
     return;
   }
 

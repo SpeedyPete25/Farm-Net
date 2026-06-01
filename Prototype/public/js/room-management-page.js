@@ -81,7 +81,7 @@ export function createRoomManagementPage(deps) {
     try {
       result = await requestJson('/api/admin/rooms');
     } catch (error) {
-      renderListState(roomManagementList, { kind: 'error', message: 'Failed to load rooms.' });
+      renderListState(roomManagementList, { kind: 'error', message: 'Unable to load rooms.' });
       return;
     }
 
