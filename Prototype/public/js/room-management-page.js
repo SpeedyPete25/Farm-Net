@@ -3,6 +3,8 @@
  * Renders room list and supports add/remove operations.
  */
 
+import { renderListState } from './utils.js';
+
 /**
  * @typedef {{ id: number, name: string, location: string }} ManagedRoom
  */
@@ -50,7 +52,7 @@ export function createRoomManagementPage(deps) {
    */
   function render() {
     if (!rooms || rooms.length === 0) {
-      roomManagementList.innerHTML = '<p>No rooms found.</p>';
+      renderListState(roomManagementList, { kind: 'empty', message: 'No rooms found.' });
       return;
     }
 
@@ -73,11 +75,18 @@ export function createRoomManagementPage(deps) {
    */
   async function load() {
     roomManagementError.textContent = '';
-    roomManagementList.innerHTML = '<p>Loading rooms...</p>';
+    renderListState(roomManagementList, { kind: 'loading', message: 'Loading rooms...' });
 
-    const result = await requestJson('/api/admin/rooms');
+    let result;
+    try {
+      result = await requestJson('/api/admin/rooms');
+    } catch (error) {
+      renderListState(roomManagementList, { kind: 'error', message: 'Failed to load rooms.' });
+      return;
+    }
+
     if (result.error) {
-      roomManagementList.innerHTML = `<p class="form-error">${result.error}</p>`;
+      renderListState(roomManagementList, { kind: 'error', message: result.error });
       return;
     }
 

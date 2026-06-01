@@ -3,6 +3,8 @@
  * Renders equipment list and supports add/remove/update operations.
  */
 
+import { renderListState } from './utils.js';
+
 /**
  * @typedef {{ id: number, name: string, quantity: number, codes?: string[] }} EquipmentItem
  */
@@ -68,7 +70,7 @@ export function createEquipmentManagementPage(deps) {
    */
   function render() {
     if (!equipment || equipment.length === 0) {
-      equipmentManagementList.innerHTML = '<p>No equipment found.</p>';
+      renderListState(equipmentManagementList, { kind: 'empty', message: 'No equipment found.' });
       return;
     }
 
@@ -110,7 +112,7 @@ export function createEquipmentManagementPage(deps) {
    */
   function renderBookedOutLoans() {
     if (!bookedOutLoans || bookedOutLoans.length === 0) {
-      bookedOutEquipmentList.innerHTML = '<p>No equipment is currently booked out.</p>';
+      renderListState(bookedOutEquipmentList, { kind: 'empty', message: 'No equipment is currently booked out.' });
       return;
     }
 
@@ -135,24 +137,32 @@ export function createEquipmentManagementPage(deps) {
    */
   async function load() {
     equipmentManagementError.textContent = '';
-    equipmentManagementList.innerHTML = '<p>Loading equipment...</p>';
-    bookedOutEquipmentList.innerHTML = '<p>Loading booked-out equipment...</p>';
+    renderListState(equipmentManagementList, { kind: 'loading', message: 'Loading equipment...' });
+    renderListState(bookedOutEquipmentList, { kind: 'loading', message: 'Loading booked-out equipment...' });
 
     /** @type {[EquipmentListResponse, BookedOutLoansResponse]} */
-    const [equipmentResult, bookedOutResult] = await Promise.all([
-      requestJson('/api/admin/equipment'),
-      requestJson('/api/admin/equipment/booked-out')
-    ]);
+    let equipmentResult;
+    let bookedOutResult;
+    try {
+      [equipmentResult, bookedOutResult] = await Promise.all([
+        requestJson('/api/admin/equipment'),
+        requestJson('/api/admin/equipment/booked-out')
+      ]);
+    } catch (error) {
+      renderListState(equipmentManagementList, { kind: 'error', message: 'Failed to load equipment.' });
+      renderListState(bookedOutEquipmentList, { kind: 'error', message: 'Failed to load booked-out equipment.' });
+      return;
+    }
 
     if (equipmentResult.error) {
-      equipmentManagementList.innerHTML = `<p class="form-error">${equipmentResult.error}</p>`;
+      renderListState(equipmentManagementList, { kind: 'error', message: equipmentResult.error });
     } else {
       equipment = Array.isArray(equipmentResult.equipment) ? equipmentResult.equipment : [];
       render();
     }
 
     if (bookedOutResult.error) {
-      bookedOutEquipmentList.innerHTML = `<p class="form-error">${bookedOutResult.error}</p>`;
+      renderListState(bookedOutEquipmentList, { kind: 'error', message: bookedOutResult.error });
       return;
     }
 

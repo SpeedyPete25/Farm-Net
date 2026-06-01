@@ -3,6 +3,8 @@
  * Renders equipment availability and handles borrow actions.
  */
 
+import { renderListState } from './utils.js';
+
 /**
  * @typedef {{
  *   id: number,
@@ -55,6 +57,11 @@ export function createEquipmentPage({ equipmentList, onBorrow }) {
    * @returns {void}
    */
   function render(equipment) {
+    if (!Array.isArray(equipment) || equipment.length === 0) {
+      renderListState(equipmentList, { kind: 'empty', message: 'No equipment available.' });
+      return;
+    }
+
     equipmentList.innerHTML = equipment.map((item) => {
       return `
         <div class="item-row">

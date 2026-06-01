@@ -3,6 +3,8 @@
  * Handles room list rendering, booking form state, timetable rendering, and booking submission.
  */
 
+import { renderListState } from './utils.js';
+
 /**
  * @typedef {{ id: number, name: string, location: string }} RoomSummary
  */
@@ -396,6 +398,14 @@ export function createRoomsPage({
     * @returns {void}
    */
   function render(rooms) {
+    if (!Array.isArray(rooms) || rooms.length === 0) {
+      renderListState(roomsList, { kind: 'empty', message: 'No rooms available.' });
+      timetableRoomSelect.innerHTML = '<option value="">— Select a room —</option>';
+      timetableWeekNav.classList.add('hidden');
+      timetableGrid.innerHTML = '';
+      return;
+    }
+
     roomsList.innerHTML = rooms.map((room) => {
       return `
         <div class="item-row">

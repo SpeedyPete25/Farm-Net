@@ -1,5 +1,5 @@
 import { requestJson } from './js/api.js';
-import { showError, formatDuration, getTodayDateString, getNextQuarterTime } from './js/utils.js';
+import { showError, formatDuration, getTodayDateString, getNextQuarterTime, renderListState } from './js/utils.js';
 import { createDashboardPage } from './js/dashboard-page.js';
 import { createRoomsPage } from './js/rooms-page.js';
 import { createEquipmentPage } from './js/equipment-page.js';
@@ -476,12 +476,40 @@ async function refreshDashboard(statusFilter = 'active') {
 
   setActivePage(activePage);
 
-  const resources = await requestJson('/api/resources');
-  const requests = await requestJson(`/api/my-requests?status=${statusFilter}`);
+  renderListState(roomsList, { kind: 'loading', message: 'Loading rooms...' });
+  renderListState(equipmentList, { kind: 'loading', message: 'Loading equipment...' });
+  renderListState(requestsList, { kind: 'loading', message: 'Loading your requests...' });
 
-  roomsPage.render(resources.rooms);
-  equipmentPage.render(resources.equipment);
-  dashboardPage.render(requests);
+  let resources;
+  let requests;
+  try {
+    [resources, requests] = await Promise.all([
+      requestJson('/api/resources'),
+      requestJson(`/api/my-requests?status=${statusFilter}`)
+    ]);
+  } catch (error) {
+    renderListState(roomsList, { kind: 'error', message: 'Unable to load rooms right now.' });
+    renderListState(equipmentList, { kind: 'error', message: 'Unable to load equipment right now.' });
+    renderListState(requestsList, { kind: 'error', message: 'Unable to load your requests right now.' });
+    return;
+  }
+
+  if (resources.error) {
+    renderListState(roomsList, { kind: 'error', message: resources.error });
+    renderListState(equipmentList, { kind: 'error', message: resources.error });
+  } else {
+    roomsPage.render(resources.rooms || []);
+    equipmentPage.render(resources.equipment || []);
+  }
+
+  if (requests.error) {
+    renderListState(requestsList, { kind: 'error', message: requests.error });
+  } else {
+    dashboardPage.render({
+      bookings: Array.isArray(requests.bookings) ? requests.bookings : [],
+      loans: Array.isArray(requests.loans) ? requests.loans : []
+    });
+  }
 }
 
 /**

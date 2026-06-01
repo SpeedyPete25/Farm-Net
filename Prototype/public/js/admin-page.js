@@ -3,6 +3,8 @@
  * Renders users, bookings, loans, and audit data for admin actions.
  */
 
+import { renderListState } from './utils.js';
+
 /**
  * @typedef {{ id: number, email: string, role: 'user' | 'admin' }} User
  */
@@ -100,7 +102,7 @@ export function createAdminPage(deps) {
    */
   function render(users) {
     if (!users || users.length === 0) {
-      usersList.innerHTML = '<p>No users found.</p>';
+      renderListState(usersList, { kind: 'empty', message: 'No users found.' });
       return;
     }
 
@@ -184,7 +186,7 @@ export function createAdminPage(deps) {
    */
   function renderBookings(bookings) {
     if (!bookings || bookings.length === 0) {
-      adminBookingsList.innerHTML = '<p>No bookings found.</p>';
+      renderListState(adminBookingsList, { kind: 'empty', message: 'No bookings found.' });
       return;
     }
 
@@ -267,7 +269,7 @@ export function createAdminPage(deps) {
    */
   function renderLoans(loans) {
     if (!loans || loans.length === 0) {
-      adminLoansList.innerHTML = '<p>No loans found.</p>';
+      renderListState(adminLoansList, { kind: 'empty', message: 'No loans found.' });
       return;
     }
 
@@ -393,7 +395,7 @@ export function createAdminPage(deps) {
    */
   function renderAuditLog(entries) {
     if (!entries || entries.length === 0) {
-      auditLogList.innerHTML = '<p>No audit log entries yet.</p>';
+      renderListState(auditLogList, { kind: 'empty', message: 'No audit log entries yet.' });
       return;
     }
 
@@ -587,10 +589,10 @@ export function createAdminPage(deps) {
    * @returns {Promise<void>}
    */
   async function load() {
-    usersList.innerHTML = '<p>Loading users...</p>';
-    adminBookingsList.innerHTML = '<p>Loading bookings...</p>';
-    adminLoansList.innerHTML = '<p>Loading loans...</p>';
-    auditLogList.innerHTML = '<p>Loading audit log...</p>';
+    renderListState(usersList, { kind: 'loading', message: 'Loading users...' });
+    renderListState(adminBookingsList, { kind: 'loading', message: 'Loading bookings...' });
+    renderListState(adminLoansList, { kind: 'loading', message: 'Loading loans...' });
+    renderListState(auditLogList, { kind: 'loading', message: 'Loading audit log...' });
 
     /** @type {UsersResponse} */
     let usersResult;
@@ -608,33 +610,33 @@ export function createAdminPage(deps) {
         requestJson('/api/admin/audit-log')
       ]);
     } catch (err) {
-      usersList.innerHTML = '<p class="form-error">Failed to load users.</p>';
-      adminBookingsList.innerHTML = '<p class="form-error">Failed to load bookings.</p>';
-      adminLoansList.innerHTML = '<p class="form-error">Failed to load loans.</p>';
-      auditLogList.innerHTML = '<p class="form-error">Audit log unavailable.</p>';
+      renderListState(usersList, { kind: 'error', message: 'Failed to load users.' });
+      renderListState(adminBookingsList, { kind: 'error', message: 'Failed to load bookings.' });
+      renderListState(adminLoansList, { kind: 'error', message: 'Failed to load loans.' });
+      renderListState(auditLogList, { kind: 'error', message: 'Audit log unavailable.' });
       return;
     }
 
     if (usersResult.error) {
-      usersList.innerHTML = `<p class="form-error">${usersResult.error}</p>`;
+      renderListState(usersList, { kind: 'error', message: usersResult.error });
     } else {
       render(usersResult.users || []);
     }
 
     if (bookingsResult.error) {
-      adminBookingsList.innerHTML = `<p class="form-error">${bookingsResult.error}</p>`;
+      renderListState(adminBookingsList, { kind: 'error', message: bookingsResult.error });
     } else {
       renderBookings(bookingsResult.bookings || []);
     }
 
     if (loansResult.error) {
-      adminLoansList.innerHTML = `<p class="form-error">${loansResult.error}</p>`;
+      renderListState(adminLoansList, { kind: 'error', message: loansResult.error });
     } else {
       renderLoans(loansResult.loans || []);
     }
 
     if (auditResult.error) {
-      auditLogList.innerHTML = `<p class="form-error">${auditResult.error}</p>`;
+      renderListState(auditLogList, { kind: 'error', message: auditResult.error });
       return;
     }
 

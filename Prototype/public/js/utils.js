@@ -3,12 +3,35 @@
  */
 
 /**
+ * @typedef {'loading'|'empty'|'error'} ListStateKind
+ */
+
+/**
  * Show an inline error or validation message.
  * @param {HTMLElement} element Target element for the message.
  * @param {string} message Message to display.
  */
 export function showError(element, message) {
   element.textContent = message;
+}
+
+/**
+ * Render a standard list state block (loading/empty/error).
+ * @param {HTMLElement} container List container element.
+ * @param {{ kind: ListStateKind, message: string }} state State payload.
+ */
+export function renderListState(container, state) {
+  const { kind, message } = state;
+  container.innerHTML = '';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = `list-state list-state-${kind}`;
+
+  const text = document.createElement('p');
+  text.textContent = message;
+
+  wrapper.appendChild(text);
+  container.appendChild(wrapper);
 }
 
 /**

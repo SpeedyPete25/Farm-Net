@@ -283,6 +283,31 @@ button.danger {
   margin-top: 8px;
 }
 
+.list-state {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: var(--panel-surface);
+  padding: 14px;
+  margin: 8px 0;
+}
+
+.list-state p {
+  margin: 0;
+}
+
+.list-state-loading {
+  color: var(--muted);
+}
+
+.list-state-empty {
+  color: var(--muted);
+}
+
+.list-state-error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  color: var(--danger);
+}
+
 .action-button {
   padding: 4px 12px;
   font-size: 0.9em;
