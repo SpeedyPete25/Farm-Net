@@ -16,7 +16,10 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const app = express();
 
 // Application data directory for SQLite storage.
-const dataDir = path.join(__dirname, 'data');
+// Tests can override this to isolate their database and uploaded files.
+const dataDir = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 // Directory for equipment return condition photos.

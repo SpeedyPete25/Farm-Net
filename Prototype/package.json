@@ -4,7 +4,10 @@
   "description": "University room booking and equipment checkout prototype",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "npm run test:reset && node --test tests/api.integration.test.js",
+    "test:api": "npm run test:reset && node --test tests/api.integration.test.js",
+    "test:reset": "node scripts/reset-test-data.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

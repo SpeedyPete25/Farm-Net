@@ -29,6 +29,34 @@ EMAIL_VERIFICATION_MAX_MX=3
 
 Node.js 18+ is recommended. The prototype uses only the packages listed in `package.json`.
 
+## Testing
+
+The prototype now includes automated tests using the built-in Node.js test runner.
+
+Commands:
+
+```bash
+npm test
+```
+
+```bash
+npm run test:api
+```
+
+```bash
+npm run test:reset
+```
+
+What the suite currently covers:
+
+- Frontend smoke check for the main app shell.
+- Authentication flow: register, login, profile, logout.
+- Booking flow: create, edit, cancel.
+- Equipment loan flow: borrow, edit, return.
+- Admin flow: list users and edit bookings/loans.
+
+Test runs use an isolated SQLite database and return-photo directory under `Prototype/.test-data/`, so they do not touch your normal `Prototype/data/` files.
+
 ## What The App Does
 
 - Register and log in with email-based accounts.
@@ -74,6 +102,7 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 - `EMAIL_VERIFICATION_TIMEOUT_MS`: defaults to `8000`.
 - `EMAIL_VERIFICATION_MAX_MX`: defaults to `3`.
 - `PORT`: defaults to `3000`.
+- `DATA_DIR`: optional override for the app data directory. Used by automated tests to isolate the SQLite database and return-photo uploads.
 
 `EMAIL_VERIFICATION_ENABLED` accepts `true/false`, `1/0`, `yes/no`, and `on/off` (case-insensitive).
 
@@ -81,6 +110,7 @@ Node.js 18+ is recommended. The prototype uses only the packages listed in `pack
 
 - Delete `Prototype/data/lab-booking.db` to recreate the seeded database on the next launch.
 - Delete files in `Prototype/data/return-photos/` if you want to clear uploaded return photos during local development.
+- Run `npm run test:reset` to clear automated test artifacts in `Prototype/.test-data/`.
 
 ## Troubleshooting
 

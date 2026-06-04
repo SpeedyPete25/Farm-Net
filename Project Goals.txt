@@ -37,10 +37,13 @@ Confirmation emails for account creation
 Notification settings
 
 --Testing--
-Automated testing features
-API inegration features for core flows: auth, booking create/edit/cancel, loan borrow/return, admin edits
-A small frontend smoke test pass for critical user journeys
-Seed/reset test database workflow so tests are repeatable
+*Automated testing 
+*API integration tests for core flows: auth, booking create/edit/cancel, loan borrow/return, admin edits
+*A small frontend smoke test pass for critical user journeys
+*Seed/reset test database workflow so tests are repeatable
+Coverage for admin room/equipment management endpoints
+Negative-path tests for validation and authorization failures
+Browser smoke suite later if you want UI-level automation beyond HTTP checks
 
 --Security--
 Security hardening
@@ -55,5 +58,5 @@ Startup health checks and a basic deployment checklist
 --User--
 UX polish that reduces support load
 Better inline validation messages and recovery guidance on failed actions
-More consistent empty/loading/error states across admin/user lists
+*More consistent empty/loading/error states across admin/user lists
 Accessibility pass (keyboard navigation, focus order, labels, contrast)
