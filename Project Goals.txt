@@ -41,7 +41,7 @@ Notification settings
 *API integration tests for core flows: auth, booking create/edit/cancel, loan borrow/return, admin edits
 *A small frontend smoke test pass for critical user journeys
 *Seed/reset test database workflow so tests are repeatable
-Coverage for admin room/equipment management endpoints
+*Coverage for admin room/equipment management endpoints
 Negative-path tests for validation and authorization failures
 Browser smoke suite later if you want UI-level automation beyond HTTP checks
 

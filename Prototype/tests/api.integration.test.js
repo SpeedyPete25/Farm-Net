@@ -440,4 +440,84 @@ test('automated integration coverage for critical flows', async (t) => {
     const editedLoan = loans.body.loans.find((loanRow) => loanRow.id === loanId);
     assert.equal(editedLoan.returnDate, editedLoanDate);
   });
+
+  await t.test('supports admin room and equipment management endpoints', async () => {
+    const adminEmail = uniqueEmail('admin-mgmt');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const roomSuffix = Date.now();
+    const roomName = `Automation Room ${roomSuffix}`;
+    const roomLocation = `Automation Wing ${roomSuffix}`;
+
+    const addRoom = await adminClient.request('/api/admin/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: roomName, location: roomLocation })
+    });
+    assert.equal(addRoom.status, 200);
+    assert.equal(addRoom.body.message, 'Room added successfully.');
+
+    const roomsAfterAdd = await adminClient.request('/api/admin/rooms');
+    assert.equal(roomsAfterAdd.status, 200);
+    const addedRoom = roomsAfterAdd.body.rooms.find((room) => room.location === roomLocation);
+    assert.ok(addedRoom);
+    assert.equal(addedRoom.name, roomName);
+
+    const removeRoom = await adminClient.request(`/api/admin/rooms/${addedRoom.id}`, {
+      method: 'DELETE'
+    });
+    assert.equal(removeRoom.status, 200);
+    assert.equal(removeRoom.body.message, 'Room removed successfully.');
+
+    const roomsAfterRemove = await adminClient.request('/api/admin/rooms');
+    assert.equal(roomsAfterRemove.status, 200);
+    assert.equal(roomsAfterRemove.body.rooms.some((room) => room.id === addedRoom.id), false);
+
+    const equipmentSuffix = Date.now();
+    const equipmentName = `Automation Device ${equipmentSuffix}`;
+
+    const addEquipment = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentName, quantity: 2 })
+    });
+    assert.equal(addEquipment.status, 200);
+    assert.equal(addEquipment.body.message, 'Equipment added successfully.');
+
+    const equipmentAfterAdd = await adminClient.request('/api/admin/equipment');
+    assert.equal(equipmentAfterAdd.status, 200);
+    const addedEquipment = equipmentAfterAdd.body.equipment.find((item) => item.name === equipmentName);
+    assert.ok(addedEquipment);
+    assert.equal(Number(addedEquipment.quantity), 2);
+
+    const updateEquipment = await adminClient.request(`/api/admin/equipment/${addedEquipment.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity: 3 })
+    });
+    assert.equal(updateEquipment.status, 200);
+    assert.equal(updateEquipment.body.message, 'Equipment quantity updated successfully.');
+    assert.equal(Number(updateEquipment.body.equipment.quantity), 3);
+
+    const bookedOutEquipment = await adminClient.request('/api/admin/equipment/booked-out');
+    assert.equal(bookedOutEquipment.status, 200);
+    assert.ok(Array.isArray(bookedOutEquipment.body.loans));
+
+    const removeEquipment = await adminClient.request(`/api/admin/equipment/${addedEquipment.id}`, {
+      method: 'DELETE'
+    });
+    assert.equal(removeEquipment.status, 200);
+    assert.equal(removeEquipment.body.message, 'Equipment removed successfully.');
+
+    const equipmentAfterRemove = await adminClient.request('/api/admin/equipment');
+    assert.equal(equipmentAfterRemove.status, 200);
+    assert.equal(equipmentAfterRemove.body.equipment.some((item) => item.id === addedEquipment.id), false);
+  });
 });
