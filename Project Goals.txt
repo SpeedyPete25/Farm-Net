@@ -42,8 +42,8 @@ Notification settings
 *A small frontend smoke test pass for critical user journeys
 *Seed/reset test database workflow so tests are repeatable
 *Coverage for admin room/equipment management endpoints
-Negative-path tests for validation and authorization failures
-Browser smoke suite later if you want UI-level automation beyond HTTP checks
+*Negative-path tests for validation and authorization failures
+Browser smoke suite later for UI-level automation beyond HTTP checks
 
 --Security--
 Security hardening

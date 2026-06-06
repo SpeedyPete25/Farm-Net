@@ -259,6 +259,104 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.deepEqual(loggedOutProfile.body, { authenticated: false });
   });
 
+  await t.test('handles validation and authorization failures with expected status codes', async () => {
+    const guestClient = new TestClient(baseUrl);
+
+    const unauthorizedResources = await guestClient.request('/api/resources');
+    assert.equal(unauthorizedResources.status, 401);
+    assert.equal(unauthorizedResources.body.error, 'Unauthorized');
+
+    const invalidRegistration = await guestClient.request('/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'invalid-email' })
+    });
+    assert.equal(invalidRegistration.status, 400);
+    assert.equal(invalidRegistration.body.error, 'Email and password are required.');
+
+    const invalidLogin = await guestClient.request('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'nobody@example.com', password: 'wrong-pass' })
+    });
+    assert.equal(invalidLogin.status, 400);
+    assert.equal(invalidLogin.body.error, 'Invalid email or password.');
+
+    const memberEmail = uniqueEmail('negative-member');
+    const memberPassword = 'Password123';
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, memberPassword);
+    await loginUser(memberClient, memberEmail, memberPassword);
+
+    const nonAdminUsers = await memberClient.request('/api/admin/users');
+    assert.equal(nonAdminUsers.status, 403);
+    assert.equal(nonAdminUsers.body.error, 'Admin access required.');
+
+    const invalidTheme = await memberClient.request('/api/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: 'blue' })
+    });
+    assert.equal(invalidTheme.status, 400);
+    assert.equal(invalidTheme.body.error, 'Invalid theme. Allowed values are dark and light.');
+
+    const resources = await getResources(memberClient);
+    const roomId = resources.rooms[0].id;
+    const equipmentId = resources.equipment[0].id;
+    const bookingDate = formatDateFromToday(7);
+
+    const invalidBookingTime = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId,
+        date: bookingDate,
+        startTime: '10:07',
+        durationHours: 1
+      })
+    });
+    assert.equal(invalidBookingTime.status, 400);
+    assert.equal(invalidBookingTime.body.error, 'Start time must be in 15-minute increments.');
+
+    const invalidBorrowDuration = await memberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId, days: 1.5 })
+    });
+    assert.equal(invalidBorrowDuration.status, 400);
+    assert.equal(invalidBorrowDuration.body.error, 'Borrow duration must be a whole number of days.');
+
+    const createdBooking = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId,
+        date: bookingDate,
+        startTime: '10:00',
+        durationHours: 1
+      })
+    });
+    assert.equal(createdBooking.status, 200);
+
+    const memberRequests = await memberClient.request('/api/my-requests?status=all');
+    const memberBooking = memberRequests.body.bookings.find((booking) => booking.date === bookingDate && booking.startTime === '10:00');
+    assert.ok(memberBooking);
+
+    const outsiderEmail = uniqueEmail('negative-outsider');
+    const outsiderPassword = 'Password123';
+    const outsiderClient = new TestClient(baseUrl);
+    await registerUser(outsiderClient, outsiderEmail, outsiderPassword);
+    await loginUser(outsiderClient, outsiderEmail, outsiderPassword);
+
+    const ownershipCancel = await outsiderClient.request('/api/cancel-booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: memberBooking.id })
+    });
+    assert.equal(ownershipCancel.status, 404);
+    assert.equal(ownershipCancel.body.error, 'Booking not found or not owned by user.');
+  });
+
   await t.test('supports booking create, edit, and cancel flow', async () => {
     const client = new TestClient(baseUrl);
     const email = uniqueEmail('booking');
@@ -277,7 +375,7 @@ test('automated integration coverage for critical flows', async (t) => {
       body: JSON.stringify({
         roomId,
         date: createdDate,
-        startTime: '10:00',
+        startTime: '12:00',
         durationHours: 1
       })
     });
@@ -295,7 +393,7 @@ test('automated integration coverage for critical flows', async (t) => {
       body: JSON.stringify({
         bookingId,
         date: editedDate,
-        startTime: '10:15',
+        startTime: '12:15',
         durationHours: 1.5
       })
     });
@@ -303,7 +401,7 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const afterEdit = await client.request('/api/my-requests?status=all');
     assert.equal(afterEdit.body.bookings[0].date, editedDate);
-    assert.equal(afterEdit.body.bookings[0].startTime, '10:15');
+    assert.equal(afterEdit.body.bookings[0].startTime, '12:15');
 
     const cancelled = await client.request('/api/cancel-booking', {
       method: 'POST',
