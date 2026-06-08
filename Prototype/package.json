@@ -7,6 +7,7 @@
     "start": "node server.js",
     "test": "npm run test:reset && node --test tests/api.integration.test.js",
     "test:api": "npm run test:reset && node --test tests/api.integration.test.js",
+    "test:browser": "npm run test:reset && playwright test --config=playwright.config.js",
     "test:reset": "node scripts/reset-test-data.js"
   },
   "dependencies": {
@@ -16,5 +17,8 @@
     "express-session": "^1.17.3",
     "multer": "^2.1.1",
     "sqlite3": "^5.1.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
   }
 }

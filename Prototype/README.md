@@ -44,18 +44,29 @@ npm run test:api
 ```
 
 ```bash
+npm run test:browser
+```
+
+```bash
 npm run test:reset
 ```
 
 What the suite currently covers:
 
 - Frontend smoke check for the main app shell.
+- Browser smoke suite for critical UI journeys (register, login, page navigation, logout).
 - Authentication flow: register, login, profile, logout.
 - Booking flow: create, edit, cancel.
 - Equipment loan flow: borrow, edit, return.
 - Admin flow: list users and edit bookings/loans.
 
 Test runs use an isolated SQLite database and return-photo directory under `Prototype/.test-data/`, so they do not touch your normal `Prototype/data/` files.
+
+If Playwright reports a missing browser runtime on a new machine, run:
+
+```bash
+npx playwright install chromium
+```
 
 ## What The App Does
 
