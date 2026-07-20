@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FarmNet Booking</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header>
+      <h1>FarmNet Room & Equipment Booking</h1>
+      <div id="user-status"></div>
+    </header>
+
+    <main>
+      <!-- Authentication area: login and registration tabs -->
+      <section id="auth-section" class="card">
+        <div class="tabs">
+          <button class="tab-button active" data-tab="login">Login</button>
+          <button class="tab-button" data-tab="register">Register</button>
+        </div>
+        <div id="login" class="tab-panel active">
+          <h2>Login</h2>
+          <form id="login-form">
+            <label>Email<input type="email" name="email" required /></label>
+            <label>Password<input type="password" name="password" required /></label>
+            <button type="submit">Login</button>
+          </form>
+          <div id="login-error" class="form-error"></div>
+        </div>
+        <div id="register" class="tab-panel">
+          <h2>Register</h2>
+          <form id="register-form">
+            <label>Email<input type="email" name="email" required /></label>
+            <label>Password<input type="password" name="password" required /></label>
+            <button type="submit">Register</button>
+          </form>
+          <div id="register-error" class="form-error"></div>
+        </div>
+      </section>
+
+      <section id="dashboard-section" class="hidden">
+        <div class="toolbar">
+          <div class="page-nav">
+            <button id="nav-dashboard" class="secondary active">User Bookings</button>
+            <button id="nav-rooms" class="secondary">Room Bookings</button>
+            <button id="nav-equipment" class="secondary">Equipment Loans</button>
+            <button id="nav-settings" class="secondary">Settings</button>
+            <button id="nav-admin" class="secondary hidden">User Management</button>
+            <button id="nav-room-management" class="secondary hidden">Room Management</button>
+            <button id="nav-equipment-management" class="secondary hidden">Equipment Management</button>
+          </div>
+          <button id="logout-button">Logout</button>
+        </div>
+
+        <article id="page-dashboard" class="card page-panel">
+          <h2>My Bookings & Loans</h2>
+          <div class="filter-controls" style="margin-bottom: 16px;">
+            <label>Filter:
+              <select id="booking-filter">
+                <option value="active">Active bookings only</option>
+                <option value="all">All bookings</option>
+              </select>
+            </label>
+          </div>
+          <div id="requests-list"></div>
+        </article>
+
+        <article id="page-rooms" class="card page-panel hidden">
+          <h2>Room Bookings</h2>
+
+          <!-- Timetable calendar view -->
+          <div id="timetable-section">
+            <div class="timetable-controls">
+              <label for="timetable-room-select">View room availability
+                <select id="timetable-room-select">
+                  <option value="">— Select a room —</option>
+                </select>
+              </label>
+            </div>
+            <div id="timetable-week-nav" class="timetable-nav hidden">
+              <button id="timetable-prev" class="secondary">&#8592; Prev week</button>
+              <span id="timetable-week-label"></span>
+              <button id="timetable-next" class="secondary">Next week &#8594;</button>
+              <button id="timetable-today" class="secondary">This week</button>
+            </div>
+            <div id="timetable-grid-container">
+              <div id="timetable-grid"></div>
+            </div>
+          </div>
+
+          <div id="rooms-list" class="hidden"></div>
+          <!-- Hidden booking panel shown after selecting a room -->
+          <div id="booking-panel" class="hidden" style="margin-top: 24px;">
+            <h3>Book a room</h3>
+            <p id="booking-room-name" style="margin: 0 0 12px 0; font-weight: 700;"></p>
+            <form id="booking-form">
+              <label>Date<input id="booking-date" type="date" required /></label>
+              <label>Start time<input id="booking-start-time" type="time" step="900" required /></label>
+              <label>Duration (Hours)<input id="booking-duration" type="number" min="0.5" step="0.5" value="0.5" required />
+                <small style="font-weight:400; color:#6b7280;">Use 0.5 for 30 minutes, 1 for 1 hour, etc.</small>
+              </label>
+              <div class="form-actions" style="display: flex; gap: 12px; margin-top: 16px;">
+                <button type="submit">Confirm booking</button>
+                <button type="button" id="booking-cancel" class="secondary">Cancel</button>
+              </div>
+              <div id="booking-error" class="form-error"></div>
+            </form>
+          </div>
+        </article>
+
+        <article id="page-equipment" class="card page-panel hidden">
+          <h2>Equipment Loans</h2>
+          <div id="equipment-list"></div>
+        </article>
+
+        <article id="page-settings" class="card page-panel hidden">
+          <h2>Settings</h2>
+          <p>Manage account and display preferences.</p>
+
+          <form id="theme-settings-form" class="settings-form" style="margin-bottom: 24px;">
+            <label for="theme-dark-toggle">
+              <input type="checkbox" id="theme-dark-toggle" checked />
+              Enable dark mode
+            </label>
+            <div id="theme-settings-error" class="form-error"></div>
+            <div id="theme-settings-success" class="form-success"></div>
+          </form>
+
+          <p>Change your account password.</p>
+
+          <form id="change-password-form" class="settings-form">
+            <label>Current Password<input type="password" id="current-password" required /></label>
+            <label>New Password<input type="password" id="new-password" minlength="8" required /></label>
+            <label>Confirm New Password<input type="password" id="confirm-new-password" minlength="8" required /></label>
+            <button type="submit">Change Password</button>
+            <div id="change-password-error" class="form-error"></div>
+            <div id="change-password-success" class="form-success"></div>
+          </form>
+        </article>
+
+        <article id="page-admin" class="card page-panel hidden">
+          <h2>User Management</h2>
+          <p>View all users and change their role.</p>
+          <div id="users-list"></div>
+
+          <h3 style="margin-top: 24px;">Booking Management</h3>
+          <p>Edit or cancel active room bookings for any user.</p>
+          <div id="admin-bookings-list"></div>
+
+          <h3 style="margin-top: 24px;">Loan Management</h3>
+          <p>Edit or cancel active equipment loans for any user.</p>
+          <div id="admin-loans-list"></div>
+
+          <h3 style="margin-top: 24px;">Audit Log</h3>
+          <div id="audit-log-list"></div>
+        </article>
+
+        <article id="page-room-management" class="card page-panel hidden">
+          <h2>Room Management</h2>
+          <p>Add new rooms or remove existing rooms.</p>
+
+          <form id="room-management-form" class="room-management-form">
+            <label>Room Name<input type="text" id="room-name" required /></label>
+            <label>Location<input type="text" id="room-location" required /></label>
+            <button type="submit">Add room</button>
+            <div id="room-management-error" class="form-error"></div>
+          </form>
+
+          <h3 style="margin-top: 24px;">Existing Rooms</h3>
+          <div id="room-management-list"></div>
+        </article>
+
+        <article id="page-equipment-management" class="card page-panel hidden">
+          <h2>Equipment Management</h2>
+          <p>Add new equipment or remove existing equipment.</p>
+
+          <form id="equipment-management-form" class="room-management-form">
+            <label>Equipment Name<input type="text" id="equipment-name" required /></label>
+            <label>Quantity<input type="number" id="equipment-quantity" min="1" step="1" required /></label>
+            <button type="submit">Add equipment</button>
+            <div id="equipment-management-error" class="form-error"></div>
+          </form>
+
+          <h3 style="margin-top: 24px;">Existing Equipment</h3>
+          <div id="equipment-management-list"></div>
+
+          <h3 style="margin-top: 24px;">Booked Out Equipment</h3>
+          <p>Shows currently active loans and who has each item.</p>
+          <div id="booked-out-equipment-list"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <!-- Return loan modal -->
+  <div id="return-loan-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="return-loan-title">
+    <div class="modal-dialog card">
+      <h3 id="return-loan-title">Return Equipment</h3>
+      <form id="return-loan-form">
+        <input type="hidden" id="return-loan-id" />
+        <label>Condition on return <span style="color:var(--danger)">*</span>
+          <textarea id="return-condition" rows="4" maxlength="1000" required placeholder="Describe the equipment condition…"></textarea>
+        </label>
+        <label>Photo (optional)
+          <input type="file" id="return-photo" accept="image/*" capture="environment" />
+        </label>
+        <div id="return-loan-error" class="form-error"></div>
+        <div class="form-actions">
+          <button type="submit">Submit Return</button>
+          <button type="button" id="return-loan-cancel" class="secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
