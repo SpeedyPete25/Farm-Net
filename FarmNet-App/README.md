@@ -1,10 +1,15 @@
-# Farm-Net Prototype
+# Farm-Net App
 
-This prototype is a university room booking and equipment checkout web app. It combines an Express backend, SQLite persistence, and a static frontend with a weekly timetable for booking rooms.
+Farm-Net App is a university room booking and equipment checkout web app. It combines an Express backend, SQLite persistence, and a static (no build step) frontend with a weekly timetable for booking rooms. This folder is the active development line; [`../Prototype/`](../Prototype/) is kept as a frozen reference copy of the earlier prototype.
+
+## Requirements
+
+- Node.js 18+ (uses only the packages listed in `package.json`).
+- No external database is required — SQLite storage is created automatically on first run.
 
 ## Run Locally
 
-1. Open a terminal in `Prototype/`.
+1. Open a terminal in `FarmNet-App/`.
 2. Install dependencies.
 
 ```bash
@@ -19,48 +24,47 @@ npm start
 
 4. Open `http://localhost:3000`.
 
-Optional: create `Prototype/.env` to override configuration values.
+Optional: create `FarmNet-App/.env` to override configuration values.
 
 ```env
+PORT=3000
 EMAIL_VERIFICATION_ENABLED=false
 EMAIL_VERIFICATION_TIMEOUT_MS=8000
 EMAIL_VERIFICATION_MAX_MX=3
 ```
 
-Node.js 18+ is recommended. The prototype uses only the packages listed in `package.json`.
+No default admin account is seeded. Register a normal account first, then promote it to `admin` directly in the SQLite database (`UPDATE users SET role = 'admin' WHERE email = '...'`) — only existing admins can promote other users through the app itself.
 
 ## Testing
 
-The prototype now includes automated tests using the built-in Node.js test runner.
+The app includes automated tests using the built-in Node.js test runner plus Playwright for browser-level checks.
 
 Commands:
 
 ```bash
-npm test
+npm test          # reset test data, then run the API integration suite
+npm run test:api      # same as above, explicit alias
+npm run test:browser  # reset test data, then run the Playwright smoke suite
+npm run test:reset     # clear automated test artifacts only
 ```
 
-```bash
-npm run test:api
-```
+What the suite currently covers (`tests/api.integration.test.js`):
 
-```bash
-npm run test:browser
-```
-
-```bash
-npm run test:reset
-```
-
-What the suite currently covers:
-
-- Frontend smoke check for the main app shell.
-- Browser smoke suite for critical UI journeys (register, login, page navigation, logout).
-- Authentication flow: register, login, profile, logout.
+- Frontend shell response and signed-out `/api/profile` state.
+- Register, login, profile, preferences, and logout.
+- Validation and authorization failures (expected 400/401/403/404 status codes).
 - Booking flow: create, edit, cancel.
 - Equipment loan flow: borrow, edit, return.
-- Admin flow: list users and edit bookings/loans.
+- Admin listing and edit flows for bookings and loans.
+- Admin room and equipment management endpoints (add/update/remove, including quantity and unit-code edge cases).
 
-Test runs use an isolated SQLite database and return-photo directory under `Prototype/.test-data/`, so they do not touch your normal `Prototype/data/` files.
+Browser smoke suite (`tests/browser/smoke.spec.js`, `playwright.config.js`):
+
+- Signed-out app shell loads correctly.
+- Register, login, page navigation, and logout journey.
+- Admin-only navigation appears for an admin account.
+
+Test runs use an isolated SQLite database and return-photo directory under `FarmNet-App/.test-data/` (the Playwright suite further isolates itself under `.test-data/browser/` on port `3201`), so they do not touch your normal `FarmNet-App/data/` files or default port `3000`.
 
 If Playwright reports a missing browser runtime on a new machine, run:
 
@@ -70,14 +74,14 @@ npx playwright install chromium
 
 ## What The App Does
 
-- Register and log in with email-based accounts.
+- Register and log in with email-based accounts; registration can optionally verify the mailbox is real (MX + SMTP check).
 - View the weekly availability timetable for rooms.
-- Book a room using a date, start time, and duration.
-- Cancel and edit personal room bookings.
-- Borrow equipment and return it with condition notes and an optional photo.
+- Book a room using a date, start time, and duration, in 15-minute increments.
+- Cancel and edit personal room bookings (future, active bookings only; conflicts are rejected).
+- Borrow equipment and return it with condition notes and an optional photo; each physical unit gets a unique code (e.g. `lap001`) assigned at borrow time.
 - Review active and historical bookings, loans, and request status.
 - Change your password and save a light or dark theme preference.
-- Use admin pages to manage users, bookings, loans, rooms, equipment, and audit history.
+- Use admin pages to manage users (roles, deletion), bookings, loans, rooms, equipment, and audit history.
 
 ## Key Screens
 
@@ -85,63 +89,150 @@ npx playwright install chromium
 - `Room Bookings`: weekly timetable plus booking form.
 - `Equipment Loans`: current equipment inventory and borrowing actions.
 - `Settings`: password change and theme preference.
-- `User Management`: role management plus booking, loan, and audit log administration.
+- `User Management`: role management, user deletion, plus booking, loan, and audit log administration.
 - `Room Management` and `Equipment Management`: admin-only inventory administration.
 
 ## Project Structure
 
-- `server.js`: Express backend, session handling, SQLite database access, and API routes.
-- `public/index.html`: page structure and form markup.
-- `public/app.js`: application bootstrap and page wiring.
-- `public/js/`: page modules for rooms, equipment, admin, settings, and management screens.
-- `public/styles.css`: shared styling for the whole prototype.
-- `data/lab-booking.db`: SQLite database created at runtime.
-- `data/return-photos/`: uploaded photos attached to equipment returns.
+- `server.js`: Express backend — session handling, SQLite schema/migrations, mailbox verification, and all API routes.
+- `public/index.html`: page structure and form markup for every screen.
+- `public/app.js`: application bootstrap and page/router wiring.
+- `public/js/api.js`: shared `fetch` wrapper used by all page modules.
+- `public/js/utils.js`: shared formatting/DOM helpers.
+- `public/js/dashboard-page.js`: user dashboard (bookings + loans overview).
+- `public/js/rooms-page.js`: weekly timetable and room booking form.
+- `public/js/equipment-page.js`: equipment inventory, borrowing, and returns.
+- `public/js/settings-page.js`: password change and theme preference.
+- `public/js/admin-page.js`: admin user/booking/loan management and audit log.
+- `public/js/room-management-page.js`: admin room CRUD.
+- `public/js/equipment-management-page.js`: admin equipment CRUD.
+- `public/styles.css`: shared styling for the whole app.
+- `scripts/reset-test-data.js`: deletes `.test-data/` for a clean test run.
+- `data/lab-booking.db`: SQLite database created at runtime (default data dir).
+- `data/return-photos/`: uploaded photos attached to equipment returns (default data dir).
+- `tests/api.integration.test.js`: Node.js test runner API/integration suite.
+- `tests/browser/smoke.spec.js`: Playwright browser smoke suite.
+- `playwright.config.js`: Playwright config — boots the server on port `3201` against an isolated data dir.
 
-## Important API Areas
+## Data Model
 
-- `/api/register`, `/api/login`, `/api/logout`, `/api/profile`
-- `/api/preferences`, `/api/change-password`
-- `/api/resources`, `/api/my-requests`, `/api/book-room`, `/api/cancel-booking`, `/api/edit-booking`
-- `/api/borrow-equipment`, `/api/cancel-loan`, `/api/return-loan`, `/api/edit-loan`
-- `/api/loans/:id/photo`, `/api/timetable`, `/api/rooms/:roomId/schedule`
-- Admin routes under `/api/admin/*` for users, bookings, loans, rooms, equipment, booked-out equipment, return photos, and audit logging
+SQLite tables, created and migrated automatically on startup (`initDatabase()` in `server.js`):
+
+- `users`: `id`, `email` (unique), `passwordHash`, `role` (`user`/`admin`, default `user`), `theme` (default `dark`).
+- `rooms`: `id`, `name`, `location`.
+- `equipment`: `id`, `name`, `quantity` (total units).
+- `equipment_units`: `id`, `equipmentId`, `code` (unique short code such as `lap001`) — one row per physical, loanable unit.
+- `bookings`: `id`, `userId`, `roomId`, `date`, `startTime`, `durationHours`, `status` (`active`/`cancelled`), `createdAt`.
+- `loans`: `id`, `userId`, `equipmentId`, `equipmentUnitId`, `borrowDate`, `returnDate`, `status` (`active`/`cancelled`/`returned`), `returnCondition`, `returnConditionPhotoPath`, `returnedAt`, `createdAt`.
+- `activity_history`: `id`, `userId` (actor), `eventType`, `resourceType`, `resourceId`, `description`, `timestamp` — the audit log backing `/api/admin/audit-log`.
+
+Three rooms (Chemistry Lab, Computer Lab, Physics Lab) and three equipment types (Laptop, Microscope, Oscilloscope) are seeded on first run if the tables are empty.
+
+## API Reference
+
+All routes are prefixed with `/api`. Routes marked **auth** require an active session (`requireLogin`); routes marked **admin** require an admin session (`requireAdmin`) and return `401`/`403` otherwise.
+
+**Account & session**
+- `POST /register` — create an account (validates email format, and mailbox reachability if enabled).
+- `POST /login` — authenticate and start a session.
+- `POST /logout` — destroy the current session.
+- `GET /profile` — current auth state, email, role, theme.
+- `PATCH /preferences` **auth** — update theme (`dark`/`light`).
+- `POST /change-password` **auth** — change password (requires current password, 8+ char new password).
+
+**Resources & timetable**
+- `GET /resources` **auth** — rooms plus equipment with computed availability.
+- `GET /timetable` **auth** — 7-day booking grid for a room (`roomId`, `weekStart`).
+- `GET /rooms/:roomId/schedule` **auth** — bookings for a room on a specific date.
+
+**Bookings (self-service)**
+- `GET /my-requests` **auth** — current user's bookings and loans (`status=active|all`).
+- `POST /book-room` **auth** — create a booking (future time, 15-minute increments, overlap check).
+- `POST /edit-booking` **auth** — edit own active booking.
+- `POST /cancel-booking` **auth** — cancel own active, future booking.
+
+**Equipment loans (self-service)**
+- `POST /borrow-equipment` **auth** — borrow an available unit for N days; assigns a specific unit code.
+- `POST /edit-loan` **auth** — change the return date on an active loan.
+- `POST /cancel-loan` **auth** — cancel an active, non-past loan.
+- `POST /return-loan` **auth**, `multipart/form-data` — mark a loan returned with a required condition note and optional photo (image, ≤5 MB).
+- `GET /loans/:id/photo` **auth** — fetch the return-condition photo for one of your own loans.
+
+**Admin — users**
+- `GET /admin/users` **admin** — list all users.
+- `PATCH /admin/users/:id/role` **admin** — change a user's role (blocks demoting the last admin).
+- `DELETE /admin/users/:id` **admin** — delete a user and cascade-delete their bookings, loans, and activity history (blocks self-deletion and deleting the last admin).
+
+**Admin — bookings**
+- `GET /admin/bookings` **admin** — list all bookings (`status=active|all`).
+- `POST /admin/bookings/:id/cancel` **admin** — cancel any active, future booking.
+- `PATCH /admin/bookings/:id` **admin** — edit any active booking (same validation as user edit).
+
+**Admin — loans**
+- `GET /admin/loans` **admin** — list all loans (`status=active|all`).
+- `POST /admin/loans/:id/cancel` **admin** — cancel any active, non-past loan.
+- `PATCH /admin/loans/:id` **admin** — edit any active loan's return date.
+- `GET /admin/loans/:id/photo` **admin** — fetch the return-condition photo for any loan.
+- `GET /admin/equipment/booked-out` **admin** — active loans with borrower and unit details.
+
+**Admin — rooms**
+- `GET /admin/rooms` **admin** — list all rooms.
+- `POST /admin/rooms` **admin** — add a room (rejects duplicate location).
+- `DELETE /admin/rooms/:id` **admin** — remove a room (blocks if it has future active bookings).
+
+**Admin — equipment**
+- `GET /admin/equipment` **admin** — list equipment with unit codes.
+- `POST /admin/equipment` **admin** — add equipment (creates matching unit codes; rejects duplicate name).
+- `PATCH /admin/equipment/:id` **admin** — change quantity (adds/removes unit codes; blocks reducing below active loan count or below available unassigned units).
+- `DELETE /admin/equipment/:id` **admin** — remove equipment and its unit codes (blocks if it has active loans).
+
+**Admin — audit**
+- `GET /admin/audit-log` **admin** — most recent 100 audit log entries (actor, event type, resource, description, timestamp).
 
 ## Configuration
 
 - `EMAIL_VERIFICATION_ENABLED`: defaults to `true`. Set to `false` to bypass MX and SMTP mailbox verification during offline development.
-- `EMAIL_VERIFICATION_TIMEOUT_MS`: defaults to `8000`.
-- `EMAIL_VERIFICATION_MAX_MX`: defaults to `3`.
+- `EMAIL_VERIFICATION_TIMEOUT_MS`: defaults to `8000`. Timeout for each DNS/SMTP step during mailbox verification.
+- `EMAIL_VERIFICATION_MAX_MX`: defaults to `3`. Maximum number of MX servers probed per registration.
 - `PORT`: defaults to `3000`.
-- `DATA_DIR`: optional override for the app data directory. Used by automated tests to isolate the SQLite database and return-photo uploads.
+- `DATA_DIR`: optional override for the app data directory (SQLite database + `return-photos/`). Used by automated tests to isolate data from `data/`.
 
 `EMAIL_VERIFICATION_ENABLED` accepts `true/false`, `1/0`, `yes/no`, and `on/off` (case-insensitive).
 
+Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as valid when DNS/SMTP verification is inconclusive, to avoid false negatives on networks that block outbound SMTP.
+
 ## Resetting Data
 
-- Delete `Prototype/data/lab-booking.db` to recreate the seeded database on the next launch.
-- Delete files in `Prototype/data/return-photos/` if you want to clear uploaded return photos during local development.
-- Run `npm run test:reset` to clear automated test artifacts in `Prototype/.test-data/`.
+- Delete `FarmNet-App/data/lab-booking.db` to recreate the seeded database on the next launch.
+- Delete files in `FarmNet-App/data/return-photos/` if you want to clear uploaded return photos during local development.
+- Run `npm run test:reset` to clear automated test artifacts in `FarmNet-App/.test-data/`.
 
 ## Troubleshooting
 
 - App does not start because port `3000` is already in use:
-	- Set a different port in `Prototype/.env`, for example `PORT=3001`, then restart with `npm start`.
+	- Set a different port in `FarmNet-App/.env`, for example `PORT=3001`, then restart with `npm start`.
 	- Or stop the process currently using port `3000` and start the app again.
 - Registration fails while testing offline or on restricted networks:
-	- Set `EMAIL_VERIFICATION_ENABLED=false` in `Prototype/.env` to bypass MX/SMTP mailbox checks during development.
+	- Set `EMAIL_VERIFICATION_ENABLED=false` in `FarmNet-App/.env` to bypass MX/SMTP mailbox checks during development.
 	- Restart the server after changing environment variables.
 - Login/auth issues after schema changes or old local data:
-	- Remove `Prototype/data/lab-booking.db` and restart to rebuild the database from the current schema.
+	- Remove `FarmNet-App/data/lab-booking.db` and restart to rebuild the database from the current schema.
 	- Re-register users after a reset because local accounts are deleted with the database file.
 - Return photo upload problems:
 	- Ensure uploads are image files and under 5 MB.
-	- Confirm `Prototype/data/return-photos/` exists and is writable by the running process.
+	- Confirm `FarmNet-App/data/return-photos/` exists and is writable by the running process.
+- Playwright browser tests fail with a "missing browser" error:
+	- Run `npx playwright install chromium`.
+
+## Known Limitations
+
+- The Express session secret is a fixed string in `server.js`, suitable for local development only — do not deploy this as-is without moving it to an environment variable.
+- Registration validates mailbox reachability (MX + SMTP checks when enabled) but does not send a click-to-confirm email.
+- No rate limiting on login/registration endpoints.
 
 ## Notes
 
-- Room booking uses a weekly timetable rather than the older per-day slot picker.
-- The prototype already supports booking edits, booking archives/history, and admin management flows.
-- Registration currently validates mailbox reachability (MX + SMTP checks when enabled) but does not yet send click-to-confirm emails.
+- Room booking uses a weekly timetable rather than a per-day slot picker.
+- The app already supports booking edits, booking archives/history, and admin management flows.
 - Remaining roadmap items from the project brief are booking email notifications, email confirmation links, and notification preferences.
-- Only admins can create admins. No default admin account is seeded automatically.
+- Only admins can create admins (via role promotion). No default admin account is seeded automatically.
