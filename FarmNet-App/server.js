@@ -492,8 +492,15 @@ async function initDatabase() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     equipmentId INTEGER NOT NULL,
     code TEXT NOT NULL UNIQUE,
+    condition TEXT NOT NULL DEFAULT 'working',
     FOREIGN KEY(equipmentId) REFERENCES equipment(id)
   )`);
+
+  const equipmentUnitColumns = await query('PRAGMA table_info(equipment_units)');
+  const hasConditionColumn = equipmentUnitColumns.some(col => col.name === 'condition');
+  if (!hasConditionColumn) {
+    await run(`ALTER TABLE equipment_units ADD COLUMN condition TEXT NOT NULL DEFAULT 'working'`);
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -778,10 +785,13 @@ app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
   const equipment = await query(
     `SELECT e.id, e.name, e.quantity,
-            COALESCE(unitCounts.totalUnits, 0) AS totalUnits
+            COALESCE(unitCounts.totalUnits, 0) AS totalUnits,
+            COALESCE(unitCounts.workingUnits, 0) AS workingUnits
      FROM equipment e
      LEFT JOIN (
-       SELECT equipmentId, COUNT(*) AS totalUnits
+       SELECT equipmentId,
+              COUNT(*) AS totalUnits,
+              SUM(CASE WHEN condition = 'working' THEN 1 ELSE 0 END) AS workingUnits
        FROM equipment_units
        GROUP BY equipmentId
      ) unitCounts ON unitCounts.equipmentId = e.id`
@@ -793,15 +803,17 @@ app.get('/api/resources', requireLogin, async (req, res) => {
     return acc;
   }, {});
 
-  // Calculate available equipment by subtracting active loans from total quantity.
+  // Calculate available equipment by subtracting active loans from working units only,
+  // so items flagged as damaged are not offered for borrowing.
   const equipmentWithAvailability = equipment.map((item) => {
     const activeLoans = loanMap[item.id] || 0;
     const totalQuantity = Number(item.totalUnits || item.quantity || 0);
+    const workingQuantity = Number(item.workingUnits || 0);
     return {
       id: item.id,
       name: item.name,
       quantity: totalQuantity,
-      available: Math.max(0, totalQuantity - activeLoans)
+      available: Math.max(0, workingQuantity - activeLoans)
     };
   });
 
@@ -1235,7 +1247,10 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
     await addEquipmentUnits(equipmentId, equipmentRow.name, requiredUnits - unitCount);
   }
 
-  const allUnits = await query('SELECT id, code FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
+  const allUnits = await query(
+    'SELECT id, code FROM equipment_units WHERE equipmentId = ? AND condition = ?',
+    [equipmentId, 'working']
+  );
   const activeLoans = await query(
     `SELECT equipmentUnitId
      FROM loans
@@ -1699,7 +1714,7 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
   );
 
   const codeRows = await query(
-    `SELECT equipmentId, code
+    `SELECT id, equipmentId, code, condition
      FROM equipment_units
      ORDER BY code ASC`
   );
@@ -1708,7 +1723,7 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
     if (!acc[row.equipmentId]) {
       acc[row.equipmentId] = [];
     }
-    acc[row.equipmentId].push(row.code);
+    acc[row.equipmentId].push({ id: row.id, code: row.code, condition: row.condition });
     return acc;
   }, {});
 
@@ -1840,6 +1855,43 @@ app.patch('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
       quantity
     }
   });
+});
+
+// Update an equipment unit's condition (working/damaged). Admin only.
+app.patch('/api/admin/equipment/units/:unitId/condition', requireAdmin, async (req, res) => {
+  const unitId = Number(req.params.unitId);
+  const condition = String(req.body?.condition || '').trim().toLowerCase();
+
+  if (!Number.isFinite(unitId) || unitId <= 0) {
+    return res.status(400).json({ error: 'Invalid equipment unit ID.' });
+  }
+
+  if (condition !== 'working' && condition !== 'damaged') {
+    return res.status(400).json({ error: "Condition must be 'working' or 'damaged'." });
+  }
+
+  const unitRows = await query(
+    `SELECT eu.id, eu.code, eu.condition, e.name AS equipmentName
+     FROM equipment_units eu
+     JOIN equipment e ON e.id = eu.equipmentId
+     WHERE eu.id = ?`,
+    [unitId]
+  );
+  if (unitRows.length === 0) {
+    return res.status(404).json({ error: 'Equipment unit not found.' });
+  }
+
+  const unit = unitRows[0];
+  if (unit.condition === condition) {
+    return res.json({ message: 'Condition already set.', unit: { id: unit.id, code: unit.code, condition } });
+  }
+
+  await run('UPDATE equipment_units SET condition = ? WHERE id = ?', [condition, unitId]);
+
+  const description = `${req.session.email} marked ${unit.equipmentName} item ${unit.code} as ${condition}`;
+  await logActivity(req.session.userId, 'equipment_condition_updated', 'equipment_unit', unitId, description);
+
+  res.json({ message: 'Equipment condition updated successfully.', unit: { id: unit.id, code: unit.code, condition } });
 });
 
 // Remove an equipment item. Admin only.

@@ -450,6 +450,19 @@ button.danger {
   background: var(--panel-surface);
   font-size: 0.8rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.equipment-code-chip--damaged {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
+}
+
+.equipment-code-chip button {
+  font-size: 0.75rem;
+  padding: 2px 6px;
 }
 
 .equipment-code-empty {

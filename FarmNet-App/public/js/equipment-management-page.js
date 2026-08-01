@@ -6,7 +6,11 @@
 import { renderListState } from './utils.js';
 
 /**
- * @typedef {{ id: number, name: string, quantity: number, codes?: string[] }} EquipmentItem
+ * @typedef {{ id: number, code: string, condition: 'working' | 'damaged' }} EquipmentUnit
+ */
+
+/**
+ * @typedef {{ id: number, name: string, quantity: number, codes?: EquipmentUnit[] }} EquipmentItem
  */
 
 /**
@@ -95,7 +99,17 @@ export function createEquipmentManagementPage(deps) {
               <summary>Item codes (${Array.isArray(item.codes) ? item.codes.length : 0})</summary>
               <div class="equipment-codes-list">
                 ${Array.isArray(item.codes) && item.codes.length > 0
-                  ? item.codes.map((code) => `<span class="equipment-code-chip">${code}</span>`).join('')
+                  ? item.codes.map((unit) => `
+                      <span class="equipment-code-chip equipment-code-chip--${unit.condition}">
+                        ${unit.code} · ${unit.condition}
+                        <button
+                          type="button"
+                          data-action="toggle-unit-condition"
+                          data-unit-id="${unit.id}"
+                          data-current-condition="${unit.condition}"
+                        >Mark as ${unit.condition === 'damaged' ? 'working' : 'damaged'}</button>
+                      </span>
+                    `).join('')
                   : '<span class="equipment-code-empty">No item codes found.</span>'}
               </div>
             </details>
@@ -215,6 +229,29 @@ export function createEquipmentManagementPage(deps) {
   async function handleEquipmentManagementListClick(event) {
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (!target) return;
+
+    const conditionButton = target.closest('[data-action="toggle-unit-condition"]');
+    if (conditionButton) {
+      const unitId = Number(conditionButton.dataset.unitId);
+      if (!Number.isFinite(unitId)) return;
+
+      const nextCondition = conditionButton.dataset.currentCondition === 'damaged' ? 'working' : 'damaged';
+
+      const result = await requestJson(`/api/admin/equipment/units/${unitId}/condition`, {
+        method: 'PATCH',
+        body: JSON.stringify({ condition: nextCondition })
+      });
+
+      if (result.error) {
+        equipmentManagementError.textContent = result.error;
+        return;
+      }
+
+      equipmentManagementError.textContent = '';
+      await load();
+      await onEquipmentChanged();
+      return;
+    }
 
     const updateButton = target.closest('[data-action="update-equipment"]');
     if (updateButton) {
