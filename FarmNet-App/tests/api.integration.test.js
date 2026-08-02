@@ -618,4 +618,102 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(equipmentAfterRemove.status, 200);
     assert.equal(equipmentAfterRemove.body.equipment.some((item) => item.id === addedEquipment.id), false);
   });
+
+  await t.test('marks equipment units as damaged and reduces borrowable availability', async () => {
+    const adminEmail = uniqueEmail('admin-damage');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const equipmentSuffix = Date.now();
+    const equipmentName = `Damage Test Device ${equipmentSuffix}`;
+
+    const addEquipment = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentName, quantity: 2 })
+    });
+    assert.equal(addEquipment.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    assert.equal(equipmentList.status, 200);
+    const addedEquipment = equipmentList.body.equipment.find((item) => item.name === equipmentName);
+    assert.ok(addedEquipment);
+    assert.equal(addedEquipment.codes.length, 2);
+    assert.ok(addedEquipment.codes.every((unit) => unit.condition === 'working'));
+
+    const memberEmail = uniqueEmail('damage-member');
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    const resourcesBefore = await getResources(memberClient);
+    const equipmentBefore = resourcesBefore.equipment.find((item) => item.id === addedEquipment.id);
+    assert.ok(equipmentBefore);
+    assert.equal(equipmentBefore.available, 2);
+
+    const [firstUnit, secondUnit] = addedEquipment.codes;
+
+    const nonAdminAttempt = await memberClient.request(`/api/admin/equipment/units/${firstUnit.id}/condition`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition: 'damaged' })
+    });
+    assert.equal(nonAdminAttempt.status, 403);
+
+    const invalidCondition = await adminClient.request(`/api/admin/equipment/units/${firstUnit.id}/condition`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition: 'broken' })
+    });
+    assert.equal(invalidCondition.status, 400);
+
+    const markFirstDamaged = await adminClient.request(`/api/admin/equipment/units/${firstUnit.id}/condition`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition: 'damaged' })
+    });
+    assert.equal(markFirstDamaged.status, 200);
+    assert.equal(markFirstDamaged.body.unit.condition, 'damaged');
+
+    const resourcesAfterFirstDamage = await getResources(memberClient);
+    const equipmentAfterFirstDamage = resourcesAfterFirstDamage.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(equipmentAfterFirstDamage.available, 1);
+
+    const markSecondDamaged = await adminClient.request(`/api/admin/equipment/units/${secondUnit.id}/condition`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition: 'damaged' })
+    });
+    assert.equal(markSecondDamaged.status, 200);
+
+    const resourcesAllDamaged = await getResources(memberClient);
+    const equipmentAllDamaged = resourcesAllDamaged.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(equipmentAllDamaged.available, 0);
+
+    const borrowAttempt = await memberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 2 })
+    });
+    assert.equal(borrowAttempt.status, 400);
+    assert.equal(borrowAttempt.body.error, 'No equipment available to borrow right now.');
+
+    const markFirstWorkingAgain = await adminClient.request(`/api/admin/equipment/units/${firstUnit.id}/condition`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition: 'working' })
+    });
+    assert.equal(markFirstWorkingAgain.status, 200);
+    assert.equal(markFirstWorkingAgain.body.unit.condition, 'working');
+
+    const resourcesAfterRestore = await getResources(memberClient);
+    const equipmentAfterRestore = resourcesAfterRestore.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(equipmentAfterRestore.available, 1);
+  });
 });

@@ -57,6 +57,7 @@ What the suite currently covers (`tests/api.integration.test.js`):
 - Equipment loan flow: borrow, edit, return.
 - Admin listing and edit flows for bookings and loans.
 - Admin room and equipment management endpoints (add/update/remove, including quantity and unit-code edge cases).
+- Equipment unit damage tagging: marking units damaged/working, resulting availability changes, blocked borrowing when no working units remain, and admin-only access to the condition endpoint.
 
 Browser smoke suite (`tests/browser/smoke.spec.js`, `playwright.config.js`):
 
