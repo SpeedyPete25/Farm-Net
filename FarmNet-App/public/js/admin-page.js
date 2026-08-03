@@ -224,9 +224,30 @@ export function createAdminPage(deps) {
       statusCell.textContent = booking.status;
 
       const actionsCell = document.createElement('td');
-      const isEditable = booking.status === 'active' && new Date(`${booking.date}T${booking.startTime}:00`) > new Date();
+      const isPending = booking.status === 'pending';
+      const isActionable = (booking.status === 'active' || isPending) && new Date(`${booking.date}T${booking.startTime}:00`) > new Date();
 
-      if (isEditable) {
+      if (isActionable) {
+        const actionsWrap = document.createElement('div');
+        actionsWrap.className = 'request-actions';
+
+        if (isPending) {
+          const approveButton = document.createElement('button');
+          approveButton.className = 'action-button';
+          approveButton.textContent = 'Approve';
+          approveButton.dataset.action = 'admin-approve-booking';
+          approveButton.dataset.bookingId = String(booking.id);
+
+          const denyButton = document.createElement('button');
+          denyButton.className = 'cancel-button';
+          denyButton.textContent = 'Deny';
+          denyButton.dataset.action = 'admin-deny-booking';
+          denyButton.dataset.bookingId = String(booking.id);
+
+          actionsWrap.appendChild(approveButton);
+          actionsWrap.appendChild(denyButton);
+        }
+
         const editButton = document.createElement('button');
         editButton.className = 'secondary action-button';
         editButton.textContent = 'Edit';
@@ -242,8 +263,6 @@ export function createAdminPage(deps) {
         cancelButton.dataset.action = 'admin-cancel-booking';
         cancelButton.dataset.bookingId = String(booking.id);
 
-        const actionsWrap = document.createElement('div');
-        actionsWrap.className = 'request-actions';
         actionsWrap.appendChild(editButton);
         actionsWrap.appendChild(cancelButton);
         actionsCell.appendChild(actionsWrap);
@@ -467,6 +486,44 @@ export function createAdminPage(deps) {
   async function handleAdminBookingsListClick(event) {
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (!target) return;
+
+    const approveButton = target.closest('[data-action="admin-approve-booking"]');
+    if (approveButton) {
+      const bookingId = Number(approveButton.dataset.bookingId);
+      const result = await requestJson(`/api/admin/bookings/${bookingId}/approve`, {
+        method: 'POST'
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Booking approved.');
+      }
+
+      await load();
+      return;
+    }
+
+    const denyButton = target.closest('[data-action="admin-deny-booking"]');
+    if (denyButton) {
+      const bookingId = Number(denyButton.dataset.bookingId);
+      const reason = prompt('Optional reason for denying this booking:', '');
+      if (reason === null) return;
+
+      const result = await requestJson(`/api/admin/bookings/${bookingId}/deny`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Booking denied.');
+      }
+
+      await load();
+      return;
+    }
 
     const editButton = target.closest('[data-action="admin-edit-booking"]');
     if (editButton) {

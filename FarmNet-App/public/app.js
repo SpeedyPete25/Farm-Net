@@ -81,6 +81,7 @@ const registerError = document.getElementById('register-error');
 const bookingPanel = document.getElementById('booking-panel');
 const bookingForm = document.getElementById('booking-form');
 const bookingRoomName = document.getElementById('booking-room-name');
+const bookingPolicyNote = document.getElementById('booking-policy-note');
 const bookingDateInput = document.getElementById('booking-date');
 const bookingStartTimeInput = document.getElementById('booking-start-time');
 const bookingDurationInput = document.getElementById('booking-duration');
@@ -372,6 +373,7 @@ const roomsPage = createRoomsPage({
   bookingPanel,
   bookingForm,
   bookingRoomName,
+  bookingPolicyNote,
   bookingDateInput,
   bookingStartTimeInput,
   bookingDurationInput,

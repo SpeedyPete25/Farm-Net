@@ -6,7 +6,15 @@
 import { renderListState } from './utils.js';
 
 /**
- * @typedef {{ id: number, name: string, location: string }} RoomSummary
+ * @typedef {{
+ *   id: number,
+ *   name: string,
+ *   location: string,
+ *   minDurationMinutes?: number|null,
+ *   maxDurationMinutes?: number|null,
+ *   maxBookingsPerUserPerWeek?: number|null,
+ *   requiresApproval?: 0|1
+ * }} RoomSummary
  */
 
 /**
@@ -23,6 +31,7 @@ import { renderListState } from './utils.js';
  *   bookingPanel: HTMLElement,
  *   bookingForm: HTMLFormElement,
  *   bookingRoomName: HTMLElement,
+ *   bookingPolicyNote: HTMLElement,
  *   bookingDateInput: HTMLInputElement,
  *   bookingStartTimeInput: HTMLInputElement,
  *   bookingDurationInput: HTMLInputElement,
@@ -53,6 +62,7 @@ export function createRoomsPage({
   bookingPanel,
   bookingForm,
   bookingRoomName,
+  bookingPolicyNote,
   bookingDateInput,
   bookingStartTimeInput,
   bookingDurationInput,
@@ -72,6 +82,24 @@ export function createRoomsPage({
   onBookingCreated
 }) {
   let activeBookingRoomId = null;
+
+  /** @type {Map<number, RoomSummary>} */
+  let roomsById = new Map();
+
+  /**
+   * Build a short policy hint for the booking panel.
+   * @param {RoomSummary} [room]
+   * @returns {string}
+   */
+  function describeRoomPolicy(room) {
+    if (!room) return '';
+    const parts = [];
+    if (room.minDurationMinutes != null) parts.push(`Min ${room.minDurationMinutes} min`);
+    if (room.maxDurationMinutes != null) parts.push(`Max ${room.maxDurationMinutes} min`);
+    if (room.maxBookingsPerUserPerWeek != null) parts.push(`Max ${room.maxBookingsPerUserPerWeek} booking(s)/week`);
+    if (room.requiresApproval) parts.push('Requires admin approval');
+    return parts.join(' · ');
+  }
 
   // ── Timetable ──────────────────────────────────────────────────────────────
 
@@ -321,6 +349,20 @@ export function createRoomsPage({
     if (presetTime) {
       bookingStartTimeInput.value = presetTime;
     }
+
+    const room = roomsById.get(roomId);
+    bookingPolicyNote.textContent = describeRoomPolicy(room);
+    if (room?.minDurationMinutes != null) {
+      bookingDurationInput.min = String(room.minDurationMinutes / 60);
+    } else {
+      bookingDurationInput.min = '0.5';
+    }
+    if (room?.maxDurationMinutes != null) {
+      bookingDurationInput.max = String(room.maxDurationMinutes / 60);
+    } else {
+      bookingDurationInput.removeAttribute('max');
+    }
+
     bookingPanel.classList.remove('hidden');
     bookingPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -386,7 +428,11 @@ export function createRoomsPage({
     }
 
     const durationLabel = formatDuration(durationHours);
-    alert(`Booking confirmed!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}`);
+    if (result.status === 'pending') {
+      alert(`Booking request submitted!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}\n\nThis room requires admin approval — you'll see it as "Pending approval" until reviewed.`);
+    } else {
+      alert(`Booking confirmed!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}`);
+    }
     hideBookingPanel();
     renderTimetable();
     await onBookingCreated();
@@ -398,6 +444,8 @@ export function createRoomsPage({
     * @returns {void}
    */
   function render(rooms) {
+    roomsById = new Map((Array.isArray(rooms) ? rooms : []).map((room) => [room.id, room]));
+
     if (!Array.isArray(rooms) || rooms.length === 0) {
       renderListState(roomsList, { kind: 'empty', message: 'No rooms available.' });
       timetableRoomSelect.innerHTML = '<option value="">— Select a room —</option>';

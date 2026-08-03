@@ -434,6 +434,102 @@ async function removeUnassignedEquipmentUnits(equipmentId, count) {
 }
 
 /**
+ * Convert an HH:MM time string to minutes since midnight.
+ * @param {string} time
+ * @returns {number}
+ */
+function timeToMinutes(time) {
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+/**
+ * Return the Monday-Sunday week range (inclusive) containing a date.
+ * @param {string} dateStr Date in YYYY-MM-DD.
+ * @returns {{ weekStart: string, weekEnd: string }}
+ */
+function getWeekRange(dateStr) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const monday = new Date(year, month - 1, day);
+  const dayOfWeek = monday.getDay();
+  monday.setDate(monday.getDate() + (dayOfWeek === 0 ? -6 : 1 - dayOfWeek));
+
+  const toDateString = (date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+  const sunday = new Date(monday);
+  sunday.setDate(sunday.getDate() + 6);
+
+  return { weekStart: toDateString(monday), weekEnd: toDateString(sunday) };
+}
+
+/**
+ * Parse an optional positive integer from request input.
+ * @param {*} value
+ * @returns {number|null} Parsed integer, null if the value was empty/absent, or NaN if invalid.
+ */
+function parseOptionalPositiveInt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return NaN;
+  return parsed;
+}
+
+/**
+ * Validate a requested booking against a room's configured policy: booking
+ * length limits, blackout windows, and the weekly per-user frequency cap.
+ * @param {object} room Room row including policy columns.
+ * @param {string} date YYYY-MM-DD
+ * @param {string} startTime HH:MM
+ * @param {number} durationHours
+ * @param {number} userId
+ * @param {number|null} [excludeBookingId] Booking ID to exclude from frequency counts (when editing).
+ * @returns {Promise<string|null>} Error message, or null if the booking satisfies policy.
+ */
+async function checkRoomBookingPolicy(room, date, startTime, durationHours, userId, excludeBookingId = null) {
+  const durationMinutes = Math.round(durationHours * 60);
+
+  if (room.minDurationMinutes != null && durationMinutes < room.minDurationMinutes) {
+    return `This room requires bookings of at least ${room.minDurationMinutes} minutes.`;
+  }
+  if (room.maxDurationMinutes != null && durationMinutes > room.maxDurationMinutes) {
+    return `This room allows bookings of at most ${room.maxDurationMinutes} minutes.`;
+  }
+
+  const requestedStart = timeToMinutes(startTime);
+  const requestedEnd = requestedStart + durationMinutes;
+
+  const blackouts = await query(
+    'SELECT startTime, endTime FROM room_blackouts WHERE roomId = ? AND date = ?',
+    [room.id, date]
+  );
+  const hasBlackoutOverlap = blackouts.some((blackout) => {
+    const blackoutStart = timeToMinutes(blackout.startTime);
+    const blackoutEnd = timeToMinutes(blackout.endTime);
+    return requestedStart < blackoutEnd && blackoutStart < requestedEnd;
+  });
+  if (hasBlackoutOverlap) {
+    return 'Selected time falls within a blackout period for this room.';
+  }
+
+  if (room.maxBookingsPerUserPerWeek != null) {
+    const { weekStart, weekEnd } = getWeekRange(date);
+    const weekBookings = await query(
+      `SELECT id FROM bookings
+       WHERE roomId = ? AND userId = ? AND date >= ? AND date <= ?
+         AND status IN ('active', 'pending')
+         AND id != ?`,
+      [room.id, userId, weekStart, weekEnd, excludeBookingId || 0]
+    );
+    if (weekBookings.length >= room.maxBookingsPerUserPerWeek) {
+      return `You have reached the maximum of ${room.maxBookingsPerUserPerWeek} booking(s) per week for this room.`;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Ensure the SQLite schema exists and seed default data.
  * This uses CREATE TABLE IF NOT EXISTS so it is safe to run every startup.
  */
@@ -480,6 +576,32 @@ async function initDatabase() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     location TEXT NOT NULL
+  )`);
+
+  // Room policy columns: booking length limits, weekly frequency cap, and
+  // whether new bookings need admin approval before becoming active.
+  const roomColumns = await query('PRAGMA table_info(rooms)');
+  const roomPolicyColumns = [
+    ['minDurationMinutes', 'INTEGER'],
+    ['maxDurationMinutes', 'INTEGER'],
+    ['maxBookingsPerUserPerWeek', 'INTEGER'],
+    ['requiresApproval', 'INTEGER NOT NULL DEFAULT 0']
+  ];
+  for (const [columnName, columnType] of roomPolicyColumns) {
+    if (!roomColumns.some((col) => col.name === columnName)) {
+      await run(`ALTER TABLE rooms ADD COLUMN ${columnName} ${columnType}`);
+    }
+  }
+
+  await run(`CREATE TABLE IF NOT EXISTS room_blackouts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    roomId INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    startTime TEXT NOT NULL,
+    endTime TEXT NOT NULL,
+    reason TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(roomId) REFERENCES rooms(id)
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS equipment (
@@ -844,7 +966,7 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
        FROM bookings b
        JOIN rooms r ON r.id = b.roomId
        WHERE b.userId = ?
-         AND b.status = 'active'
+         AND b.status IN ('active', 'pending')
          AND (b.date > ? OR (b.date = ? AND b.startTime > ?))
        ORDER BY b.date DESC, b.startTime DESC`,
       [userId, today, today, nowTime]
@@ -896,7 +1018,7 @@ app.post('/api/cancel-booking', requireLogin, async (req, res) => {
   }
 
   const booking = existing[0];
-  if (booking.status !== 'active') {
+  if (!['active', 'pending'].includes(booking.status)) {
     return res.status(400).json({ error: 'Booking is already cancelled.' });
   }
 
@@ -1073,7 +1195,7 @@ app.post('/api/edit-booking', requireLogin, async (req, res) => {
   }
 
   const booking = existing[0];
-  if (booking.status !== 'active') {
+  if (!['active', 'pending'].includes(booking.status)) {
     return res.status(400).json({ error: 'Only active bookings can be edited.' });
   }
 
@@ -1082,9 +1204,17 @@ app.post('/api/edit-booking', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Booking must be in the future.' });
   }
 
+  const roomRows = await query('SELECT * FROM rooms WHERE id = ?', [booking.roomId]);
+  if (roomRows.length > 0) {
+    const policyError = await checkRoomBookingPolicy(roomRows[0], date, startTime, duration, req.session.userId, bookingId);
+    if (policyError) {
+      return res.status(400).json({ error: policyError });
+    }
+  }
+
   const existingBookings = await query(
-    'SELECT id, startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status = ? AND id != ?',
-    [booking.roomId, date, 'active', bookingId]
+    `SELECT id, startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status IN ('active', 'pending') AND id != ?`,
+    [booking.roomId, date, bookingId]
   );
 
   const requestedStart = (() => {
@@ -1182,10 +1312,21 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Booking must be in the future.' });
   }
 
-  // Load active bookings for the selected room and date so we can detect overlaps.
+  const roomRows = await query('SELECT * FROM rooms WHERE id = ?', [roomId]);
+  if (roomRows.length === 0) {
+    return res.status(400).json({ error: 'Room not found.' });
+  }
+  const room = roomRows[0];
+
+  const policyError = await checkRoomBookingPolicy(room, date, startTime, duration, req.session.userId);
+  if (policyError) {
+    return res.status(400).json({ error: policyError });
+  }
+
+  // Load active/pending bookings for the selected room and date so we can detect overlaps.
   const existingBookings = await query(
-    'SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status = ? ',
-    [roomId, date, 'active']
+    `SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status IN ('active', 'pending')`,
+    [roomId, date]
   );
 
   // Convert the requested booking time into minutes since midnight.
@@ -1208,17 +1349,23 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Selected room is already booked during that time.' });
   }
 
+  const status = room.requiresApproval ? 'pending' : 'active';
   const result = await run(
-    'INSERT INTO bookings (userId, roomId, date, startTime, durationHours) VALUES (?, ?, ?, ?, ?)',
-    [req.session.userId, roomId, date, startTime, duration]
+    'INSERT INTO bookings (userId, roomId, date, startTime, durationHours, status) VALUES (?, ?, ?, ?, ?, ?)',
+    [req.session.userId, roomId, date, startTime, duration, status]
   );
 
-  // Log booking creation event
-  const roomName = await query('SELECT name FROM rooms WHERE id = ?', [roomId]);
-  const description = `Booked ${roomName[0]?.name || 'room'} on ${date} at ${startTime} for ${duration} hours`;
-  await logActivity(req.session.userId, 'booking_created', 'booking', result.lastID, description);
+  const description = status === 'pending'
+    ? `Requested ${room.name} on ${date} at ${startTime} for ${duration} hours (pending admin approval)`
+    : `Booked ${room.name} on ${date} at ${startTime} for ${duration} hours`;
+  await logActivity(req.session.userId, status === 'pending' ? 'booking_requested' : 'booking_created', 'booking', result.lastID, description);
 
-  res.json({ message: 'Room booked successfully.' });
+  res.json({
+    message: status === 'pending'
+      ? 'Booking request submitted and is awaiting admin approval.'
+      : 'Room booked successfully.',
+    status
+  });
 });
 
 // Submit an equipment loan request and enforce quantity availability.
@@ -1316,7 +1463,7 @@ app.get('/api/timetable', requireLogin, async (req, res) => {
   const bookings = await query(
     `SELECT b.date, b.startTime, b.durationHours
      FROM bookings b
-     WHERE b.roomId = ? AND b.date >= ? AND b.date <= ? AND b.status != 'cancelled'
+     WHERE b.roomId = ? AND b.date >= ? AND b.date <= ? AND b.status IN ('active', 'pending')
      ORDER BY b.date, b.startTime`,
     [roomId, weekStart, weekEnd]
   );
@@ -1334,7 +1481,7 @@ app.get('/api/rooms/:roomId/schedule', requireLogin, async (req, res) => {
   const bookings = await query(
     `SELECT b.startTime, b.durationHours, u.email
      FROM bookings b JOIN users u ON b.userId = u.id
-     WHERE b.roomId = ? AND b.date = ? AND b.status != 'cancelled'
+     WHERE b.roomId = ? AND b.date = ? AND b.status IN ('active', 'pending')
      ORDER BY b.startTime`,
     [roomId, date]
   );
@@ -1440,7 +1587,7 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
   }
 
   const booking = rows[0];
-  if (booking.status !== 'active') {
+  if (!['active', 'pending'].includes(booking.status)) {
     return res.status(400).json({ error: 'Booking is already cancelled.' });
   }
 
@@ -1455,6 +1602,73 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
   await logActivity(req.session.userId, 'admin_booking_cancelled', 'booking', bookingId, description);
 
   res.json({ message: 'Booking cancelled successfully.' });
+});
+
+// Approve a pending booking as admin.
+app.post('/api/admin/bookings/:id/approve', requireAdmin, async (req, res) => {
+  const bookingId = Number(req.params.id);
+  if (!Number.isFinite(bookingId) || bookingId <= 0) {
+    return res.status(400).json({ error: 'Invalid booking ID.' });
+  }
+
+  const rows = await query(
+    `SELECT b.id, b.date, b.startTime, b.status, u.email AS userEmail
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     WHERE b.id = ?`,
+    [bookingId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Booking not found.' });
+  }
+
+  const booking = rows[0];
+  if (booking.status !== 'pending') {
+    return res.status(400).json({ error: 'Only pending bookings can be approved.' });
+  }
+
+  await run('UPDATE bookings SET status = ? WHERE id = ?', ['active', bookingId]);
+
+  const description = `${req.session.email} approved booking #${bookingId} for ${booking.userEmail} (${booking.date} ${booking.startTime})`;
+  await logActivity(req.session.userId, 'admin_booking_approved', 'booking', bookingId, description);
+
+  res.json({ message: 'Booking approved successfully.' });
+});
+
+// Deny a pending booking as admin.
+app.post('/api/admin/bookings/:id/deny', requireAdmin, async (req, res) => {
+  const bookingId = Number(req.params.id);
+  const reason = String(req.body?.reason || '').trim();
+
+  if (!Number.isFinite(bookingId) || bookingId <= 0) {
+    return res.status(400).json({ error: 'Invalid booking ID.' });
+  }
+
+  const rows = await query(
+    `SELECT b.id, b.date, b.startTime, b.status, u.email AS userEmail
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     WHERE b.id = ?`,
+    [bookingId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Booking not found.' });
+  }
+
+  const booking = rows[0];
+  if (booking.status !== 'pending') {
+    return res.status(400).json({ error: 'Only pending bookings can be denied.' });
+  }
+
+  await run('UPDATE bookings SET status = ? WHERE id = ?', ['denied', bookingId]);
+
+  const description = `${req.session.email} denied booking #${bookingId} for ${booking.userEmail} (${booking.date} ${booking.startTime})`
+    + (reason ? ` — Reason: ${reason}` : '');
+  await logActivity(req.session.userId, 'admin_booking_denied', 'booking', bookingId, description);
+
+  res.json({ message: 'Booking denied successfully.' });
 });
 
 // Edit a booking as admin.
@@ -1497,7 +1711,7 @@ app.patch('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
   }
 
   const booking = existingRows[0];
-  if (booking.status !== 'active') {
+  if (!['active', 'pending'].includes(booking.status)) {
     return res.status(400).json({ error: 'Only active bookings can be edited.' });
   }
 
@@ -1507,8 +1721,8 @@ app.patch('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
   }
 
   const existingBookings = await query(
-    'SELECT id, startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status = ? AND id != ?',
-    [booking.roomId, date, 'active', bookingId]
+    `SELECT id, startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status IN ('active', 'pending') AND id != ?`,
+    [booking.roomId, date, bookingId]
   );
 
   const requestedStart = (() => {
@@ -1632,11 +1846,43 @@ app.patch('/api/admin/loans/:id', requireAdmin, async (req, res) => {
   res.json({ message: 'Loan updated successfully.' });
 });
 
-// Return all rooms for admin room management.
+// Return all rooms for admin room management, including configured policy.
 app.get('/api/admin/rooms', requireAdmin, async (req, res) => {
-  const rooms = await query('SELECT id, name, location FROM rooms ORDER BY name ASC');
+  const rooms = await query(
+    `SELECT id, name, location, minDurationMinutes, maxDurationMinutes,
+            maxBookingsPerUserPerWeek, requiresApproval
+     FROM rooms ORDER BY name ASC`
+  );
   res.json({ rooms });
 });
+
+/**
+ * Validate and normalise room policy fields from request input.
+ * @param {object} body Request body containing optional policy fields.
+ * @returns {{ error: string }|{ minDurationMinutes: number|null, maxDurationMinutes: number|null, maxBookingsPerUserPerWeek: number|null, requiresApproval: 0|1 }}
+ */
+function parseRoomPolicyInput(body) {
+  const minDurationMinutes = parseOptionalPositiveInt(body?.minDurationMinutes);
+  const maxDurationMinutes = parseOptionalPositiveInt(body?.maxDurationMinutes);
+  const maxBookingsPerUserPerWeek = parseOptionalPositiveInt(body?.maxBookingsPerUserPerWeek);
+
+  if (Number.isNaN(minDurationMinutes)) {
+    return { error: 'Minimum booking length must be a whole number of minutes greater than 0.' };
+  }
+  if (Number.isNaN(maxDurationMinutes)) {
+    return { error: 'Maximum booking length must be a whole number of minutes greater than 0.' };
+  }
+  if (Number.isNaN(maxBookingsPerUserPerWeek)) {
+    return { error: 'Weekly booking limit must be a whole number greater than 0.' };
+  }
+  if (minDurationMinutes != null && maxDurationMinutes != null && minDurationMinutes > maxDurationMinutes) {
+    return { error: 'Minimum booking length cannot be greater than the maximum booking length.' };
+  }
+
+  const requiresApproval = body?.requiresApproval === true || body?.requiresApproval === 'true' ? 1 : 0;
+
+  return { minDurationMinutes, maxDurationMinutes, maxBookingsPerUserPerWeek, requiresApproval };
+}
 
 // Add a new room. Admin only.
 app.post('/api/admin/rooms', requireAdmin, async (req, res) => {
@@ -1655,11 +1901,126 @@ app.post('/api/admin/rooms', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'A room already exists at this location.' });
   }
 
-  const result = await run('INSERT INTO rooms (name, location) VALUES (?, ?)', [name, location]);
+  const policy = parseRoomPolicyInput(req.body);
+  if (policy.error) {
+    return res.status(400).json({ error: policy.error });
+  }
+
+  const result = await run(
+    `INSERT INTO rooms (name, location, minDurationMinutes, maxDurationMinutes, maxBookingsPerUserPerWeek, requiresApproval)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, location, policy.minDurationMinutes, policy.maxDurationMinutes, policy.maxBookingsPerUserPerWeek, policy.requiresApproval]
+  );
   const description = `${req.session.email} added room ${name} (${location})`;
   await logActivity(req.session.userId, 'room_added', 'room', result.lastID, description);
 
   res.json({ message: 'Room added successfully.' });
+});
+
+// Update a room's booking policy (length limits, weekly frequency cap, admin approval). Admin only.
+app.patch('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
+  const roomId = Number(req.params.id);
+  if (!Number.isFinite(roomId) || roomId <= 0) {
+    return res.status(400).json({ error: 'Invalid room ID.' });
+  }
+
+  const roomRows = await query('SELECT id, name FROM rooms WHERE id = ?', [roomId]);
+  if (roomRows.length === 0) {
+    return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  const policy = parseRoomPolicyInput(req.body);
+  if (policy.error) {
+    return res.status(400).json({ error: policy.error });
+  }
+
+  await run(
+    `UPDATE rooms SET minDurationMinutes = ?, maxDurationMinutes = ?, maxBookingsPerUserPerWeek = ?, requiresApproval = ?
+     WHERE id = ?`,
+    [policy.minDurationMinutes, policy.maxDurationMinutes, policy.maxBookingsPerUserPerWeek, policy.requiresApproval, roomId]
+  );
+
+  const description = `${req.session.email} updated booking policy for room ${roomRows[0].name}`;
+  await logActivity(req.session.userId, 'room_policy_updated', 'room', roomId, description);
+
+  res.json({
+    message: 'Room policy updated successfully.',
+    room: { id: roomId, ...policy }
+  });
+});
+
+// List blackout windows for a room. Admin only.
+app.get('/api/admin/rooms/:roomId/blackouts', requireAdmin, async (req, res) => {
+  const roomId = Number(req.params.roomId);
+  if (!Number.isFinite(roomId) || roomId <= 0) {
+    return res.status(400).json({ error: 'Invalid room ID.' });
+  }
+
+  const blackouts = await query(
+    'SELECT id, roomId, date, startTime, endTime, reason FROM room_blackouts WHERE roomId = ? ORDER BY date ASC, startTime ASC',
+    [roomId]
+  );
+  res.json({ blackouts });
+});
+
+// Add a blackout window for a room. Admin only.
+app.post('/api/admin/rooms/:roomId/blackouts', requireAdmin, async (req, res) => {
+  const roomId = Number(req.params.roomId);
+  const date = String(req.body?.date || '').trim();
+  const startTime = String(req.body?.startTime || '').trim();
+  const endTime = String(req.body?.endTime || '').trim();
+  const reason = String(req.body?.reason || '').trim();
+
+  if (!Number.isFinite(roomId) || roomId <= 0) {
+    return res.status(400).json({ error: 'Invalid room ID.' });
+  }
+
+  const roomRows = await query('SELECT id, name FROM rooms WHERE id = ?', [roomId]);
+  if (roomRows.length === 0) {
+    return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'Date must be in YYYY-MM-DD format.' });
+  }
+  if (!/^[0-9]{2}:[0-9]{2}$/.test(startTime) || !/^[0-9]{2}:[0-9]{2}$/.test(endTime)) {
+    return res.status(400).json({ error: 'Start and end time must be in HH:MM format.' });
+  }
+  if (timeToMinutes(startTime) >= timeToMinutes(endTime)) {
+    return res.status(400).json({ error: 'End time must be after start time.' });
+  }
+
+  const result = await run(
+    'INSERT INTO room_blackouts (roomId, date, startTime, endTime, reason) VALUES (?, ?, ?, ?, ?)',
+    [roomId, date, startTime, endTime, reason || null]
+  );
+
+  const description = `${req.session.email} added a blackout for ${roomRows[0].name} on ${date} ${startTime}-${endTime}`;
+  await logActivity(req.session.userId, 'room_blackout_added', 'room', roomId, description);
+
+  res.json({ message: 'Blackout window added successfully.', blackout: { id: result.lastID, roomId, date, startTime, endTime, reason } });
+});
+
+// Remove a blackout window from a room. Admin only.
+app.delete('/api/admin/rooms/:roomId/blackouts/:blackoutId', requireAdmin, async (req, res) => {
+  const roomId = Number(req.params.roomId);
+  const blackoutId = Number(req.params.blackoutId);
+
+  if (!Number.isFinite(roomId) || roomId <= 0 || !Number.isFinite(blackoutId) || blackoutId <= 0) {
+    return res.status(400).json({ error: 'Invalid room or blackout ID.' });
+  }
+
+  const rows = await query('SELECT id FROM room_blackouts WHERE id = ? AND roomId = ?', [blackoutId, roomId]);
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Blackout window not found.' });
+  }
+
+  await run('DELETE FROM room_blackouts WHERE id = ?', [blackoutId]);
+
+  const description = `${req.session.email} removed a blackout window from room #${roomId}`;
+  await logActivity(req.session.userId, 'room_blackout_removed', 'room', roomId, description);
+
+  res.json({ message: 'Blackout window removed successfully.' });
 });
 
 // Remove a room. Admin only.
@@ -1681,7 +2042,7 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
   const futureActiveBookings = await query(
     `SELECT id FROM bookings
      WHERE roomId = ?
-       AND status = 'active'
+       AND status IN ('active', 'pending')
        AND (date > ? OR (date = ? AND startTime > ?))
      LIMIT 1`,
     [roomId, today, today, nowTime]
@@ -1691,6 +2052,7 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Cannot remove a room that has future active bookings.' });
   }
 
+  await run('DELETE FROM room_blackouts WHERE roomId = ?', [roomId]);
   await run('DELETE FROM rooms WHERE id = ?', [roomId]);
 
   const description = `${req.session.email} removed room ${room.name} (${room.location})`;

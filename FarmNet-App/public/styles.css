@@ -262,6 +262,16 @@ button.danger {
   color: #166534;
 }
 
+.status-label.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-label.denied {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
 .cancel-button {
   background: var(--danger);
   color: white;
@@ -468,6 +478,84 @@ button.danger {
 .equipment-code-empty {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.room-policy-summary {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.room-policy-panel {
+  margin-top: 8px;
+}
+
+.room-policy-panel summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.room-policy-panel h4 {
+  margin: 16px 0 8px;
+}
+
+.room-policy-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-top: 8px;
+}
+
+.room-policy-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.room-policy-form input[type="number"] {
+  width: 140px;
+}
+
+.room-policy-checkbox {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+}
+
+.room-blackout-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.blackout-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-surface);
+  font-size: 0.9rem;
+}
+
+.room-blackout-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.room-blackout-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 textarea {

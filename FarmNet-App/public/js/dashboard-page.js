@@ -136,21 +136,28 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
             const bookingDateTime = new Date(`${booking.date}T${booking.startTime}:00`);
             const isPast = bookingDateTime <= new Date();
             const isCancelled = booking.status === 'cancelled';
+            const isPending = booking.status === 'pending';
+            const isDenied = booking.status === 'denied';
+            const isEditable = (booking.status === 'active' || isPending) && !isPast;
             let statusLabel = '';
 
             if (isCancelled) {
               statusLabel = '<span class="status-label cancelled">Cancelled</span>';
+            } else if (isDenied) {
+              statusLabel = '<span class="status-label denied">Denied</span>';
+            } else if (isPending) {
+              statusLabel = '<span class="status-label pending">Pending approval</span>';
             } else if (isPast) {
               statusLabel = '<span class="status-label past">Past booking</span>';
             }
 
             return `
-            <div class="request-card ${isCancelled ? 'cancelled' : ''}">
+            <div class="request-card ${(isCancelled || isDenied) ? 'cancelled' : ''}">
               <strong>${booking.roomName}</strong>
               <p>${booking.location}</p>
               <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
               ${statusLabel}
-              ${!isPast && !isCancelled ? `
+              ${isEditable ? `
                 <div class="request-actions">
                   <button class="secondary action-button" data-action="edit-booking" data-booking-id="${booking.id}" data-booking-date="${booking.date}" data-booking-start-time="${booking.startTime}" data-booking-duration-hours="${booking.durationHours}">Edit</button>
                   <button class="cancel-button" data-action="cancel-booking" data-booking-id="${booking.id}">Cancel</button>

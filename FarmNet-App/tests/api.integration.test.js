@@ -716,4 +716,184 @@ test('automated integration coverage for critical flows', async (t) => {
     const equipmentAfterRestore = resourcesAfterRestore.equipment.find((item) => item.id === addedEquipment.id);
     assert.equal(equipmentAfterRestore.available, 1);
   });
+
+  await t.test('enforces configurable room policies and the admin booking approval workflow', async () => {
+    const adminEmail = uniqueEmail('policy-admin');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const roomSuffix = Date.now();
+    const roomName = `Policy Room ${roomSuffix}`;
+    const roomLocation = `Policy Wing ${roomSuffix}`;
+
+    const addRoom = await adminClient.request('/api/admin/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: roomName, location: roomLocation })
+    });
+    assert.equal(addRoom.status, 200);
+
+    const roomsAfterAdd = await adminClient.request('/api/admin/rooms');
+    const room = roomsAfterAdd.body.rooms.find((r) => r.location === roomLocation);
+    assert.ok(room);
+    assert.equal(room.requiresApproval, 0);
+
+    const invalidPolicy = await adminClient.request(`/api/admin/rooms/${room.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minDurationMinutes: 120, maxDurationMinutes: 60 })
+    });
+    assert.equal(invalidPolicy.status, 400);
+
+    const policyUpdate = await adminClient.request(`/api/admin/rooms/${room.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        minDurationMinutes: 60,
+        maxDurationMinutes: 120,
+        maxBookingsPerUserPerWeek: 1,
+        requiresApproval: true
+      })
+    });
+    assert.equal(policyUpdate.status, 200);
+
+    const memberEmail = uniqueEmail('policy-member');
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    const nonAdminBlackoutList = await memberClient.request(`/api/admin/rooms/${room.id}/blackouts`);
+    assert.equal(nonAdminBlackoutList.status, 403);
+
+    const bookingDate = formatDateFromToday(14);
+
+    const tooShort = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: room.id, date: bookingDate, startTime: '09:00', durationHours: 0.5 })
+    });
+    assert.equal(tooShort.status, 400);
+    assert.match(tooShort.body.error, /at least 60 minutes/);
+
+    const tooLong = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: room.id, date: bookingDate, startTime: '09:00', durationHours: 3 })
+    });
+    assert.equal(tooLong.status, 400);
+    assert.match(tooLong.body.error, /at most 120 minutes/);
+
+    const invalidBlackout = await adminClient.request(`/api/admin/rooms/${room.id}/blackouts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: bookingDate, startTime: '10:00', endTime: '09:00' })
+    });
+    assert.equal(invalidBlackout.status, 400);
+
+    const addBlackout = await adminClient.request(`/api/admin/rooms/${room.id}/blackouts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: bookingDate, startTime: '09:00', endTime: '10:00', reason: 'Maintenance' })
+    });
+    assert.equal(addBlackout.status, 200);
+
+    const blackoutHit = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: room.id, date: bookingDate, startTime: '09:00', durationHours: 1 })
+    });
+    assert.equal(blackoutHit.status, 400);
+    assert.match(blackoutHit.body.error, /blackout period/);
+
+    const firstBooking = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: room.id, date: bookingDate, startTime: '11:00', durationHours: 1 })
+    });
+    assert.equal(firstBooking.status, 200);
+    assert.equal(firstBooking.body.status, 'pending');
+
+    const memberRequestsAfterFirst = await memberClient.request('/api/my-requests?status=all');
+    const pendingBooking = memberRequestsAfterFirst.body.bookings.find((b) => b.date === bookingDate && b.startTime === '11:00');
+    assert.ok(pendingBooking);
+    assert.equal(pendingBooking.status, 'pending');
+
+    const overFrequencyCap = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: room.id, date: bookingDate, startTime: '14:00', durationHours: 1 })
+    });
+    assert.equal(overFrequencyCap.status, 400);
+    assert.match(overFrequencyCap.body.error, /maximum of 1 booking/);
+
+    const nonAdminApprove = await memberClient.request(`/api/admin/bookings/${pendingBooking.id}/approve`, {
+      method: 'POST'
+    });
+    assert.equal(nonAdminApprove.status, 403);
+
+    const approve = await adminClient.request(`/api/admin/bookings/${pendingBooking.id}/approve`, {
+      method: 'POST'
+    });
+    assert.equal(approve.status, 200);
+
+    const memberRequestsAfterApprove = await memberClient.request('/api/my-requests?status=all');
+    const approvedBooking = memberRequestsAfterApprove.body.bookings.find((b) => b.id === pendingBooking.id);
+    assert.equal(approvedBooking.status, 'active');
+
+    const reApprove = await adminClient.request(`/api/admin/bookings/${pendingBooking.id}/approve`, {
+      method: 'POST'
+    });
+    assert.equal(reApprove.status, 400);
+
+    const denyDate = formatDateFromToday(30);
+    const bookingToDeny = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: room.id, date: denyDate, startTime: '11:00', durationHours: 1 })
+    });
+    assert.equal(bookingToDeny.status, 200);
+    assert.equal(bookingToDeny.body.status, 'pending');
+
+    const memberRequestsBeforeDeny = await memberClient.request('/api/my-requests?status=all');
+    const denyTarget = memberRequestsBeforeDeny.body.bookings.find((b) => b.date === denyDate && b.startTime === '11:00');
+    assert.ok(denyTarget);
+
+    const deny = await adminClient.request(`/api/admin/bookings/${denyTarget.id}/deny`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Conflicts with maintenance schedule.' })
+    });
+    assert.equal(deny.status, 200);
+
+    const memberRequestsAfterDeny = await memberClient.request('/api/my-requests?status=all');
+    const deniedBooking = memberRequestsAfterDeny.body.bookings.find((b) => b.id === denyTarget.id);
+    assert.equal(deniedBooking.status, 'denied');
+
+    // A denied booking frees its slot: rebooking the same time now succeeds (again pending approval).
+    const rebooked = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: room.id, date: denyDate, startTime: '11:00', durationHours: 1 })
+    });
+    assert.equal(rebooked.status, 200);
+    assert.equal(rebooked.body.status, 'pending');
+
+    const blackoutsList = await adminClient.request(`/api/admin/rooms/${room.id}/blackouts`);
+    assert.equal(blackoutsList.status, 200);
+    assert.equal(blackoutsList.body.blackouts.length, 1);
+
+    const removeBlackout = await adminClient.request(`/api/admin/rooms/${room.id}/blackouts/${blackoutsList.body.blackouts[0].id}`, {
+      method: 'DELETE'
+    });
+    assert.equal(removeBlackout.status, 200);
+
+    const blackoutsAfterRemove = await adminClient.request(`/api/admin/rooms/${room.id}/blackouts`);
+    assert.equal(blackoutsAfterRemove.body.blackouts.length, 0);
+  });
 });

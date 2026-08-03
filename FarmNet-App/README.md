@@ -78,7 +78,8 @@ npx playwright install chromium
 - Register and log in with email-based accounts; registration can optionally verify the mailbox is real (MX + SMTP check).
 - View the weekly availability timetable for rooms.
 - Book a room using a date, start time, and duration, in 15-minute increments.
-- Cancel and edit personal room bookings (future, active bookings only; conflicts are rejected).
+- Cancel and edit personal room bookings (future, active/pending bookings only; conflicts are rejected).
+- Rooms can be configured with booking policies: minimum/maximum booking length, a maximum number of bookings per user per week, blackout windows, and whether new bookings require admin approval before becoming active.
 - Borrow equipment and return it with condition notes and an optional photo; each physical unit gets a unique code (e.g. `lap001`) assigned at borrow time.
 - Review active and historical bookings, loans, and request status.
 - Change your password and save a light or dark theme preference.
@@ -91,7 +92,7 @@ npx playwright install chromium
 - `Equipment Loans`: current equipment inventory and borrowing actions.
 - `Settings`: password change and theme preference.
 - `User Management`: role management, user deletion, plus booking, loan, and audit log administration.
-- `Room Management` and `Equipment Management`: admin-only inventory administration.
+- `Room Management` and `Equipment Management`: admin-only inventory administration, including per-room booking policy (length limits, weekly frequency cap, admin approval toggle) and blackout window management.
 
 ## Project Structure
 
@@ -120,10 +121,11 @@ npx playwright install chromium
 SQLite tables, created and migrated automatically on startup (`initDatabase()` in `server.js`):
 
 - `users`: `id`, `email` (unique), `passwordHash`, `role` (`user`/`admin`, default `user`), `theme` (default `dark`).
-- `rooms`: `id`, `name`, `location`.
+- `rooms`: `id`, `name`, `location`, `minDurationMinutes`, `maxDurationMinutes`, `maxBookingsPerUserPerWeek` (all nullable — unset means no limit), `requiresApproval` (0/1, default 0).
+- `room_blackouts`: `id`, `roomId`, `date`, `startTime`, `endTime`, `reason`, `createdAt` — blocked-out windows during which a room cannot be booked.
 - `equipment`: `id`, `name`, `quantity` (total units).
 - `equipment_units`: `id`, `equipmentId`, `code` (unique short code such as `lap001`) — one row per physical, loanable unit.
-- `bookings`: `id`, `userId`, `roomId`, `date`, `startTime`, `durationHours`, `status` (`active`/`cancelled`), `createdAt`.
+- `bookings`: `id`, `userId`, `roomId`, `date`, `startTime`, `durationHours`, `status` (`active`/`pending`/`denied`/`cancelled`), `createdAt`. A booking is created as `pending` when its room has `requiresApproval` set, otherwise `active`.
 - `loans`: `id`, `userId`, `equipmentId`, `equipmentUnitId`, `borrowDate`, `returnDate`, `status` (`active`/`cancelled`/`returned`), `returnCondition`, `returnConditionPhotoPath`, `returnedAt`, `createdAt`.
 - `activity_history`: `id`, `userId` (actor), `eventType`, `resourceType`, `resourceId`, `description`, `timestamp` — the audit log backing `/api/admin/audit-log`.
 
@@ -147,10 +149,10 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `GET /rooms/:roomId/schedule` **auth** — bookings for a room on a specific date.
 
 **Bookings (self-service)**
-- `GET /my-requests` **auth** — current user's bookings and loans (`status=active|all`).
-- `POST /book-room` **auth** — create a booking (future time, 15-minute increments, overlap check).
-- `POST /edit-booking` **auth** — edit own active booking.
-- `POST /cancel-booking` **auth** — cancel own active, future booking.
+- `GET /my-requests` **auth** — current user's bookings and loans (`status=active|all`; `active` includes `pending`).
+- `POST /book-room` **auth** — create a booking (future time, 15-minute increments, overlap check, room policy checks). Returns `status: 'pending'` instead of `'active'` when the room requires admin approval.
+- `POST /edit-booking` **auth** — edit own active/pending booking (re-validated against room policy).
+- `POST /cancel-booking` **auth** — cancel own active/pending, future booking.
 
 **Equipment loans (self-service)**
 - `POST /borrow-equipment` **auth** — borrow an available unit for N days; assigns a specific unit code.
@@ -166,8 +168,10 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 
 **Admin — bookings**
 - `GET /admin/bookings` **admin** — list all bookings (`status=active|all`).
-- `POST /admin/bookings/:id/cancel` **admin** — cancel any active, future booking.
-- `PATCH /admin/bookings/:id` **admin** — edit any active booking (same validation as user edit).
+- `POST /admin/bookings/:id/cancel` **admin** — cancel any active/pending, future booking.
+- `PATCH /admin/bookings/:id` **admin** — edit any active/pending booking (same validation as user edit, room policy not re-checked).
+- `POST /admin/bookings/:id/approve` **admin** — approve a `pending` booking, moving it to `active`.
+- `POST /admin/bookings/:id/deny` **admin** — deny a `pending` booking, moving it to `denied` (optional `reason` logged to the audit trail).
 
 **Admin — loans**
 - `GET /admin/loans` **admin** — list all loans (`status=active|all`).
@@ -177,9 +181,13 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `GET /admin/equipment/booked-out` **admin** — active loans with borrower and unit details.
 
 **Admin — rooms**
-- `GET /admin/rooms` **admin** — list all rooms.
-- `POST /admin/rooms` **admin** — add a room (rejects duplicate location).
-- `DELETE /admin/rooms/:id` **admin** — remove a room (blocks if it has future active bookings).
+- `GET /admin/rooms` **admin** — list all rooms, including configured policy fields.
+- `POST /admin/rooms` **admin** — add a room (rejects duplicate location); accepts optional policy fields (see below).
+- `PATCH /admin/rooms/:id` **admin** — update a room's booking policy: `minDurationMinutes`, `maxDurationMinutes`, `maxBookingsPerUserPerWeek` (all optional — omit/blank for no limit) and `requiresApproval` (boolean).
+- `DELETE /admin/rooms/:id` **admin** — remove a room (blocks if it has future active/pending bookings).
+- `GET /admin/rooms/:roomId/blackouts` **admin** — list blackout windows for a room.
+- `POST /admin/rooms/:roomId/blackouts` **admin** — add a blackout window (`date`, `startTime`, `endTime`, optional `reason`); bookings overlapping a blackout are rejected.
+- `DELETE /admin/rooms/:roomId/blackouts/:blackoutId` **admin** — remove a blackout window.
 
 **Admin — equipment**
 - `GET /admin/equipment` **admin** — list equipment with unit codes.
@@ -234,6 +242,6 @@ Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as vali
 ## Notes
 
 - Room booking uses a weekly timetable rather than a per-day slot picker.
-- The app already supports booking edits, booking archives/history, and admin management flows.
+- The app already supports booking edits, booking archives/history, admin management flows, and configurable per-room booking policies (length limits, weekly frequency cap, blackout windows, admin approval).
 - Remaining roadmap items from the project brief are booking email notifications, email confirmation links, and notification preferences.
 - Only admins can create admins (via role promotion). No default admin account is seeded automatically.
