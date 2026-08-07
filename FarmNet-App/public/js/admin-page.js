@@ -55,7 +55,8 @@ import { renderListState } from './utils.js';
  *   adminBookingsList: HTMLElement,
  *   adminLoansList: HTMLElement,
  *   auditLogList: HTMLElement,
- *   requestJson: (url: string, options?: RequestInit) => Promise<any>
+ *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
+ *   onReturnLoan: (loanId: number) => void
  * }} AdminPageDeps
  */
 
@@ -71,7 +72,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, auditLogList, requestJson } = deps;
+  const { usersList, adminBookingsList, adminLoansList, auditLogList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -362,6 +363,12 @@ export function createAdminPage(deps) {
       const isEditable = loan.status === 'active' && loan.returnDate >= today;
 
       if (isEditable) {
+        const returnButton = document.createElement('button');
+        returnButton.className = 'action-button';
+        returnButton.textContent = 'Return';
+        returnButton.dataset.action = 'admin-return-loan';
+        returnButton.dataset.loanId = String(loan.id);
+
         const editButton = document.createElement('button');
         editButton.className = 'secondary action-button';
         editButton.textContent = 'Edit';
@@ -377,6 +384,7 @@ export function createAdminPage(deps) {
 
         const actionsWrap = document.createElement('div');
         actionsWrap.className = 'request-actions';
+        actionsWrap.appendChild(returnButton);
         actionsWrap.appendChild(editButton);
         actionsWrap.appendChild(cancelButton);
         actionsCell.appendChild(actionsWrap);
@@ -592,6 +600,13 @@ export function createAdminPage(deps) {
   async function handleAdminLoansListClick(event) {
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (!target) return;
+
+    const returnButton = target.closest('[data-action="admin-return-loan"]');
+    if (returnButton) {
+      const loanId = Number(returnButton.dataset.loanId);
+      onReturnLoan(loanId);
+      return;
+    }
 
     const editButton = target.closest('[data-action="admin-edit-loan"]');
     if (editButton) {

@@ -1080,7 +1080,17 @@ app.post('/api/return-loan', requireLogin, (req, res, next) => {
     return res.status(400).json({ error: 'Loan ID is required.' });
   }
 
-  const existing = await query('SELECT * FROM loans WHERE id = ? AND userId = ?', [loanId, req.session.userId]);
+  // Admins can return any user's equipment; everyone else can only return their own.
+  const isAdmin = req.session.role === 'admin';
+  const existing = isAdmin
+    ? await query(
+        `SELECT l.*, u.email AS ownerEmail FROM loans l JOIN users u ON u.id = l.userId WHERE l.id = ?`,
+        [loanId]
+      )
+    : await query(
+        `SELECT l.*, u.email AS ownerEmail FROM loans l JOIN users u ON u.id = l.userId WHERE l.id = ? AND l.userId = ?`,
+        [loanId, req.session.userId]
+      );
   if (existing.length === 0) {
     // Clean up any uploaded file if loan ownership check fails.
     if (req.file) fs.unlink(req.file.path, () => {});
@@ -1105,16 +1115,31 @@ app.post('/api/return-loan', requireLogin, (req, res, next) => {
 
   // Store only the filename (not full path) to avoid path traversal on retrieval.
   const photoFilename = req.file ? req.file.filename : null;
+  const flaggedDamaged = ['true', 'on', '1', 'yes'].includes(String(req.body.damaged || '').trim().toLowerCase());
 
   await run(
     'UPDATE loans SET status = ?, returnCondition = ?, returnConditionPhotoPath = ?, returnedAt = CURRENT_TIMESTAMP WHERE id = ?',
     ['returned', conditionText, photoFilename, loanId]
   );
 
-  const description = `Returned equipment loan ${loanId}. Condition: ${conditionText}`;
+  const description = loan.userId === req.session.userId
+    ? `Returned equipment loan ${loanId}. Condition: ${conditionText}`
+    : `${req.session.email} returned equipment loan ${loanId} on behalf of ${loan.ownerEmail}. Condition: ${conditionText}`;
   await logActivity(req.session.userId, 'loan_returned', 'loan', loanId, description);
 
-  res.json({ message: 'Equipment returned successfully.' });
+  if (flaggedDamaged && loan.equipmentUnitId) {
+    await run('UPDATE equipment_units SET condition = ? WHERE id = ?', ['damaged', loan.equipmentUnitId]);
+    const unitRows = await query('SELECT code FROM equipment_units WHERE id = ?', [loan.equipmentUnitId]);
+    const unitCode = unitRows[0]?.code || loan.equipmentUnitId;
+    const damageDescription = `${req.session.email} flagged item ${unitCode} as damaged while returning loan ${loanId}`;
+    await logActivity(req.session.userId, 'equipment_condition_updated', 'equipment_unit', loan.equipmentUnitId, damageDescription);
+  }
+
+  res.json({
+    message: flaggedDamaged
+      ? 'Equipment returned successfully and flagged as damaged.'
+      : 'Equipment returned successfully.'
+  });
 });
 
 // Serve a return-condition photo for the current user's own loan.
@@ -1370,7 +1395,7 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
 
 // Submit an equipment loan request and enforce quantity availability.
 app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
-  const { equipmentId, days } = req.body;
+  const { equipmentId, days, borrowerEmail } = req.body;
   if (!equipmentId || !days) {
     return res.status(400).json({ error: 'Equipment and borrow duration are required.' });
   }
@@ -1378,6 +1403,22 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   const parsedDays = Number(days);
   if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
     return res.status(400).json({ error: 'Borrow duration must be a whole number of days.' });
+  }
+
+  // Admins may borrow equipment on behalf of another user by email; everyone else can only borrow for themselves.
+  let targetUserId = req.session.userId;
+  let targetEmail = req.session.email;
+  const requestedEmail = typeof borrowerEmail === 'string' ? borrowerEmail.trim() : '';
+  if (requestedEmail) {
+    if (req.session.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can borrow equipment on behalf of another user.' });
+    }
+    const targetUsers = await query('SELECT id, email FROM users WHERE email = ?', [requestedEmail]);
+    if (targetUsers.length === 0) {
+      return res.status(404).json({ error: 'No user found with that email.' });
+    }
+    targetUserId = targetUsers[0].id;
+    targetEmail = targetUsers[0].email;
   }
 
   const equip = await query('SELECT * FROM equipment WHERE id = ?', [equipmentId]);
@@ -1430,10 +1471,20 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   const borrowDate = new Date().toISOString().slice(0, 10);
   const returnDate = new Date(Date.now() + parsedDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  await run(
+  const result = await run(
     'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate) VALUES (?, ?, ?, ?, ?)',
-    [req.session.userId, equipmentId, assignedUnit.id, borrowDate, returnDate]
+    [targetUserId, equipmentId, assignedUnit.id, borrowDate, returnDate]
   );
+
+  if (targetUserId !== req.session.userId) {
+    const description = `${req.session.email} borrowed ${equipmentRow.name} (${assignedUnit.code}) on behalf of ${targetEmail}, due ${returnDate}`;
+    await logActivity(req.session.userId, 'admin_equipment_borrowed', 'loan', result.lastID, description);
+    return res.json({
+      message: `Equipment borrowed successfully on behalf of ${targetEmail}. Assigned item: ${assignedUnit.code}.`,
+      equipmentCode: assignedUnit.code
+    });
+  }
+
   res.json({ message: `Equipment borrowed successfully. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
 });
 

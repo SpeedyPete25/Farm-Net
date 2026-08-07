@@ -267,6 +267,7 @@ function returnLoan(loanId) {
   document.getElementById('return-loan-id').value = String(loanId);
   document.getElementById('return-condition').value = '';
   document.getElementById('return-photo').value = '';
+  document.getElementById('return-damaged').checked = false;
   document.getElementById('return-loan-error').textContent = '';
   modal.classList.remove('hidden');
 }
@@ -344,9 +345,16 @@ async function borrowEquipment(equipmentId, equipmentName) {
   const days = prompt(`How many days do you need ${equipmentName}?`);
   if (!days) return;
 
+  let borrowerEmail = '';
+  if (isAdminUser) {
+    const input = prompt('Borrow on behalf of (email), or leave blank to borrow for yourself:', '');
+    if (input === null) return;
+    borrowerEmail = input.trim();
+  }
+
   const result = await requestJson('/api/borrow-equipment', {
     method: 'POST',
-    body: JSON.stringify({ equipmentId, days: Number(days) })
+    body: JSON.stringify({ equipmentId, days: Number(days), borrowerEmail })
   });
 
   if (result.error) {
@@ -356,6 +364,9 @@ async function borrowEquipment(equipmentId, equipmentName) {
 
   alert(result.message);
   await refreshDashboard(bookingFilter.value);
+  if (activePage === 'admin') {
+    await adminPage.load();
+  }
 }
 
 const dashboardPage = createDashboardPage({
@@ -403,7 +414,8 @@ const adminPage = createAdminPage({
   adminBookingsList,
   adminLoansList,
   auditLogList,
-  requestJson
+  requestJson,
+  onReturnLoan: returnLoan
 });
 
 const roomManagementPage = createRoomManagementPage({
@@ -613,6 +625,7 @@ returnLoanForm.addEventListener('submit', async (event) => {
   const loanId = document.getElementById('return-loan-id').value;
   const condition = document.getElementById('return-condition').value.trim();
   const photoFile = document.getElementById('return-photo').files[0];
+  const damaged = document.getElementById('return-damaged').checked;
 
   if (!condition) {
     errorEl.textContent = 'Please describe the equipment condition.';
@@ -622,6 +635,7 @@ returnLoanForm.addEventListener('submit', async (event) => {
   const formData = new FormData();
   formData.append('loanId', loanId);
   formData.append('returnCondition', condition);
+  formData.append('damaged', damaged ? 'true' : 'false');
   if (photoFile) {
     formData.append('photo', photoFile);
   }
@@ -645,6 +659,9 @@ returnLoanForm.addEventListener('submit', async (event) => {
   returnLoanModal.classList.add('hidden');
   alert(result.message);
   await refreshDashboard(bookingFilter.value);
+  if (activePage === 'admin') {
+    await adminPage.load();
+  }
 });
 
 /**

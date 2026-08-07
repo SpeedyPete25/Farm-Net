@@ -126,6 +126,18 @@ input {
   color: var(--text);
 }
 
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.checkbox-label input {
+  width: auto;
+  padding: 0;
+}
+
 button {
   padding: 12px 18px;
   background: var(--primary);

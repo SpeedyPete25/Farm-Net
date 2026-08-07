@@ -460,6 +460,96 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(afterReturn.body.loans[0].returnCondition, 'Returned in good working condition.');
   });
 
+  await t.test('supports admin borrowing and returning equipment on behalf of another user, with damage flagging on return', async () => {
+    const adminEmail = uniqueEmail('admin-onbehalf');
+    const borrowerEmail = uniqueEmail('borrower-onbehalf');
+    const otherEmail = uniqueEmail('other-onbehalf');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const borrowerClient = new TestClient(baseUrl);
+    await registerUser(borrowerClient, borrowerEmail, password);
+    await loginUser(borrowerClient, borrowerEmail, password);
+
+    const otherClient = new TestClient(baseUrl);
+    await registerUser(otherClient, otherEmail, password);
+    await loginUser(otherClient, otherEmail, password);
+
+    const resources = await getResources(adminClient);
+    const equipmentId = resources.equipment[0].id;
+
+    // A regular user cannot borrow on behalf of someone else.
+    const nonAdminAttempt = await borrowerClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId, days: 3, borrowerEmail: adminEmail })
+    });
+    assert.equal(nonAdminAttempt.status, 403);
+
+    // Admin borrowing on behalf of an unknown email fails.
+    const unknownUserAttempt = await adminClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId, days: 3, borrowerEmail: uniqueEmail('missing') })
+    });
+    assert.equal(unknownUserAttempt.status, 404);
+
+    // Admin borrows equipment on behalf of the borrower.
+    const onBehalfBorrow = await adminClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId, days: 3, borrowerEmail })
+    });
+    assert.equal(onBehalfBorrow.status, 200);
+    assert.match(onBehalfBorrow.body.message, new RegExp(borrowerEmail));
+
+    const borrowerRequests = await borrowerClient.request('/api/my-requests?status=all');
+    assert.equal(borrowerRequests.body.loans.length, 1);
+    const loan = borrowerRequests.body.loans[0];
+    assert.equal(loan.status, 'active');
+
+    // A user who is neither the owner nor an admin cannot return the loan.
+    const foreignReturnForm = new FormData();
+    foreignReturnForm.append('loanId', String(loan.id));
+    foreignReturnForm.append('returnCondition', 'Should not be accepted.');
+    const foreignReturnAttempt = await otherClient.request('/api/return-loan', {
+      method: 'POST',
+      body: foreignReturnForm
+    });
+    assert.equal(foreignReturnAttempt.status, 404);
+
+    // Admin returns the loan on behalf of the borrower and flags the unit as damaged.
+    const adminReturnForm = new FormData();
+    adminReturnForm.append('loanId', String(loan.id));
+    adminReturnForm.append('returnCondition', 'Cracked casing found on return.');
+    adminReturnForm.append('damaged', 'true');
+    const adminReturn = await adminClient.request('/api/return-loan', {
+      method: 'POST',
+      body: adminReturnForm
+    });
+    assert.equal(adminReturn.status, 200);
+    assert.match(adminReturn.body.message, /damaged/);
+
+    const adminLoans = await adminClient.request('/api/admin/loans?status=all');
+    const returnedLoan = adminLoans.body.loans.find((row) => row.id === loan.id);
+    assert.equal(returnedLoan.status, 'returned');
+    assert.equal(returnedLoan.userEmail, borrowerEmail);
+    assert.equal(returnedLoan.returnCondition, 'Cracked casing found on return.');
+
+    // The unit backing the loan should now be flagged damaged.
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const equipmentEntry = equipmentList.body.equipment.find((item) => item.id === equipmentId);
+    const returnedUnit = equipmentEntry.codes.find((unit) => unit.code === returnedLoan.equipmentCode);
+    assert.ok(returnedUnit);
+    assert.equal(returnedUnit.condition, 'damaged');
+  });
+
   await t.test('supports admin listing and edit flows', async () => {
     const userClient = new TestClient(baseUrl);
     const userEmail = uniqueEmail('member');
