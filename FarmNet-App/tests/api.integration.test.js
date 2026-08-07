@@ -807,6 +807,98 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(equipmentAfterRestore.available, 1);
   });
 
+  await t.test('tracks equipment unit lifecycle status, including overdue loans', async () => {
+    const adminEmail = uniqueEmail('admin-state');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const equipmentName = `Overdue Test Device ${Date.now()}`;
+    const addEquipment = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentName, quantity: 1 })
+    });
+    assert.equal(addEquipment.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const addedEquipment = equipmentList.body.equipment.find((item) => item.name === equipmentName);
+    assert.ok(addedEquipment);
+    assert.equal(addedEquipment.codes[0].status, 'available');
+    assert.equal(addedEquipment.statusCounts.available, 1);
+
+    const memberEmail = uniqueEmail('state-member');
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    const borrowed = await memberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 1 })
+    });
+    assert.equal(borrowed.status, 200);
+
+    const equipmentAfterBorrow = await adminClient.request('/api/admin/equipment');
+    const checkedOutUnit = equipmentAfterBorrow.body.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(checkedOutUnit.codes[0].status, 'checked-out');
+    assert.equal(checkedOutUnit.statusCounts.checkedOut, 1);
+
+    const memberLoans = await memberClient.request('/api/my-requests?status=all');
+    const loanId = memberLoans.body.loans[0].id;
+
+    // Simulate the loan going overdue (the API only ever creates future-dated return dates).
+    await runSql('UPDATE loans SET returnDate = ? WHERE id = ?', [formatDateFromToday(-2), loanId]);
+
+    const equipmentAfterOverdue = await adminClient.request('/api/admin/equipment');
+    const overdueUnit = equipmentAfterOverdue.body.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(overdueUnit.codes[0].status, 'overdue');
+    assert.equal(overdueUnit.statusCounts.overdue, 1);
+    assert.equal(overdueUnit.statusCounts.available, 0);
+
+    const resourcesWhileOverdue = await getResources(memberClient);
+    const equipmentWhileOverdue = resourcesWhileOverdue.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(equipmentWhileOverdue.available, 0);
+    assert.equal(equipmentWhileOverdue.statusCounts.overdue, 1);
+
+    // Overdue equipment must stay on the booked-out list rather than disappearing once its return date passes.
+    const bookedOut = await adminClient.request('/api/admin/equipment/booked-out');
+    const overdueLoanRow = bookedOut.body.loans.find((loan) => loan.equipmentCode === overdueUnit.codes[0].code);
+    assert.ok(overdueLoanRow);
+    assert.equal(overdueLoanRow.status, 'overdue');
+
+    // A second user must not be able to borrow the same overdue (still checked-out) unit.
+    const otherMemberEmail = uniqueEmail('state-other');
+    const otherMemberClient = new TestClient(baseUrl);
+    await registerUser(otherMemberClient, otherMemberEmail, password);
+    await loginUser(otherMemberClient, otherMemberEmail, password);
+
+    const blockedBorrow = await otherMemberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 1 })
+    });
+    assert.equal(blockedBorrow.status, 400);
+    assert.equal(blockedBorrow.body.error, 'No equipment available to borrow right now.');
+
+    // Returning the overdue loan frees the unit back to available.
+    const returnForm = new FormData();
+    returnForm.append('loanId', String(loanId));
+    returnForm.append('returnCondition', 'Returned late but undamaged.');
+    const returned = await memberClient.request('/api/return-loan', { method: 'POST', body: returnForm });
+    assert.equal(returned.status, 200);
+
+    const equipmentAfterReturn = await adminClient.request('/api/admin/equipment');
+    const returnedUnit = equipmentAfterReturn.body.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(returnedUnit.codes[0].status, 'available');
+    assert.equal(returnedUnit.statusCounts.available, 1);
+  });
+
   await t.test('enforces configurable room policies and the admin booking approval workflow', async () => {
     const adminEmail = uniqueEmail('policy-admin');
     const password = 'Password123';

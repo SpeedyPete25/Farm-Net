@@ -401,6 +401,53 @@ async function addEquipmentUnits(equipmentId, equipmentName, count) {
 }
 
 /**
+ * Compute the lifecycle status of equipment units from their condition and any active loan.
+ * Status priority: in-maintenance (damaged) > reserved (future-dated loan) > overdue
+ * (past return date) > checked-out (active loan) > available.
+ * @param {number|null} [equipmentId] Restrict to a single equipment category, or all when omitted.
+ * @returns {Promise<Array<{ id: number, equipmentId: number, code: string, condition: string, status: 'available'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }>>}
+ */
+async function getEquipmentUnitStatuses(equipmentId = null) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const unitParams = [];
+  let unitSql = 'SELECT id, equipmentId, code, condition FROM equipment_units';
+  if (equipmentId != null) {
+    unitSql += ' WHERE equipmentId = ?';
+    unitParams.push(equipmentId);
+  }
+  const units = await query(unitSql, unitParams);
+
+  const loanParams = [];
+  let loanSql = "SELECT equipmentUnitId, borrowDate, returnDate FROM loans WHERE status = 'active' AND equipmentUnitId IS NOT NULL";
+  if (equipmentId != null) {
+    loanSql += ' AND equipmentId = ?';
+    loanParams.push(equipmentId);
+  }
+  const activeLoans = await query(loanSql, loanParams);
+  const loanByUnitId = new Map(activeLoans.map((loan) => [Number(loan.equipmentUnitId), loan]));
+
+  return units.map((unit) => {
+    const loan = loanByUnitId.get(Number(unit.id));
+    let status = 'available';
+
+    if (unit.condition === 'damaged') {
+      status = 'in-maintenance';
+    } else if (loan) {
+      if (loan.borrowDate > today) {
+        status = 'reserved';
+      } else if (loan.returnDate < today) {
+        status = 'overdue';
+      } else {
+        status = 'checked-out';
+      }
+    }
+
+    return { id: unit.id, equipmentId: unit.equipmentId, code: unit.code, condition: unit.condition, status };
+  });
+}
+
+/**
  * Remove unassigned equipment units from a category.
  * @param {number} equipmentId
  * @param {number} count
@@ -907,35 +954,41 @@ app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
   const equipment = await query(
     `SELECT e.id, e.name, e.quantity,
-            COALESCE(unitCounts.totalUnits, 0) AS totalUnits,
-            COALESCE(unitCounts.workingUnits, 0) AS workingUnits
+            COALESCE(unitCounts.totalUnits, 0) AS totalUnits
      FROM equipment e
      LEFT JOIN (
-       SELECT equipmentId,
-              COUNT(*) AS totalUnits,
-              SUM(CASE WHEN condition = 'working' THEN 1 ELSE 0 END) AS workingUnits
+       SELECT equipmentId, COUNT(*) AS totalUnits
        FROM equipment_units
        GROUP BY equipmentId
      ) unitCounts ON unitCounts.equipmentId = e.id`
   );
 
-  const loans = await query('SELECT equipmentId, COUNT(*) AS activeLoans FROM loans WHERE returnDate >= date("now") AND status = ? GROUP BY equipmentId', ['active']);
-  const loanMap = loans.reduce((acc, item) => {
-    acc[item.equipmentId] = item.activeLoans;
+  // Derive per-status unit counts (available/reserved/checked-out/overdue/in-maintenance)
+  // so damaged, reserved, and overdue units are all excluded from what's offered to borrow.
+  const unitStatuses = await getEquipmentUnitStatuses();
+  const statusCountsByEquipmentId = unitStatuses.reduce((acc, unit) => {
+    if (!acc[unit.equipmentId]) {
+      acc[unit.equipmentId] = { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
+    }
+    const bucket = acc[unit.equipmentId];
+    if (unit.status === 'available') bucket.available += 1;
+    else if (unit.status === 'reserved') bucket.reserved += 1;
+    else if (unit.status === 'checked-out') bucket.checkedOut += 1;
+    else if (unit.status === 'overdue') bucket.overdue += 1;
+    else if (unit.status === 'in-maintenance') bucket.inMaintenance += 1;
     return acc;
   }, {});
 
-  // Calculate available equipment by subtracting active loans from working units only,
-  // so items flagged as damaged are not offered for borrowing.
   const equipmentWithAvailability = equipment.map((item) => {
-    const activeLoans = loanMap[item.id] || 0;
+    const counts = statusCountsByEquipmentId[item.id]
+      || { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
     const totalQuantity = Number(item.totalUnits || item.quantity || 0);
-    const workingQuantity = Number(item.workingUnits || 0);
     return {
       id: item.id,
       name: item.name,
       quantity: totalQuantity,
-      available: Math.max(0, workingQuantity - activeLoans)
+      available: counts.available,
+      statusCounts: counts
     };
   });
 
@@ -1435,33 +1488,25 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
     await addEquipmentUnits(equipmentId, equipmentRow.name, requiredUnits - unitCount);
   }
 
-  const allUnits = await query(
-    'SELECT id, code FROM equipment_units WHERE equipmentId = ? AND condition = ?',
-    [equipmentId, 'working']
-  );
-  const activeLoans = await query(
-    `SELECT equipmentUnitId
-     FROM loans
-     WHERE equipmentId = ?
-       AND status = 'active'
-       AND returnDate >= date("now")`,
+  // Only units whose computed status is 'available' can be assigned — this excludes
+  // units that are checked out, overdue, reserved, or in maintenance.
+  const unitStatuses = await getEquipmentUnitStatuses(equipmentId);
+  const availableUnits = unitStatuses.filter((unit) => unit.status === 'available');
+
+  // Legacy loans created before equipmentUnitId existed aren't tied to a specific unit,
+  // so reserve a slot from the shuffled pool for each one rather than risk over-assigning.
+  const legacyActiveLoanRows = await query(
+    `SELECT COUNT(*) AS count FROM loans WHERE equipmentId = ? AND status = 'active' AND equipmentUnitId IS NULL`,
     [equipmentId]
   );
+  const legacyActiveLoans = Number(legacyActiveLoanRows[0]?.count || 0);
 
-  const assignedUnitIds = new Set(
-    activeLoans
-      .map((loan) => Number(loan.equipmentUnitId))
-      .filter((unitId) => Number.isFinite(unitId) && unitId > 0)
-  );
-  const legacyActiveLoans = activeLoans.filter((loan) => !loan.equipmentUnitId).length;
-
-  const unassignedUnits = allUnits.filter((unit) => !assignedUnitIds.has(Number(unit.id)));
-  for (let i = unassignedUnits.length - 1; i > 0; i--) {
+  for (let i = availableUnits.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [unassignedUnits[i], unassignedUnits[j]] = [unassignedUnits[j], unassignedUnits[i]];
+    [availableUnits[i], availableUnits[j]] = [availableUnits[j], availableUnits[i]];
   }
 
-  const availablePool = unassignedUnits.slice(legacyActiveLoans);
+  const availablePool = availableUnits.slice(legacyActiveLoans);
   if (availablePool.length <= 0) {
     return res.status(400).json({ error: 'No equipment available to borrow right now.' });
   }
@@ -2126,6 +2171,9 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
      ORDER BY e.name ASC`
   );
 
+  const unitStatuses = await getEquipmentUnitStatuses();
+  const statusByUnitId = new Map(unitStatuses.map((unit) => [unit.id, unit.status]));
+
   const codeRows = await query(
     `SELECT id, equipmentId, code, condition
      FROM equipment_units
@@ -2136,14 +2184,25 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
     if (!acc[row.equipmentId]) {
       acc[row.equipmentId] = [];
     }
-    acc[row.equipmentId].push({ id: row.id, code: row.code, condition: row.condition });
+    acc[row.equipmentId].push({
+      id: row.id,
+      code: row.code,
+      condition: row.condition,
+      status: statusByUnitId.get(row.id) || 'available'
+    });
     return acc;
   }, {});
 
-  const equipment = equipmentRows.map((item) => ({
-    ...item,
-    codes: codesByEquipmentId[item.id] || []
-  }));
+  const statusCountKeys = { available: 'available', reserved: 'reserved', 'checked-out': 'checkedOut', overdue: 'overdue', 'in-maintenance': 'inMaintenance' };
+  const equipment = equipmentRows.map((item) => {
+    const codes = codesByEquipmentId[item.id] || [];
+    const statusCounts = { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
+    for (const unit of codes) {
+      const key = statusCountKeys[unit.status];
+      if (key) statusCounts[key] += 1;
+    }
+    return { ...item, codes, statusCounts };
+  });
 
   res.json({ equipment });
 });
@@ -2163,12 +2222,18 @@ app.get('/api/admin/equipment/booked-out', requireAdmin, async (req, res) => {
      JOIN users u ON u.id = l.userId
      LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
      WHERE l.status = 'active'
-       AND l.returnDate >= ?
      ORDER BY e.name ASC, l.returnDate ASC, l.borrowDate ASC`,
-    [today]
+    []
   );
 
-  res.json({ loans });
+  // Overdue loans stay on this list (rather than disappearing once returnDate passes)
+  // since the item is still physically checked out until it's actually returned.
+  const loansWithStatus = loans.map((loan) => ({
+    ...loan,
+    status: loan.returnDate < today ? 'overdue' : 'checked-out'
+  }));
+
+  res.json({ loans: loansWithStatus });
 });
 
 // Add a new equipment item. Admin only.

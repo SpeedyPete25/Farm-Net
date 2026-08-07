@@ -6,16 +6,28 @@
 import { renderListState } from './utils.js';
 
 /**
- * @typedef {{ id: number, code: string, condition: 'working' | 'damaged' }} EquipmentUnit
+ * @typedef {{ id: number, code: string, condition: 'working' | 'damaged', status: 'available'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }} EquipmentUnit
  */
 
 /**
- * @typedef {{ id: number, name: string, quantity: number, codes?: EquipmentUnit[] }} EquipmentItem
+ * @typedef {{ available: number, reserved: number, checkedOut: number, overdue: number, inMaintenance: number }} StatusCounts
  */
 
 /**
- * @typedef {{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string }} BookedOutLoan
+ * @typedef {{ id: number, name: string, quantity: number, codes?: EquipmentUnit[], statusCounts?: StatusCounts }} EquipmentItem
  */
+
+/**
+ * @typedef {{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string, status: 'checked-out'|'overdue' }} BookedOutLoan
+ */
+
+const STATUS_LABELS = {
+  available: 'Available',
+  reserved: 'Reserved',
+  'checked-out': 'Checked out',
+  overdue: 'Overdue',
+  'in-maintenance': 'In maintenance'
+};
 
 /**
  * @typedef {{ equipment?: EquipmentItem[], error?: string }} EquipmentListResponse
@@ -79,6 +91,15 @@ export function createEquipmentManagementPage(deps) {
     }
 
     equipmentManagementList.innerHTML = equipment.map((item) => {
+      const counts = item.statusCounts || { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
+      const statusSummary = [
+        `Available: ${counts.available}`,
+        `Checked out: ${counts.checkedOut}`,
+        `Reserved: ${counts.reserved}`,
+        `Overdue: ${counts.overdue}`,
+        `In maintenance: ${counts.inMaintenance}`
+      ].join(' · ');
+
       return `
         <div class="item-row">
           <div>
@@ -95,13 +116,14 @@ export function createEquipmentManagementPage(deps) {
               />
               <button data-action="update-equipment" data-equipment-id="${item.id}">Update</button>
             </p>
+            <p class="status-summary">${statusSummary}</p>
             <details class="equipment-codes-panel">
               <summary>Item codes (${Array.isArray(item.codes) ? item.codes.length : 0})</summary>
               <div class="equipment-codes-list">
                 ${Array.isArray(item.codes) && item.codes.length > 0
                   ? item.codes.map((unit) => `
-                      <span class="equipment-code-chip equipment-code-chip--${unit.condition}">
-                        ${unit.code} · ${unit.condition}
+                      <span class="equipment-code-chip equipment-code-chip--${unit.status}">
+                        ${unit.code} · ${STATUS_LABELS[unit.status] || unit.status}
                         <button
                           type="button"
                           data-action="toggle-unit-condition"
@@ -135,6 +157,7 @@ export function createEquipmentManagementPage(deps) {
         <div class="item-row">
           <div>
             <strong>${loan.equipmentName}</strong>
+            <span class="equipment-code-chip equipment-code-chip--${loan.status}">${STATUS_LABELS[loan.status] || loan.status}</span>
             ${loan.equipmentCode ? `<p>Assigned item: ${loan.equipmentCode}</p>` : ''}
             <p>Borrowed by: ${loan.borrowerEmail}</p>
             <p>Borrowed: ${loan.borrowDate} · Return by: ${loan.returnDate}</p>

@@ -11,6 +11,7 @@
   --panel-surface: #0f172a;
   --line: #334155;
   --success: #4ade80;
+  --warning: #fbbf24;
   --slot-free: #052e16;
   --slot-free-hover: #14532d;
   --slot-selected: #166534;
@@ -31,6 +32,7 @@
   --panel-surface: #fcfdff;
   --line: #e5e7eb;
   --success: #15803d;
+  --warning: #d97706;
   --slot-free: #f0fdf4;
   --slot-free-hover: #bbf7d0;
   --slot-selected: #86efac;
@@ -477,9 +479,38 @@ button.danger {
   gap: 6px;
 }
 
-.equipment-code-chip--damaged {
+.equipment-code-chip--available {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  color: var(--success);
+}
+
+.equipment-code-chip--checked-out {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  color: var(--primary);
+}
+
+.equipment-code-chip--reserved {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  color: var(--warning);
+}
+
+.equipment-code-chip--overdue {
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
   color: var(--danger);
+}
+
+.equipment-code-chip--in-maintenance {
+  border-color: var(--border);
+  color: var(--muted);
+}
+
+.status-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 4px 0 0;
 }
 
 .equipment-code-chip button {
