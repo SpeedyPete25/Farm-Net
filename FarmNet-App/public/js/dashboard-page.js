@@ -12,6 +12,7 @@
  *   roomName: string,
  *   location: string,
  *   status: string,
+ *   seriesId?: number|null,
  *   returnCondition?: string,
  *   returnConditionPhotoPath?: string,
  *   returnedAt?: string
@@ -41,6 +42,7 @@
  *   requestsList: HTMLElement,
  *   formatDuration: (duration: number|string) => string,
  *   onCancelBooking: (bookingId: number) => Promise<void>,
+ *   onCancelBookingSeries: (seriesId: number) => Promise<void>,
  *   onCancelLoan: (loanId: number) => Promise<void>,
  *   onReturnLoan: (loanId: number) => Promise<void>,
  *   onEditBooking: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
@@ -59,7 +61,7 @@
  * @param {DashboardPageDeps} deps Dependency bag.
  * @returns {DashboardPageApi} Dashboard page API.
  */
-export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelLoan, onReturnLoan, onEditBooking, onEditLoan }) {
+export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelBookingSeries, onCancelLoan, onReturnLoan, onEditBooking, onEditLoan }) {
   requestsList.addEventListener('click', async (event) => {
     const editBookingBtn = event.target.closest('[data-action="edit-booking"]');
     if (editBookingBtn) {
@@ -84,6 +86,15 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
       const bookingId = Number(cancelBookingBtn.dataset.bookingId);
       if (Number.isFinite(bookingId)) {
         await onCancelBooking(bookingId);
+      }
+      return;
+    }
+
+    const cancelSeriesBtn = event.target.closest('[data-action="cancel-booking-series"]');
+    if (cancelSeriesBtn) {
+      const seriesId = Number(cancelSeriesBtn.dataset.seriesId);
+      if (Number.isFinite(seriesId)) {
+        await onCancelBookingSeries(seriesId);
       }
       return;
     }
@@ -151,16 +162,20 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
               statusLabel = '<span class="status-label past">Past booking</span>';
             }
 
+            const isRecurring = booking.seriesId != null;
+
             return `
             <div class="request-card ${(isCancelled || isDenied) ? 'cancelled' : ''}">
               <strong>${booking.roomName}</strong>
               <p>${booking.location}</p>
               <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
+              ${isRecurring ? '<span class="status-label recurring">Recurring</span>' : ''}
               ${statusLabel}
               ${isEditable ? `
                 <div class="request-actions">
                   <button class="secondary action-button" data-action="edit-booking" data-booking-id="${booking.id}" data-booking-date="${booking.date}" data-booking-start-time="${booking.startTime}" data-booking-duration-hours="${booking.durationHours}">Edit</button>
                   <button class="cancel-button" data-action="cancel-booking" data-booking-id="${booking.id}">Cancel</button>
+                  ${isRecurring ? `<button class="cancel-button" data-action="cancel-booking-series" data-series-id="${booking.seriesId}">Cancel series</button>` : ''}
                 </div>
               ` : ''}
             </div>

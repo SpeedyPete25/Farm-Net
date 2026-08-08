@@ -414,6 +414,94 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(afterCancel.body.bookings[0].status, 'cancelled');
   });
 
+  await t.test('supports recurring room bookings and cancelling a whole series', async () => {
+    const client = new TestClient(baseUrl);
+    const email = uniqueEmail('recurring');
+    const password = 'Password123';
+    await registerUser(client, email, password);
+    await loginUser(client, email, password);
+
+    const resources = await getResources(client);
+    const roomId = resources.rooms[1].id;
+    const startDate = formatDateFromToday(30);
+
+    const invalidFrequency = await client.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: startDate, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'daily', occurrences: 3 }
+      })
+    });
+    assert.equal(invalidFrequency.status, 400);
+
+    const invalidCount = await client.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: startDate, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'weekly', occurrences: 1 }
+      })
+    });
+    assert.equal(invalidCount.status, 400);
+
+    // Create a genuine 3-occurrence weekly series.
+    const created = await client.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: startDate, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'weekly', occurrences: 3 }
+      })
+    });
+    assert.equal(created.status, 200);
+    assert.equal(created.body.occurrences, 3);
+
+    const afterCreate = await client.request('/api/my-requests?status=all');
+    assert.equal(afterCreate.body.bookings.length, 3);
+    const seriesId = afterCreate.body.bookings[0].seriesId;
+    assert.ok(seriesId);
+    assert.ok(afterCreate.body.bookings.every((booking) => booking.seriesId === seriesId));
+
+    const expectedDates = [startDate, formatDateFromToday(37), formatDateFromToday(44)].sort();
+    const actualDates = afterCreate.body.bookings.map((booking) => booking.date).sort();
+    assert.deepEqual(actualDates, expectedDates);
+
+    // A recurring request must fully fail — with no partial series left behind — if any
+    // single occurrence conflicts, even when that occurrence isn't the first one checked.
+    const otherClient = new TestClient(baseUrl);
+    const otherEmail = uniqueEmail('recurring-conflict');
+    await registerUser(otherClient, otherEmail, password);
+    await loginUser(otherClient, otherEmail, password);
+
+    const conflictStartDate = formatDateFromToday(23); // occurrence 2 of this series lands on `startDate`.
+    const conflicting = await otherClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: conflictStartDate, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'weekly', occurrences: 3 }
+      })
+    });
+    assert.equal(conflicting.status, 400);
+    assert.match(conflicting.body.error, /already booked/);
+
+    const otherRequests = await otherClient.request('/api/my-requests?status=all');
+    assert.equal(otherRequests.body.bookings.length, 0);
+
+    // Cancelling the series cancels every upcoming occurrence in one call.
+    const cancelSeries = await client.request('/api/cancel-booking-series', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seriesId })
+    });
+    assert.equal(cancelSeries.status, 200);
+    assert.match(cancelSeries.body.message, /3/);
+
+    const afterCancel = await client.request('/api/my-requests?status=all');
+    assert.ok(afterCancel.body.bookings.every((booking) => booking.status === 'cancelled'));
+  });
+
   await t.test('supports loan borrow, edit, and return flow', async () => {
     const client = new TestClient(baseUrl);
     const email = uniqueEmail('loan');

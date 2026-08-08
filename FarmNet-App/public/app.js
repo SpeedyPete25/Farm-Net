@@ -85,6 +85,9 @@ const bookingPolicyNote = document.getElementById('booking-policy-note');
 const bookingDateInput = document.getElementById('booking-date');
 const bookingStartTimeInput = document.getElementById('booking-start-time');
 const bookingDurationInput = document.getElementById('booking-duration');
+const bookingRecurringInput = document.getElementById('booking-recurring');
+const bookingRecurrenceCountLabel = document.getElementById('booking-recurrence-count-label');
+const bookingRecurrenceCountInput = document.getElementById('booking-recurrence-count');
 const bookingError = document.getElementById('booking-error');
 const bookingCancel = document.getElementById('booking-cancel');
 
@@ -238,6 +241,27 @@ async function cancelBooking(bookingId) {
 }
 
 /**
+ * Cancel every upcoming occurrence of a recurring booking series for the current user.
+ * @param {number} seriesId Series identifier (the first booking's id).
+ */
+async function cancelBookingSeries(seriesId) {
+  if (!confirm('Cancel all upcoming occurrences of this recurring booking?')) return;
+
+  const result = await requestJson('/api/cancel-booking-series', {
+    method: 'POST',
+    body: JSON.stringify({ seriesId })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+}
+
+/**
  * Cancel an existing equipment loan for the current user.
  * @param {number} loanId Loan identifier.
  */
@@ -373,6 +397,7 @@ const dashboardPage = createDashboardPage({
   requestsList,
   formatDuration,
   onCancelBooking: cancelBooking,
+  onCancelBookingSeries: cancelBookingSeries,
   onCancelLoan: cancelLoan,
   onReturnLoan: returnLoan,
   onEditBooking: editBooking,
@@ -388,6 +413,9 @@ const roomsPage = createRoomsPage({
   bookingDateInput,
   bookingStartTimeInput,
   bookingDurationInput,
+  bookingRecurringInput,
+  bookingRecurrenceCountLabel,
+  bookingRecurrenceCountInput,
   bookingError,
   bookingCancel,
   timetableRoomSelect: document.getElementById('timetable-room-select'),

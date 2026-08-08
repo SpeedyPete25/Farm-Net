@@ -35,6 +35,9 @@ import { renderListState } from './utils.js';
  *   bookingDateInput: HTMLInputElement,
  *   bookingStartTimeInput: HTMLInputElement,
  *   bookingDurationInput: HTMLInputElement,
+ *   bookingRecurringInput: HTMLInputElement,
+ *   bookingRecurrenceCountLabel: HTMLElement,
+ *   bookingRecurrenceCountInput: HTMLInputElement,
  *   bookingError: HTMLElement,
  *   bookingCancel: HTMLElement,
  *   timetableRoomSelect: HTMLSelectElement,
@@ -66,6 +69,9 @@ export function createRoomsPage({
   bookingDateInput,
   bookingStartTimeInput,
   bookingDurationInput,
+  bookingRecurringInput,
+  bookingRecurrenceCountLabel,
+  bookingRecurrenceCountInput,
   bookingError,
   bookingCancel,
   timetableRoomSelect,
@@ -344,6 +350,9 @@ export function createRoomsPage({
     activeBookingRoomId = roomId;
     bookingRoomName.textContent = roomName;
     bookingDurationInput.value = '0.5';
+    bookingRecurringInput.checked = false;
+    bookingRecurrenceCountInput.value = '4';
+    bookingRecurrenceCountLabel.classList.add('hidden');
     bookingError.textContent = '';
     setBookingConstraints();
     if (presetTime) {
@@ -366,6 +375,10 @@ export function createRoomsPage({
     bookingPanel.classList.remove('hidden');
     bookingPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+
+  bookingRecurringInput.addEventListener('change', () => {
+    bookingRecurrenceCountLabel.classList.toggle('hidden', !bookingRecurringInput.checked);
+  });
 
   bookingDateInput.addEventListener('change', () => {
     updateBookingTimeMin();
@@ -412,13 +425,24 @@ export function createRoomsPage({
       return;
     }
 
+    let recurrence = null;
+    if (bookingRecurringInput.checked) {
+      const occurrences = Number(bookingRecurrenceCountInput.value);
+      if (!Number.isInteger(occurrences) || occurrences < 2 || occurrences > 52) {
+        bookingError.textContent = 'Number of occurrences must be a whole number between 2 and 52.';
+        return;
+      }
+      recurrence = { frequency: 'weekly', occurrences };
+    }
+
     const result = await requestJson('/api/book-room', {
       method: 'POST',
       body: JSON.stringify({
         roomId: activeBookingRoomId,
         date,
         startTime,
-        durationHours
+        durationHours,
+        recurrence
       })
     });
 
@@ -428,10 +452,11 @@ export function createRoomsPage({
     }
 
     const durationLabel = formatDuration(durationHours);
+    const recurrenceLabel = recurrence ? `\nRepeats weekly for ${recurrence.occurrences} occurrences.` : '';
     if (result.status === 'pending') {
-      alert(`Booking request submitted!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}\n\nThis room requires admin approval — you'll see it as "Pending approval" until reviewed.`);
+      alert(`Booking request submitted!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}${recurrenceLabel}\n\nThis room requires admin approval — you'll see it as "Pending approval" until reviewed.`);
     } else {
-      alert(`Booking confirmed!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}`);
+      alert(`Booking confirmed!\n\nRoom: ${bookingRoomName.textContent}\nDate: ${date}\nStart: ${startTime}\nDuration: ${durationLabel}${recurrenceLabel}`);
     }
     hideBookingPanel();
     renderTimetable();

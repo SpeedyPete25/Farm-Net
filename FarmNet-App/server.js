@@ -511,6 +511,19 @@ function getWeekRange(dateStr) {
 }
 
 /**
+ * Add a number of days to a YYYY-MM-DD date string, in local time.
+ * @param {string} dateStr Date in YYYY-MM-DD.
+ * @param {number} days Signed day offset.
+ * @returns {string} Shifted date in YYYY-MM-DD.
+ */
+function addDaysToDateString(dateStr, days) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const shifted = new Date(year, month - 1, day);
+  shifted.setDate(shifted.getDate() + days);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}-${String(shifted.getDate()).padStart(2, '0')}`;
+}
+
+/**
  * Parse an optional positive integer from request input.
  * @param {*} value
  * @returns {number|null} Parsed integer, null if the value was empty/absent, or NaN if invalid.
@@ -689,6 +702,13 @@ async function initDatabase() {
   const hasStatusColumn = bookingColumns.some(col => col.name === 'status');
   if (!hasStatusColumn) {
     await run(`ALTER TABLE bookings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
+  }
+
+  // seriesId groups the occurrences created by a single recurring booking request.
+  // It's the id of the first occurrence in the series; null for one-off bookings.
+  const hasSeriesId = bookingColumns.some(col => col.name === 'seriesId');
+  if (!hasSeriesId) {
+    await run(`ALTER TABLE bookings ADD COLUMN seriesId INTEGER`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS loans (
@@ -1003,7 +1023,7 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   let bookings;
   if (statusFilter === 'all') {
     bookings = await query(
-      `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status
+      `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status, b.seriesId
        FROM bookings b
        JOIN rooms r ON r.id = b.roomId
        WHERE b.userId = ?
@@ -1015,7 +1035,7 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
     const nowTime = new Date().toTimeString().slice(0, 5);
 
     bookings = await query(
-      `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status
+      `SELECT b.id, r.name AS roomName, r.location, b.date, b.startTime, b.durationHours, b.status, b.seriesId
        FROM bookings b
        JOIN rooms r ON r.id = b.roomId
        WHERE b.userId = ?
@@ -1369,7 +1389,7 @@ app.post('/api/edit-loan', requireLogin, async (req, res) => {
 // Submit a room booking request.
 // Validates future time, 15-minute increments, and overlapping bookings.
 app.post('/api/book-room', requireLogin, async (req, res) => {
-  const { roomId, date, startTime, durationHours } = req.body;
+  const { roomId, date, startTime, durationHours, recurrence } = req.body;
   if (!roomId || !date || !startTime || durationHours == null) {
     return res.status(400).json({ error: 'Room, date, start time and duration are required.' });
   }
@@ -1390,60 +1410,121 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Booking must be in the future.' });
   }
 
+  // A recurring request expands into one date per occurrence, repeating weekly.
+  // Only 'weekly' is supported for now, which keeps every occurrence in a distinct
+  // calendar week so the per-user weekly frequency policy can't be gamed by the
+  // other occurrences in the same request.
+  let occurrenceDates = [date];
+  if (recurrence != null) {
+    if (typeof recurrence !== 'object' || recurrence.frequency !== 'weekly') {
+      return res.status(400).json({ error: "Recurrence frequency must be 'weekly'." });
+    }
+    const occurrences = Number(recurrence.occurrences);
+    if (!Number.isInteger(occurrences) || occurrences < 2 || occurrences > 52) {
+      return res.status(400).json({ error: 'A recurring booking must repeat between 2 and 52 times.' });
+    }
+    occurrenceDates = Array.from({ length: occurrences }, (_, i) => addDaysToDateString(date, i * 7));
+  }
+
   const roomRows = await query('SELECT * FROM rooms WHERE id = ?', [roomId]);
   if (roomRows.length === 0) {
     return res.status(400).json({ error: 'Room not found.' });
   }
   const room = roomRows[0];
 
-  const policyError = await checkRoomBookingPolicy(room, date, startTime, duration, req.session.userId);
-  if (policyError) {
-    return res.status(400).json({ error: policyError });
-  }
-
-  // Load active/pending bookings for the selected room and date so we can detect overlaps.
-  const existingBookings = await query(
-    `SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status IN ('active', 'pending')`,
-    [roomId, date]
-  );
-
-  // Convert the requested booking time into minutes since midnight.
-  const requestedStart = (() => {
-    const [hours, minutes] = startTime.split(':').map(Number);
-    return hours * 60 + minutes;
-  })();
+  const requestedStart = timeToMinutes(startTime);
   const requestedEnd = requestedStart + duration * 60;
+  const isRecurring = occurrenceDates.length > 1;
 
-  // Determine whether the requested interval overlaps any existing booking.
-  const hasOverlap = existingBookings.some((booking) => {
-    const [hours, minutes] = booking.startTime.split(':').map(Number);
-    const existingStart = hours * 60 + minutes;
-    const existingDuration = Number(booking.durationHours) || 0;
-    const existingEnd = existingStart + existingDuration * 60;
-    return requestedStart < existingEnd && existingStart < requestedEnd;
-  });
+  // Validate every occurrence before creating any of them, so a recurring booking
+  // either fully succeeds or fails outright rather than leaving a partial series.
+  for (const occurrenceDate of occurrenceDates) {
+    const policyError = await checkRoomBookingPolicy(room, occurrenceDate, startTime, duration, req.session.userId);
+    if (policyError) {
+      return res.status(400).json({ error: isRecurring ? `${policyError} (on ${occurrenceDate})` : policyError });
+    }
 
-  if (hasOverlap) {
-    return res.status(400).json({ error: 'Selected room is already booked during that time.' });
+    const existingBookings = await query(
+      `SELECT startTime, durationHours FROM bookings WHERE roomId = ? AND date = ? AND status IN ('active', 'pending')`,
+      [roomId, occurrenceDate]
+    );
+    const hasOverlap = existingBookings.some((booking) => {
+      const existingStart = timeToMinutes(booking.startTime);
+      const existingEnd = existingStart + (Number(booking.durationHours) || 0) * 60;
+      return requestedStart < existingEnd && existingStart < requestedEnd;
+    });
+    if (hasOverlap) {
+      return res.status(400).json({
+        error: isRecurring
+          ? `Selected room is already booked during that time (on ${occurrenceDate}).`
+          : 'Selected room is already booked during that time.'
+      });
+    }
   }
 
   const status = room.requiresApproval ? 'pending' : 'active';
-  const result = await run(
-    'INSERT INTO bookings (userId, roomId, date, startTime, durationHours, status) VALUES (?, ?, ?, ?, ?, ?)',
-    [req.session.userId, roomId, date, startTime, duration, status]
-  );
+  let seriesId = null;
+  const createdIds = [];
 
-  const description = status === 'pending'
-    ? `Requested ${room.name} on ${date} at ${startTime} for ${duration} hours (pending admin approval)`
-    : `Booked ${room.name} on ${date} at ${startTime} for ${duration} hours`;
-  await logActivity(req.session.userId, status === 'pending' ? 'booking_requested' : 'booking_created', 'booking', result.lastID, description);
+  for (const occurrenceDate of occurrenceDates) {
+    const result = await run(
+      'INSERT INTO bookings (userId, roomId, date, startTime, durationHours, status, seriesId) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [req.session.userId, roomId, occurrenceDate, startTime, duration, status, seriesId]
+    );
+    createdIds.push(result.lastID);
+    if (isRecurring && seriesId === null) {
+      // The first occurrence's own id becomes the series identifier for the rest.
+      seriesId = result.lastID;
+      await run('UPDATE bookings SET seriesId = ? WHERE id = ?', [seriesId, result.lastID]);
+    }
+  }
+
+  const description = isRecurring
+    ? `${status === 'pending' ? 'Requested' : 'Booked'} ${room.name} weekly (${occurrenceDates.length} occurrences starting ${date}) at ${startTime} for ${duration} hours${status === 'pending' ? ' (pending admin approval)' : ''}`
+    : (status === 'pending'
+      ? `Requested ${room.name} on ${date} at ${startTime} for ${duration} hours (pending admin approval)`
+      : `Booked ${room.name} on ${date} at ${startTime} for ${duration} hours`);
+  await logActivity(req.session.userId, status === 'pending' ? 'booking_requested' : 'booking_created', 'booking', createdIds[0], description);
 
   res.json({
     message: status === 'pending'
-      ? 'Booking request submitted and is awaiting admin approval.'
-      : 'Room booked successfully.',
-    status
+      ? (isRecurring
+        ? `Booking requests submitted for ${occurrenceDates.length} occurrences and are awaiting admin approval.`
+        : 'Booking request submitted and is awaiting admin approval.')
+      : (isRecurring
+        ? `Room booked successfully for ${occurrenceDates.length} occurrences.`
+        : 'Room booked successfully.'),
+    status,
+    occurrences: occurrenceDates.length
   });
+});
+
+// Cancel every remaining active/pending occurrence in a recurring booking series
+// owned by the current user, so users don't have to cancel each week individually.
+app.post('/api/cancel-booking-series', requireLogin, async (req, res) => {
+  const seriesId = Number(req.body.seriesId);
+  if (!Number.isFinite(seriesId) || seriesId <= 0) {
+    return res.status(400).json({ error: 'Series ID is required.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const occurrences = await query(
+    `SELECT id FROM bookings
+     WHERE seriesId = ? AND userId = ? AND status IN ('active', 'pending') AND date >= ?`,
+    [seriesId, req.session.userId, today]
+  );
+
+  if (occurrences.length === 0) {
+    return res.status(404).json({ error: 'No upcoming bookings found for this series.' });
+  }
+
+  const ids = occurrences.map((row) => row.id);
+  await run(`UPDATE bookings SET status = 'cancelled' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  const description = `Cancelled ${ids.length} upcoming occurrence(s) of recurring booking series #${seriesId}`;
+  await logActivity(req.session.userId, 'booking_series_cancelled', 'booking', seriesId, description);
+
+  res.json({ message: `Cancelled ${ids.length} upcoming booking(s) in the series.` });
 });
 
 // Submit an equipment loan request and enforce quantity availability.
@@ -1600,7 +1681,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
   if (statusFilter === 'all') {
     bookings = await query(
       `SELECT b.id, b.userId, u.email AS userEmail, r.name AS roomName, r.location,
-              b.date, b.startTime, b.durationHours, b.status, b.createdAt
+              b.date, b.startTime, b.durationHours, b.status, b.createdAt, b.seriesId
        FROM bookings b
        JOIN users u ON u.id = b.userId
        JOIN rooms r ON r.id = b.roomId
@@ -1612,7 +1693,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     const nowTime = new Date().toTimeString().slice(0, 5);
     bookings = await query(
       `SELECT b.id, b.userId, u.email AS userEmail, r.name AS roomName, r.location,
-              b.date, b.startTime, b.durationHours, b.status, b.createdAt
+              b.date, b.startTime, b.durationHours, b.status, b.createdAt, b.seriesId
        FROM bookings b
        JOIN users u ON u.id = b.userId
        JOIN rooms r ON r.id = b.roomId
