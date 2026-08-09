@@ -86,6 +86,8 @@ const bookingDateInput = document.getElementById('booking-date');
 const bookingStartTimeInput = document.getElementById('booking-start-time');
 const bookingDurationInput = document.getElementById('booking-duration');
 const bookingRecurringInput = document.getElementById('booking-recurring');
+const bookingRecurrenceFrequencyLabel = document.getElementById('booking-recurrence-frequency-label');
+const bookingRecurrenceFrequencyInput = document.getElementById('booking-recurrence-frequency');
 const bookingRecurrenceCountLabel = document.getElementById('booking-recurrence-count-label');
 const bookingRecurrenceCountInput = document.getElementById('booking-recurrence-count');
 const bookingError = document.getElementById('booking-error');
@@ -414,6 +416,8 @@ const roomsPage = createRoomsPage({
   bookingStartTimeInput,
   bookingDurationInput,
   bookingRecurringInput,
+  bookingRecurrenceFrequencyLabel,
+  bookingRecurrenceFrequencyInput,
   bookingRecurrenceCountLabel,
   bookingRecurrenceCountInput,
   bookingError,

@@ -524,6 +524,24 @@ function addDaysToDateString(dateStr, days) {
 }
 
 /**
+ * Add a number of months to a YYYY-MM-DD date string, clamping the day to the
+ * last valid day of the target month (e.g. 31 Jan + 1 month -> 28/29 Feb,
+ * never rolling over into March).
+ * @param {string} dateStr Date in YYYY-MM-DD.
+ * @param {number} months Signed month offset.
+ * @returns {string} Shifted date in YYYY-MM-DD.
+ */
+function addMonthsToDateString(dateStr, months) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const totalMonths = (month - 1) + months;
+  const targetYear = year + Math.floor(totalMonths / 12);
+  const targetMonthIndex = ((totalMonths % 12) + 12) % 12;
+  const lastDayOfTargetMonth = new Date(targetYear, targetMonthIndex + 1, 0).getDate();
+  const clampedDay = Math.min(day, lastDayOfTargetMonth);
+  return `${targetYear}-${String(targetMonthIndex + 1).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+}
+
+/**
  * Parse an optional positive integer from request input.
  * @param {*} value
  * @returns {number|null} Parsed integer, null if the value was empty/absent, or NaN if invalid.
@@ -544,9 +562,12 @@ function parseOptionalPositiveInt(value) {
  * @param {number} durationHours
  * @param {number} userId
  * @param {number|null} [excludeBookingId] Booking ID to exclude from frequency counts (when editing).
+ * @param {string[]} [additionalSeriesDates] Other occurrence dates from the same not-yet-created
+ *   recurring request, counted alongside committed bookings so a multi-occurrence-per-week
+ *   frequency (e.g. daily) can't slip past the weekly cap before any occurrence is inserted.
  * @returns {Promise<string|null>} Error message, or null if the booking satisfies policy.
  */
-async function checkRoomBookingPolicy(room, date, startTime, durationHours, userId, excludeBookingId = null) {
+async function checkRoomBookingPolicy(room, date, startTime, durationHours, userId, excludeBookingId = null, additionalSeriesDates = []) {
   const durationMinutes = Math.round(durationHours * 60);
 
   if (room.minDurationMinutes != null && durationMinutes < room.minDurationMinutes) {
@@ -581,7 +602,10 @@ async function checkRoomBookingPolicy(room, date, startTime, durationHours, user
          AND id != ?`,
       [room.id, userId, weekStart, weekEnd, excludeBookingId || 0]
     );
-    if (weekBookings.length >= room.maxBookingsPerUserPerWeek) {
+    const otherSeriesOccurrencesInWeek = additionalSeriesDates.filter(
+      (seriesDate) => seriesDate !== date && seriesDate >= weekStart && seriesDate <= weekEnd
+    ).length;
+    if (weekBookings.length + otherSeriesOccurrencesInWeek >= room.maxBookingsPerUserPerWeek) {
       return `You have reached the maximum of ${room.maxBookingsPerUserPerWeek} booking(s) per week for this room.`;
     }
   }
@@ -1410,20 +1434,20 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
     return res.status(400).json({ error: 'Booking must be in the future.' });
   }
 
-  // A recurring request expands into one date per occurrence, repeating weekly.
-  // Only 'weekly' is supported for now, which keeps every occurrence in a distinct
-  // calendar week so the per-user weekly frequency policy can't be gamed by the
-  // other occurrences in the same request.
+  // A recurring request expands into one date per occurrence.
+  const RECURRENCE_STEP_DAYS = { daily: 1, weekly: 7 };
   let occurrenceDates = [date];
   if (recurrence != null) {
-    if (typeof recurrence !== 'object' || recurrence.frequency !== 'weekly') {
-      return res.status(400).json({ error: "Recurrence frequency must be 'weekly'." });
+    if (typeof recurrence !== 'object' || !['daily', 'weekly', 'monthly'].includes(recurrence.frequency)) {
+      return res.status(400).json({ error: "Recurrence frequency must be 'daily', 'weekly', or 'monthly'." });
     }
     const occurrences = Number(recurrence.occurrences);
     if (!Number.isInteger(occurrences) || occurrences < 2 || occurrences > 52) {
       return res.status(400).json({ error: 'A recurring booking must repeat between 2 and 52 times.' });
     }
-    occurrenceDates = Array.from({ length: occurrences }, (_, i) => addDaysToDateString(date, i * 7));
+    occurrenceDates = recurrence.frequency === 'monthly'
+      ? Array.from({ length: occurrences }, (_, i) => addMonthsToDateString(date, i))
+      : Array.from({ length: occurrences }, (_, i) => addDaysToDateString(date, i * RECURRENCE_STEP_DAYS[recurrence.frequency]));
   }
 
   const roomRows = await query('SELECT * FROM rooms WHERE id = ?', [roomId]);
@@ -1439,7 +1463,7 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
   // Validate every occurrence before creating any of them, so a recurring booking
   // either fully succeeds or fails outright rather than leaving a partial series.
   for (const occurrenceDate of occurrenceDates) {
-    const policyError = await checkRoomBookingPolicy(room, occurrenceDate, startTime, duration, req.session.userId);
+    const policyError = await checkRoomBookingPolicy(room, occurrenceDate, startTime, duration, req.session.userId, null, occurrenceDates);
     if (policyError) {
       return res.status(400).json({ error: isRecurring ? `${policyError} (on ${occurrenceDate})` : policyError });
     }
@@ -1480,7 +1504,7 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
   }
 
   const description = isRecurring
-    ? `${status === 'pending' ? 'Requested' : 'Booked'} ${room.name} weekly (${occurrenceDates.length} occurrences starting ${date}) at ${startTime} for ${duration} hours${status === 'pending' ? ' (pending admin approval)' : ''}`
+    ? `${status === 'pending' ? 'Requested' : 'Booked'} ${room.name} ${recurrence.frequency} (${occurrenceDates.length} occurrences starting ${date}) at ${startTime} for ${duration} hours${status === 'pending' ? ' (pending admin approval)' : ''}`
     : (status === 'pending'
       ? `Requested ${room.name} on ${date} at ${startTime} for ${duration} hours (pending admin approval)`
       : `Booked ${room.name} on ${date} at ${startTime} for ${duration} hours`);

@@ -36,6 +36,8 @@ import { renderListState } from './utils.js';
  *   bookingStartTimeInput: HTMLInputElement,
  *   bookingDurationInput: HTMLInputElement,
  *   bookingRecurringInput: HTMLInputElement,
+ *   bookingRecurrenceFrequencyLabel: HTMLElement,
+ *   bookingRecurrenceFrequencyInput: HTMLSelectElement,
  *   bookingRecurrenceCountLabel: HTMLElement,
  *   bookingRecurrenceCountInput: HTMLInputElement,
  *   bookingError: HTMLElement,
@@ -70,6 +72,8 @@ export function createRoomsPage({
   bookingStartTimeInput,
   bookingDurationInput,
   bookingRecurringInput,
+  bookingRecurrenceFrequencyLabel,
+  bookingRecurrenceFrequencyInput,
   bookingRecurrenceCountLabel,
   bookingRecurrenceCountInput,
   bookingError,
@@ -351,7 +355,9 @@ export function createRoomsPage({
     bookingRoomName.textContent = roomName;
     bookingDurationInput.value = '0.5';
     bookingRecurringInput.checked = false;
+    bookingRecurrenceFrequencyInput.value = 'weekly';
     bookingRecurrenceCountInput.value = '4';
+    bookingRecurrenceFrequencyLabel.classList.add('hidden');
     bookingRecurrenceCountLabel.classList.add('hidden');
     bookingError.textContent = '';
     setBookingConstraints();
@@ -377,6 +383,7 @@ export function createRoomsPage({
   }
 
   bookingRecurringInput.addEventListener('change', () => {
+    bookingRecurrenceFrequencyLabel.classList.toggle('hidden', !bookingRecurringInput.checked);
     bookingRecurrenceCountLabel.classList.toggle('hidden', !bookingRecurringInput.checked);
   });
 
@@ -432,7 +439,7 @@ export function createRoomsPage({
         bookingError.textContent = 'Number of occurrences must be a whole number between 2 and 52.';
         return;
       }
-      recurrence = { frequency: 'weekly', occurrences };
+      recurrence = { frequency: bookingRecurrenceFrequencyInput.value, occurrences };
     }
 
     const result = await requestJson('/api/book-room', {

@@ -104,7 +104,14 @@
               </label>
               <label class="checkbox-label">
                 <input type="checkbox" id="booking-recurring" />
-                Repeat weekly
+                Repeat this booking
+              </label>
+              <label id="booking-recurrence-frequency-label" class="hidden">Repeat frequency
+                <select id="booking-recurrence-frequency">
+                  <option value="daily">Daily</option>
+                  <option value="weekly" selected>Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
               </label>
               <label id="booking-recurrence-count-label" class="hidden">Number of occurrences
                 <input id="booking-recurrence-count" type="number" min="2" max="52" step="1" value="4" />

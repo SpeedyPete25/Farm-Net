@@ -97,6 +97,14 @@ function uniqueEmail(label) {
   return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 }
 
+function getMondayOf(dateStr) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const monday = new Date(year, month - 1, day);
+  const dayOfWeek = monday.getDay();
+  monday.setDate(monday.getDate() + (dayOfWeek === 0 ? -6 : 1 - dayOfWeek));
+  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+}
+
 class TestClient {
   constructor(url) {
     this.url = url;
@@ -430,7 +438,7 @@ test('automated integration coverage for critical flows', async (t) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         roomId, date: startDate, startTime: '09:00', durationHours: 1,
-        recurrence: { frequency: 'daily', occurrences: 3 }
+        recurrence: { frequency: 'fortnightly', occurrences: 3 }
       })
     });
     assert.equal(invalidFrequency.status, 400);
@@ -500,6 +508,106 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const afterCancel = await client.request('/api/my-requests?status=all');
     assert.ok(afterCancel.body.bookings.every((booking) => booking.status === 'cancelled'));
+  });
+
+  await t.test('supports daily and monthly recurrence, and enforces the weekly cap across occurrences', async () => {
+    const client = new TestClient(baseUrl);
+    const email = uniqueEmail('recurring-freq');
+    const password = 'Password123';
+    await registerUser(client, email, password);
+    await loginUser(client, email, password);
+
+    const resources = await getResources(client);
+    const roomId = resources.rooms[2].id;
+
+    // Daily recurrence produces consecutive-day occurrences.
+    const dailyStart = formatDateFromToday(60);
+    const dailyCreated = await client.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: dailyStart, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'daily', occurrences: 3 }
+      })
+    });
+    assert.equal(dailyCreated.status, 200);
+
+    const afterDaily = await client.request('/api/my-requests?status=all');
+    const dailyDates = afterDaily.body.bookings.map((booking) => booking.date).sort();
+    assert.deepEqual(dailyDates, [dailyStart, formatDateFromToday(61), formatDateFromToday(62)].sort());
+
+    // Monthly recurrence keeps the same day of month across occurrences.
+    const monthlyClient = new TestClient(baseUrl);
+    const monthlyEmail = uniqueEmail('recurring-monthly');
+    await registerUser(monthlyClient, monthlyEmail, password);
+    await loginUser(monthlyClient, monthlyEmail, password);
+
+    const monthlyStart = formatDateFromToday(90);
+    const monthlyCreated = await monthlyClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: monthlyStart, startTime: '14:00', durationHours: 1,
+        recurrence: { frequency: 'monthly', occurrences: 3 }
+      })
+    });
+    assert.equal(monthlyCreated.status, 200);
+
+    const afterMonthly = await monthlyClient.request('/api/my-requests?status=all');
+    const monthlyDayOfMonth = Number(monthlyStart.slice(8, 10));
+    assert.ok(afterMonthly.body.bookings.every((booking) => Number(booking.date.slice(8, 10)) === monthlyDayOfMonth));
+    const monthlyMonths = afterMonthly.body.bookings.map((booking) => booking.date.slice(0, 7)).sort();
+    assert.equal(new Set(monthlyMonths).size, 3);
+
+    // A daily series that would put more than one occurrence in the same calendar
+    // week must be rejected under a weekly cap, with no partial series created —
+    // this is the gap that only showed up once a non-weekly frequency was allowed.
+    const cappedRoomSuffix = Date.now();
+    const cappedAdmin = new TestClient(baseUrl);
+    const cappedAdminEmail = uniqueEmail('recurring-cap-admin');
+    await registerUser(cappedAdmin, cappedAdminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', cappedAdminEmail]);
+    await loginUser(cappedAdmin, cappedAdminEmail, password);
+
+    const addCappedRoom = await cappedAdmin.request('/api/admin/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `Capped Room ${cappedRoomSuffix}`, location: `Capped Wing ${cappedRoomSuffix}` })
+    });
+    assert.equal(addCappedRoom.status, 200);
+
+    const cappedRooms = await cappedAdmin.request('/api/admin/rooms');
+    const cappedRoom = cappedRooms.body.rooms.find((room) => room.location === `Capped Wing ${cappedRoomSuffix}`);
+    assert.ok(cappedRoom);
+
+    const setCap = await cappedAdmin.request(`/api/admin/rooms/${cappedRoom.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxBookingsPerUserPerWeek: 1 })
+    });
+    assert.equal(setCap.status, 200);
+
+    const cappedMemberClient = new TestClient(baseUrl);
+    const cappedMemberEmail = uniqueEmail('recurring-cap-member');
+    await registerUser(cappedMemberClient, cappedMemberEmail, password);
+    await loginUser(cappedMemberClient, cappedMemberEmail, password);
+
+    // Start on a Monday-safe offset and request 2 consecutive days, guaranteeing both
+    // occurrences fall in the same Mon-Sun week regardless of today's day of week.
+    const capWeekStart = getMondayOf(formatDateFromToday(120));
+    const overCapAttempt = await cappedMemberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: cappedRoom.id, date: capWeekStart, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'daily', occurrences: 2 }
+      })
+    });
+    assert.equal(overCapAttempt.status, 400);
+    assert.match(overCapAttempt.body.error, /maximum of 1 booking/);
+
+    const cappedMemberRequests = await cappedMemberClient.request('/api/my-requests?status=all');
+    assert.equal(cappedMemberRequests.body.bookings.length, 0);
   });
 
   await t.test('supports loan borrow, edit, and return flow', async () => {
