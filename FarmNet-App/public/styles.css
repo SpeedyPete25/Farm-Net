@@ -189,6 +189,19 @@ button.danger {
   margin: 0;
 }
 
+.item-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 480px) {
+  .item-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 .form-error {
   margin-top: 12px;
   color: var(--danger);

@@ -448,6 +448,31 @@ async function getEquipmentUnitStatuses(equipmentId = null) {
 }
 
 /**
+ * Return equipment units that are free (not damaged and not occupied) for the
+ * requested date range (inclusive).
+ * @param {number} equipmentId
+ * @param {string} startDate YYYY-MM-DD
+ * @param {string} endDate YYYY-MM-DD
+ * @returns {Promise<Array<{ id: number, equipmentId: number, code: string, condition: string }>>}
+ */
+async function getAvailableUnitsForPeriod(equipmentId, startDate, endDate) {
+  const units = await query('SELECT id, equipmentId, code, condition FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
+
+  // Find active loans that overlap the requested period
+  const occupiedRows = await query(
+    `SELECT equipmentUnitId FROM loans
+     WHERE status = 'active' AND equipmentUnitId IS NOT NULL
+       AND equipmentId = ?
+       AND NOT (returnDate < ? OR borrowDate > ?)`,
+    [equipmentId, startDate, endDate]
+  );
+
+  const occupiedSet = new Set(occupiedRows.map((r) => Number(r.equipmentUnitId)));
+
+  return units.filter((u) => u.condition !== 'damaged' && !occupiedSet.has(Number(u.id)));
+}
+
+/**
  * Remove unassigned equipment units from a category.
  * @param {number} equipmentId
  * @param {number} count
@@ -1739,6 +1764,81 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   }
 
   res.json({ message: `Equipment borrowed successfully. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
+});
+
+// Reserve equipment for a future date range. Similar to borrowing but with a
+// specified start date in the future so units become `reserved` until picked up.
+app.post('/api/reserve-equipment', requireLogin, async (req, res) => {
+  const { equipmentId, startDate, days, borrowerEmail } = req.body;
+  if (!equipmentId || !startDate || !days) {
+    return res.status(400).json({ error: 'Equipment, start date and duration are required.' });
+  }
+
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(startDate)) {
+    return res.status(400).json({ error: 'Start date must be in YYYY-MM-DD format.' });
+  }
+
+  const parsedDays = Number(days);
+  if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
+    return res.status(400).json({ error: 'Reservation duration must be a whole number of days.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (startDate <= today) {
+    return res.status(400).json({ error: 'Start date must be in the future for reservations.' });
+  }
+
+  // Admins may reserve on behalf of another user by email; everyone else reserves for themselves.
+  let targetUserId = req.session.userId;
+  let targetEmail = req.session.email;
+  const requestedEmail = typeof borrowerEmail === 'string' ? borrowerEmail.trim() : '';
+  if (requestedEmail) {
+    if (req.session.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can reserve equipment on behalf of another user.' });
+    }
+    const targetUsers = await query('SELECT id, email FROM users WHERE email = ?', [requestedEmail]);
+    if (targetUsers.length === 0) {
+      return res.status(404).json({ error: 'No user found with that email.' });
+    }
+    targetUserId = targetUsers[0].id;
+    targetEmail = targetUsers[0].email;
+  }
+
+  const equip = await query('SELECT * FROM equipment WHERE id = ?', [equipmentId]);
+  if (equip.length === 0) {
+    return res.status(404).json({ error: 'Equipment not found.' });
+  }
+
+  const equipmentRow = equip[0];
+  const unitCountRows = await query('SELECT COUNT(*) AS count FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
+  const unitCount = Number(unitCountRows[0]?.count || 0);
+  const requiredUnits = Number(equipmentRow.quantity || 0);
+
+  if (unitCount < requiredUnits) {
+    await addEquipmentUnits(equipmentId, equipmentRow.name, requiredUnits - unitCount);
+  }
+
+  const returnDate = new Date(Date.parse(`${startDate}T00:00:00`) + parsedDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const availableUnits = await getAvailableUnitsForPeriod(equipmentId, startDate, returnDate);
+  if (!availableUnits || availableUnits.length === 0) {
+    return res.status(400).json({ error: 'No equipment available for the requested period.' });
+  }
+
+  const assignedUnit = availableUnits[0];
+
+  const result = await run(
+    'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate) VALUES (?, ?, ?, ?, ?)',
+    [targetUserId, equipmentId, assignedUnit.id, startDate, returnDate]
+  );
+
+  if (targetUserId !== req.session.userId) {
+    const description = `${req.session.email} reserved ${equipmentRow.name} (${assignedUnit.code}) on behalf of ${targetEmail}, starting ${startDate}`;
+    await logActivity(req.session.userId, 'admin_equipment_reserved', 'loan', result.lastID, description);
+    return res.json({ message: `Equipment reserved successfully on behalf of ${targetEmail}. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
+  }
+
+  res.json({ message: `Equipment reserved successfully. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
 });
 
 // Return bookings for a single room across a 7-day week for the timetable view.

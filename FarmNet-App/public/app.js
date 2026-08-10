@@ -436,6 +436,46 @@ async function borrowEquipment(equipmentId, equipmentName) {
   }
 }
 
+/**
+ * Reserve equipment for a future start date.
+ * @param {number} equipmentId
+ * @param {string} equipmentName
+ */
+async function reserveEquipment(equipmentId, equipmentName) {
+  const startDate = prompt(`Enter start date for reservation (YYYY-MM-DD) for ${equipmentName}:`);
+  if (!startDate) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+    alert('Start date must be in YYYY-MM-DD format.');
+    return;
+  }
+
+  const days = prompt(`How many days will you reserve ${equipmentName} for?`);
+  if (!days) return;
+
+  let borrowerEmail = '';
+  if (isAdminUser) {
+    const input = prompt('Reserve on behalf of (email), or leave blank to reserve for yourself:', '');
+    if (input === null) return;
+    borrowerEmail = input.trim();
+  }
+
+  const result = await requestJson('/api/reserve-equipment', {
+    method: 'POST',
+    body: JSON.stringify({ equipmentId, startDate, days: Number(days), borrowerEmail })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+  if (activePage === 'admin') {
+    await adminPage.load();
+  }
+}
+
 const dashboardPage = createDashboardPage({
   requestsList,
   formatDuration,
@@ -480,7 +520,8 @@ const roomsPage = createRoomsPage({
 
 const equipmentPage = createEquipmentPage({
   equipmentList,
-  onBorrow: borrowEquipment
+  onBorrow: borrowEquipment,
+  onReserve: reserveEquipment
 });
 
 const adminPage = createAdminPage({
