@@ -46,6 +46,7 @@
  *   onCancelLoan: (loanId: number) => Promise<void>,
  *   onReturnLoan: (loanId: number) => Promise<void>,
  *   onEditBooking: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
+ *   onEditBookingSeries: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
  *   onEditLoan: (loan: { id: number, borrowDate: string, returnDate: string }) => Promise<void>
  * }} DashboardPageDeps
  */
@@ -61,7 +62,7 @@
  * @param {DashboardPageDeps} deps Dependency bag.
  * @returns {DashboardPageApi} Dashboard page API.
  */
-export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelBookingSeries, onCancelLoan, onReturnLoan, onEditBooking, onEditLoan }) {
+export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelBookingSeries, onCancelLoan, onReturnLoan, onEditBooking, onEditBookingSeries, onEditLoan }) {
   requestsList.addEventListener('click', async (event) => {
     const editBookingBtn = event.target.closest('[data-action="edit-booking"]');
     if (editBookingBtn) {
@@ -72,6 +73,24 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
 
       if (Number.isFinite(bookingId)) {
         await onEditBooking({
+          id: bookingId,
+          date,
+          startTime,
+          durationHours
+        });
+      }
+      return;
+    }
+
+    const editSeriesBtn = event.target.closest('[data-action="edit-booking-series"]');
+    if (editSeriesBtn) {
+      const bookingId = Number(editSeriesBtn.dataset.bookingId);
+      const date = editSeriesBtn.dataset.bookingDate || '';
+      const startTime = editSeriesBtn.dataset.bookingStartTime || '';
+      const durationHours = Number(editSeriesBtn.dataset.bookingDurationHours);
+
+      if (Number.isFinite(bookingId)) {
+        await onEditBookingSeries({
           id: bookingId,
           date,
           startTime,
@@ -175,6 +194,7 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
                 <div class="request-actions">
                   <button class="secondary action-button" data-action="edit-booking" data-booking-id="${booking.id}" data-booking-date="${booking.date}" data-booking-start-time="${booking.startTime}" data-booking-duration-hours="${booking.durationHours}">Edit</button>
                   <button class="cancel-button" data-action="cancel-booking" data-booking-id="${booking.id}">Cancel</button>
+                  ${isRecurring ? `<button class="secondary action-button" data-action="edit-booking-series" data-booking-id="${booking.id}" data-booking-date="${booking.date}" data-booking-start-time="${booking.startTime}" data-booking-duration-hours="${booking.durationHours}">Edit series</button>` : ''}
                   ${isRecurring ? `<button class="cancel-button" data-action="cancel-booking-series" data-series-id="${booking.seriesId}">Cancel series</button>` : ''}
                 </div>
               ` : ''}

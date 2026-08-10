@@ -338,6 +338,47 @@ async function editBooking(booking) {
 }
 
 /**
+ * Reschedule an entire recurring booking series for the current user, anchored on
+ * one occurrence. Every other upcoming occurrence shifts by the same number of
+ * days and adopts the same new start time and duration.
+ * @param {{ id: number, date: string, startTime: string, durationHours: number|string }} booking Occurrence to anchor the reschedule on.
+ */
+async function editBookingSeries(booking) {
+  const date = prompt('Enter the new date for this occurrence (YYYY-MM-DD):\n\nEvery other upcoming occurrence in the series will shift by the same number of days.', booking.date);
+  if (date === null) return;
+
+  const startTime = prompt('Enter a new start time for the whole series (HH:MM):', booking.startTime);
+  if (startTime === null) return;
+
+  const durationInput = prompt('Enter duration in hours for the whole series (e.g. 0.5, 1, 1.5):', String(booking.durationHours));
+  if (durationInput === null) return;
+
+  const durationHours = Number(durationInput);
+  if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours % 0.5 !== 0) {
+    alert('Duration must be a positive number in 30-minute increments.');
+    return;
+  }
+
+  const result = await requestJson('/api/edit-booking-series', {
+    method: 'POST',
+    body: JSON.stringify({
+      bookingId: booking.id,
+      date: date.trim(),
+      startTime: startTime.trim(),
+      durationHours
+    })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+}
+
+/**
  * Edit an existing equipment loan return date for the current user.
  * @param {{ id: number, borrowDate: string, returnDate: string }} loan Loan details.
  */
@@ -403,6 +444,7 @@ const dashboardPage = createDashboardPage({
   onCancelLoan: cancelLoan,
   onReturnLoan: returnLoan,
   onEditBooking: editBooking,
+  onEditBookingSeries: editBookingSeries,
   onEditLoan: editLoan
 });
 

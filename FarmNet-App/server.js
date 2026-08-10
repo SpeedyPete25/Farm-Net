@@ -561,13 +561,14 @@ function parseOptionalPositiveInt(value) {
  * @param {string} startTime HH:MM
  * @param {number} durationHours
  * @param {number} userId
- * @param {number|null} [excludeBookingId] Booking ID to exclude from frequency counts (when editing).
+ * @param {number[]} [excludeBookingIds] Booking IDs to exclude from frequency counts (when editing
+ *   one booking, or every occurrence of a series being rescheduled together).
  * @param {string[]} [additionalSeriesDates] Other occurrence dates from the same not-yet-created
  *   recurring request, counted alongside committed bookings so a multi-occurrence-per-week
  *   frequency (e.g. daily) can't slip past the weekly cap before any occurrence is inserted.
  * @returns {Promise<string|null>} Error message, or null if the booking satisfies policy.
  */
-async function checkRoomBookingPolicy(room, date, startTime, durationHours, userId, excludeBookingId = null, additionalSeriesDates = []) {
+async function checkRoomBookingPolicy(room, date, startTime, durationHours, userId, excludeBookingIds = [], additionalSeriesDates = []) {
   const durationMinutes = Math.round(durationHours * 60);
 
   if (room.minDurationMinutes != null && durationMinutes < room.minDurationMinutes) {
@@ -595,12 +596,13 @@ async function checkRoomBookingPolicy(room, date, startTime, durationHours, user
 
   if (room.maxBookingsPerUserPerWeek != null) {
     const { weekStart, weekEnd } = getWeekRange(date);
+    const excludeIds = excludeBookingIds.length > 0 ? excludeBookingIds : [0];
     const weekBookings = await query(
       `SELECT id FROM bookings
        WHERE roomId = ? AND userId = ? AND date >= ? AND date <= ?
          AND status IN ('active', 'pending')
-         AND id != ?`,
-      [room.id, userId, weekStart, weekEnd, excludeBookingId || 0]
+         AND id NOT IN (${excludeIds.map(() => '?').join(',')})`,
+      [room.id, userId, weekStart, weekEnd, ...excludeIds]
     );
     const otherSeriesOccurrencesInWeek = additionalSeriesDates.filter(
       (seriesDate) => seriesDate !== date && seriesDate >= weekStart && seriesDate <= weekEnd
@@ -1328,7 +1330,7 @@ app.post('/api/edit-booking', requireLogin, async (req, res) => {
 
   const roomRows = await query('SELECT * FROM rooms WHERE id = ?', [booking.roomId]);
   if (roomRows.length > 0) {
-    const policyError = await checkRoomBookingPolicy(roomRows[0], date, startTime, duration, req.session.userId, bookingId);
+    const policyError = await checkRoomBookingPolicy(roomRows[0], date, startTime, duration, req.session.userId, [bookingId]);
     if (policyError) {
       return res.status(400).json({ error: policyError });
     }
@@ -1463,7 +1465,7 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
   // Validate every occurrence before creating any of them, so a recurring booking
   // either fully succeeds or fails outright rather than leaving a partial series.
   for (const occurrenceDate of occurrenceDates) {
-    const policyError = await checkRoomBookingPolicy(room, occurrenceDate, startTime, duration, req.session.userId, null, occurrenceDates);
+    const policyError = await checkRoomBookingPolicy(room, occurrenceDate, startTime, duration, req.session.userId, [], occurrenceDates);
     if (policyError) {
       return res.status(400).json({ error: isRecurring ? `${policyError} (on ${occurrenceDate})` : policyError });
     }
@@ -1549,6 +1551,107 @@ app.post('/api/cancel-booking-series', requireLogin, async (req, res) => {
   await logActivity(req.session.userId, 'booking_series_cancelled', 'booking', seriesId, description);
 
   res.json({ message: `Cancelled ${ids.length} upcoming booking(s) in the series.` });
+});
+
+// Reschedule every remaining occurrence in a recurring booking series owned by the
+// current user. `bookingId` identifies the specific occurrence being edited; its new
+// date becomes the anchor, and every other still-upcoming occurrence in the series
+// shifts by the same number of days (preserving the series' relative spacing) and
+// adopts the same start time and duration.
+app.post('/api/edit-booking-series', requireLogin, async (req, res) => {
+  const { bookingId, date, startTime, durationHours } = req.body;
+  if (!bookingId || !date || !startTime || durationHours == null) {
+    return res.status(400).json({ error: 'Booking ID, date, start time and duration are required.' });
+  }
+
+  const duration = Number(durationHours);
+  const timeMatch = /^[0-9]{2}:[0-9]{2}$/.test(startTime);
+  const minute = timeMatch ? Number(startTime.split(':')[1]) : null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'Date must be in YYYY-MM-DD format.' });
+  }
+  if (!timeMatch || minute % 15 !== 0) {
+    return res.status(400).json({ error: 'Start time must be in 15-minute increments.' });
+  }
+  if (!Number.isFinite(duration) || duration <= 0 || duration % 0.25 !== 0) {
+    return res.status(400).json({ error: 'Duration must be in 15-minute increments.' });
+  }
+
+  const anchorRows = await query('SELECT * FROM bookings WHERE id = ? AND userId = ?', [bookingId, req.session.userId]);
+  if (anchorRows.length === 0) {
+    return res.status(404).json({ error: 'Booking not found or not owned by user.' });
+  }
+  const anchor = anchorRows[0];
+  if (!anchor.seriesId) {
+    return res.status(400).json({ error: 'This booking is not part of a recurring series.' });
+  }
+  if (!['active', 'pending'].includes(anchor.status)) {
+    return res.status(400).json({ error: 'Only active bookings can be edited.' });
+  }
+
+  const requestedDateTime = new Date(`${date}T${startTime}:00`);
+  if (Number.isNaN(requestedDateTime.getTime()) || requestedDateTime <= new Date()) {
+    return res.status(400).json({ error: 'Booking must be in the future.' });
+  }
+
+  const dayDelta = Math.round(
+    (new Date(`${date}T00:00:00`) - new Date(`${anchor.date}T00:00:00`)) / (24 * 60 * 60 * 1000)
+  );
+
+  const today = new Date().toISOString().slice(0, 10);
+  const seriesOccurrences = await query(
+    `SELECT id, date FROM bookings
+     WHERE seriesId = ? AND userId = ? AND status IN ('active', 'pending') AND (date >= ? OR id = ?)`,
+    [anchor.seriesId, req.session.userId, today, anchor.id]
+  );
+
+  const roomRows = await query('SELECT * FROM rooms WHERE id = ?', [anchor.roomId]);
+  const room = roomRows[0];
+  const seriesBookingIds = seriesOccurrences.map((row) => row.id);
+  const updates = seriesOccurrences.map((occurrence) => ({
+    id: occurrence.id,
+    newDate: dayDelta === 0 ? occurrence.date : addDaysToDateString(occurrence.date, dayDelta)
+  }));
+
+  const requestedStart = timeToMinutes(startTime);
+  const requestedEnd = requestedStart + duration * 60;
+
+  // Validate every shifted occurrence before changing any of them.
+  for (const update of updates) {
+    if (room) {
+      const policyError = await checkRoomBookingPolicy(room, update.newDate, startTime, duration, req.session.userId, seriesBookingIds);
+      if (policyError) {
+        return res.status(400).json({ error: `${policyError} (on ${update.newDate})` });
+      }
+    }
+
+    const existingBookings = await query(
+      `SELECT startTime, durationHours FROM bookings
+       WHERE roomId = ? AND date = ? AND status IN ('active', 'pending') AND id NOT IN (${seriesBookingIds.map(() => '?').join(',')})`,
+      [anchor.roomId, update.newDate, ...seriesBookingIds]
+    );
+    const hasOverlap = existingBookings.some((item) => {
+      const existingStart = timeToMinutes(item.startTime);
+      const existingEnd = existingStart + (Number(item.durationHours) || 0) * 60;
+      return requestedStart < existingEnd && existingStart < requestedEnd;
+    });
+    if (hasOverlap) {
+      return res.status(400).json({ error: `Selected room is already booked during that time (on ${update.newDate}).` });
+    }
+  }
+
+  for (const update of updates) {
+    await run(
+      'UPDATE bookings SET date = ?, startTime = ?, durationHours = ? WHERE id = ?',
+      [update.newDate, startTime, duration, update.id]
+    );
+  }
+
+  const description = `Rescheduled ${updates.length} upcoming occurrence(s) of recurring booking series #${anchor.seriesId} to ${startTime} for ${duration} hours${dayDelta !== 0 ? `, shifted by ${dayDelta} day(s)` : ''}`;
+  await logActivity(req.session.userId, 'booking_series_updated', 'booking', anchor.seriesId, description);
+
+  res.json({ message: `Rescheduled ${updates.length} upcoming booking(s) in the series.` });
 });
 
 // Submit an equipment loan request and enforce quantity availability.

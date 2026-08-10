@@ -610,6 +610,116 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(cappedMemberRequests.body.bookings.length, 0);
   });
 
+  await t.test('supports rescheduling an entire recurring booking series', async () => {
+    const client = new TestClient(baseUrl);
+    const email = uniqueEmail('recurring-edit');
+    const password = 'Password123';
+    await registerUser(client, email, password);
+    await loginUser(client, email, password);
+
+    const resources = await getResources(client);
+    const roomId = resources.rooms[1].id;
+    const startDate = formatDateFromToday(150);
+
+    const created = await client.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: startDate, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'weekly', occurrences: 3 }
+      })
+    });
+    assert.equal(created.status, 200);
+
+    const afterCreate = await client.request('/api/my-requests?status=all');
+    const seriesBookings = afterCreate.body.bookings
+      .filter((booking) => booking.date >= startDate)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    assert.equal(seriesBookings.length, 3);
+    const seriesId = seriesBookings[0].seriesId;
+    const anchor = seriesBookings[1]; // middle occurrence, startDate + 7 days
+
+    // A non-owner cannot edit someone else's series booking.
+    const otherClient = new TestClient(baseUrl);
+    const otherEmail = uniqueEmail('recurring-edit-other');
+    await registerUser(otherClient, otherEmail, password);
+    await loginUser(otherClient, otherEmail, password);
+    const foreignAttempt = await otherClient.request('/api/edit-booking-series', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: anchor.id, date: anchor.date, startTime: '10:00', durationHours: 1 })
+    });
+    assert.equal(foreignAttempt.status, 404);
+
+    // A single (non-recurring) booking can't be edited as a series.
+    const singleDate = formatDateFromToday(180);
+    const singleBooking = await client.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, date: singleDate, startTime: '09:00', durationHours: 1 })
+    });
+    assert.equal(singleBooking.status, 200);
+    const afterSingle = await client.request('/api/my-requests?status=all');
+    const singleBookingRow = afterSingle.body.bookings.find((booking) => booking.date === singleDate);
+    const notASeries = await client.request('/api/edit-booking-series', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: singleBookingRow.id, date: formatDateFromToday(181), startTime: '09:00', durationHours: 1 })
+    });
+    assert.equal(notASeries.status, 400);
+    assert.match(notASeries.body.error, /not part of a recurring series/);
+
+    // Reschedule the whole series, anchored on the middle occurrence: shift +2 days
+    // and change the start time and duration for every occurrence.
+    const newAnchorDate = formatDateFromToday(150 + 7 + 2);
+    const rescheduled = await client.request('/api/edit-booking-series', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: anchor.id, date: newAnchorDate, startTime: '11:00', durationHours: 1.5 })
+    });
+    assert.equal(rescheduled.status, 200);
+    assert.match(rescheduled.body.message, /3/);
+
+    const afterReschedule = await client.request('/api/my-requests?status=all');
+    const rescheduledBookings = afterReschedule.body.bookings.filter((booking) => booking.seriesId === seriesId);
+    assert.equal(rescheduledBookings.length, 3);
+    const expectedDates = [
+      formatDateFromToday(150 + 2),
+      formatDateFromToday(150 + 7 + 2),
+      formatDateFromToday(150 + 14 + 2)
+    ].sort();
+    const actualDates = rescheduledBookings.map((booking) => booking.date).sort();
+    assert.deepEqual(actualDates, expectedDates);
+    assert.ok(rescheduledBookings.every((booking) => booking.startTime === '11:00' && Number(booking.durationHours) === 1.5));
+
+    // A conflict on any single occurrence must block the whole reschedule (atomicity) —
+    // nothing about the series should change if any occurrence can't be moved.
+    const blockerClient = new TestClient(baseUrl);
+    const blockerEmail = uniqueEmail('recurring-edit-blocker');
+    await registerUser(blockerClient, blockerEmail, password);
+    await loginUser(blockerClient, blockerEmail, password);
+    const blockerDate = formatDateFromToday(150 + 2); // matches the first (already-shifted) occurrence's date
+    const blockerBooking = await blockerClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, date: blockerDate, startTime: '13:00', durationHours: 1 })
+    });
+    assert.equal(blockerBooking.status, 200);
+
+    const conflictingReschedule = await client.request('/api/edit-booking-series', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: anchor.id, date: newAnchorDate, startTime: '13:00', durationHours: 1 })
+    });
+    assert.equal(conflictingReschedule.status, 400);
+    assert.match(conflictingReschedule.body.error, /already booked/);
+
+    const afterFailedReschedule = await client.request('/api/my-requests?status=all');
+    const unchangedBookings = afterFailedReschedule.body.bookings.filter((booking) => booking.seriesId === seriesId);
+    assert.deepEqual(unchangedBookings.map((booking) => booking.date).sort(), expectedDates);
+    assert.ok(unchangedBookings.every((booking) => booking.startTime === '11:00'));
+  });
+
   await t.test('supports loan borrow, edit, and return flow', async () => {
     const client = new TestClient(baseUrl);
     const email = uniqueEmail('loan');
