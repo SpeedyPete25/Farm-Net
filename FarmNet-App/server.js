@@ -1975,6 +1975,93 @@ app.post('/api/admin/bookings/:id/deny', requireAdmin, async (req, res) => {
   res.json({ message: 'Booking denied successfully.' });
 });
 
+// Cancel every upcoming active/pending occurrence of a recurring booking series. Admin only.
+app.post('/api/admin/bookings/series/:seriesId/cancel', requireAdmin, async (req, res) => {
+  const seriesId = Number(req.params.seriesId);
+  if (!Number.isFinite(seriesId) || seriesId <= 0) {
+    return res.status(400).json({ error: 'Invalid series ID.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await query(
+    `SELECT b.id, u.email AS userEmail
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     WHERE b.seriesId = ? AND b.status IN ('active', 'pending') AND b.date >= ?`,
+    [seriesId, today]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'No upcoming bookings found for this series.' });
+  }
+
+  const ids = rows.map((row) => row.id);
+  await run(`UPDATE bookings SET status = 'cancelled' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  const description = `${req.session.email} cancelled ${ids.length} upcoming occurrence(s) of recurring booking series #${seriesId} for ${rows[0].userEmail}`;
+  await logActivity(req.session.userId, 'admin_booking_series_cancelled', 'booking', seriesId, description);
+
+  res.json({ message: `Cancelled ${ids.length} upcoming booking(s) in the series.` });
+});
+
+// Approve every pending occurrence of a recurring booking series. Admin only.
+app.post('/api/admin/bookings/series/:seriesId/approve', requireAdmin, async (req, res) => {
+  const seriesId = Number(req.params.seriesId);
+  if (!Number.isFinite(seriesId) || seriesId <= 0) {
+    return res.status(400).json({ error: 'Invalid series ID.' });
+  }
+
+  const rows = await query(
+    `SELECT b.id, u.email AS userEmail
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     WHERE b.seriesId = ? AND b.status = 'pending'`,
+    [seriesId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'No pending bookings found for this series.' });
+  }
+
+  const ids = rows.map((row) => row.id);
+  await run(`UPDATE bookings SET status = 'active' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  const description = `${req.session.email} approved ${ids.length} pending occurrence(s) of recurring booking series #${seriesId} for ${rows[0].userEmail}`;
+  await logActivity(req.session.userId, 'admin_booking_series_approved', 'booking', seriesId, description);
+
+  res.json({ message: `Approved ${ids.length} pending booking(s) in the series.` });
+});
+
+// Deny every pending occurrence of a recurring booking series. Admin only.
+app.post('/api/admin/bookings/series/:seriesId/deny', requireAdmin, async (req, res) => {
+  const seriesId = Number(req.params.seriesId);
+  const reason = String(req.body?.reason || '').trim();
+  if (!Number.isFinite(seriesId) || seriesId <= 0) {
+    return res.status(400).json({ error: 'Invalid series ID.' });
+  }
+
+  const rows = await query(
+    `SELECT b.id, u.email AS userEmail
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     WHERE b.seriesId = ? AND b.status = 'pending'`,
+    [seriesId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'No pending bookings found for this series.' });
+  }
+
+  const ids = rows.map((row) => row.id);
+  await run(`UPDATE bookings SET status = 'denied' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  const description = `${req.session.email} denied ${ids.length} pending occurrence(s) of recurring booking series #${seriesId} for ${rows[0].userEmail}`
+    + (reason ? ` — Reason: ${reason}` : '');
+  await logActivity(req.session.userId, 'admin_booking_series_denied', 'booking', seriesId, description);
+
+  res.json({ message: `Denied ${ids.length} pending booking(s) in the series.` });
+});
+
 // Edit a booking as admin.
 app.patch('/api/admin/bookings/:id', requireAdmin, async (req, res) => {
   const bookingId = Number(req.params.id);

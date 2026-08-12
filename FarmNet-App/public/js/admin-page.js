@@ -10,7 +10,7 @@ import { renderListState } from './utils.js';
  */
 
 /**
- * @typedef {{ id: number, userEmail: string, roomName: string, date: string, startTime: string, durationHours: number|string, status: string }} AdminBooking
+ * @typedef {{ id: number, userEmail: string, roomName: string, date: string, startTime: string, durationHours: number|string, status: string, seriesId?: number|null }} AdminBooking
  */
 
 /**
@@ -223,9 +223,17 @@ export function createAdminPage(deps) {
 
       const statusCell = document.createElement('td');
       statusCell.textContent = booking.status;
+      if (booking.seriesId != null) {
+        const recurringBadge = document.createElement('span');
+        recurringBadge.className = 'status-label recurring';
+        recurringBadge.style.marginLeft = '6px';
+        recurringBadge.textContent = 'Recurring';
+        statusCell.appendChild(recurringBadge);
+      }
 
       const actionsCell = document.createElement('td');
       const isPending = booking.status === 'pending';
+      const isRecurring = booking.seriesId != null;
       const isActionable = (booking.status === 'active' || isPending) && new Date(`${booking.date}T${booking.startTime}:00`) > new Date();
 
       if (isActionable) {
@@ -247,6 +255,23 @@ export function createAdminPage(deps) {
 
           actionsWrap.appendChild(approveButton);
           actionsWrap.appendChild(denyButton);
+
+          if (isRecurring) {
+            const approveSeriesButton = document.createElement('button');
+            approveSeriesButton.className = 'action-button';
+            approveSeriesButton.textContent = 'Approve series';
+            approveSeriesButton.dataset.action = 'admin-approve-booking-series';
+            approveSeriesButton.dataset.seriesId = String(booking.seriesId);
+
+            const denySeriesButton = document.createElement('button');
+            denySeriesButton.className = 'cancel-button';
+            denySeriesButton.textContent = 'Deny series';
+            denySeriesButton.dataset.action = 'admin-deny-booking-series';
+            denySeriesButton.dataset.seriesId = String(booking.seriesId);
+
+            actionsWrap.appendChild(approveSeriesButton);
+            actionsWrap.appendChild(denySeriesButton);
+          }
         }
 
         const editButton = document.createElement('button');
@@ -266,6 +291,16 @@ export function createAdminPage(deps) {
 
         actionsWrap.appendChild(editButton);
         actionsWrap.appendChild(cancelButton);
+
+        if (isRecurring) {
+          const cancelSeriesButton = document.createElement('button');
+          cancelSeriesButton.className = 'cancel-button';
+          cancelSeriesButton.textContent = 'Cancel series';
+          cancelSeriesButton.dataset.action = 'admin-cancel-booking-series';
+          cancelSeriesButton.dataset.seriesId = String(booking.seriesId);
+          actionsWrap.appendChild(cancelSeriesButton);
+        }
+
         actionsCell.appendChild(actionsWrap);
       } else {
         actionsCell.textContent = '-';
@@ -527,6 +562,65 @@ export function createAdminPage(deps) {
         alert(result.error);
       } else {
         alert(result.message || 'Booking denied.');
+      }
+
+      await load();
+      return;
+    }
+
+    const approveSeriesButton = target.closest('[data-action="admin-approve-booking-series"]');
+    if (approveSeriesButton) {
+      const seriesId = Number(approveSeriesButton.dataset.seriesId);
+      if (!confirm('Approve every pending occurrence in this series?')) return;
+
+      const result = await requestJson(`/api/admin/bookings/series/${seriesId}/approve`, {
+        method: 'POST'
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Series approved.');
+      }
+
+      await load();
+      return;
+    }
+
+    const denySeriesButton = target.closest('[data-action="admin-deny-booking-series"]');
+    if (denySeriesButton) {
+      const seriesId = Number(denySeriesButton.dataset.seriesId);
+      const reason = prompt('Optional reason for denying every pending occurrence in this series:', '');
+      if (reason === null) return;
+
+      const result = await requestJson(`/api/admin/bookings/series/${seriesId}/deny`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Series denied.');
+      }
+
+      await load();
+      return;
+    }
+
+    const cancelSeriesButton = target.closest('[data-action="admin-cancel-booking-series"]');
+    if (cancelSeriesButton) {
+      const seriesId = Number(cancelSeriesButton.dataset.seriesId);
+      if (!confirm('Cancel every upcoming occurrence in this series?')) return;
+
+      const result = await requestJson(`/api/admin/bookings/series/${seriesId}/cancel`, {
+        method: 'POST'
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Series cancelled.');
       }
 
       await load();

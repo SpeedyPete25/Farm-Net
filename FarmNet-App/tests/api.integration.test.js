@@ -720,6 +720,124 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.ok(unchangedBookings.every((booking) => booking.startTime === '11:00'));
   });
 
+  await t.test('supports admin bulk approve/deny/cancel across a recurring booking series', async () => {
+    const adminEmail = uniqueEmail('admin-series-bulk');
+    const password = 'Password123';
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const roomSuffix = Date.now();
+    const addRoom = await adminClient.request('/api/admin/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `Bulk Series Room ${roomSuffix}`, location: `Bulk Series Wing ${roomSuffix}` })
+    });
+    assert.equal(addRoom.status, 200);
+
+    const rooms = await adminClient.request('/api/admin/rooms');
+    const room = rooms.body.rooms.find((r) => r.location === `Bulk Series Wing ${roomSuffix}`);
+    assert.ok(room);
+
+    const setApproval = await adminClient.request(`/api/admin/rooms/${room.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requiresApproval: true })
+    });
+    assert.equal(setApproval.status, 200);
+
+    const memberClient = new TestClient(baseUrl);
+    const memberEmail = uniqueEmail('series-bulk-member');
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    // Non-admins cannot use the bulk series endpoints.
+    const nonAdminAttempt = await memberClient.request('/api/admin/bookings/series/1/cancel', { method: 'POST' });
+    assert.equal(nonAdminAttempt.status, 403);
+
+    // First series: deny it in bulk.
+    const denyStart = formatDateFromToday(200);
+    const denySeriesCreate = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: room.id, date: denyStart, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'weekly', occurrences: 3 }
+      })
+    });
+    assert.equal(denySeriesCreate.status, 200);
+    assert.equal(denySeriesCreate.body.status, 'pending');
+
+    const adminBookingsAfterDenyCreate = await adminClient.request('/api/admin/bookings?status=all');
+    const denySeriesBookings = adminBookingsAfterDenyCreate.body.bookings.filter((b) => b.userEmail === memberEmail && b.date >= denyStart);
+    assert.equal(denySeriesBookings.length, 3);
+    const denySeriesId = denySeriesBookings[0].seriesId;
+    assert.ok(denySeriesId);
+    assert.ok(denySeriesBookings.every((b) => b.status === 'pending' && b.seriesId === denySeriesId));
+
+    const denySeries = await adminClient.request(`/api/admin/bookings/series/${denySeriesId}/deny`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Room unavailable' })
+    });
+    assert.equal(denySeries.status, 200);
+    assert.match(denySeries.body.message, /3/);
+
+    const afterDenySeries = await adminClient.request('/api/admin/bookings?status=all');
+    const deniedBookings = afterDenySeries.body.bookings.filter((b) => b.seriesId === denySeriesId);
+    assert.ok(deniedBookings.every((b) => b.status === 'denied'));
+
+    // Denying again finds nothing pending left.
+    const denyAgain = await adminClient.request(`/api/admin/bookings/series/${denySeriesId}/deny`, { method: 'POST' });
+    assert.equal(denyAgain.status, 404);
+
+    // Second series: approve it in bulk, then cancel it in bulk.
+    const approveStart = formatDateFromToday(220);
+    const approveSeriesCreate = await memberClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: room.id, date: approveStart, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'weekly', occurrences: 3 }
+      })
+    });
+    assert.equal(approveSeriesCreate.status, 200);
+
+    const adminBookingsAfterApproveCreate = await adminClient.request('/api/admin/bookings?status=all');
+    const approveSeriesBookings = adminBookingsAfterApproveCreate.body.bookings.filter(
+      (b) => b.userEmail === memberEmail && b.date >= approveStart
+    );
+    assert.equal(approveSeriesBookings.length, 3);
+    const approveSeriesId = approveSeriesBookings[0].seriesId;
+
+    const approveSeries = await adminClient.request(`/api/admin/bookings/series/${approveSeriesId}/approve`, {
+      method: 'POST'
+    });
+    assert.equal(approveSeries.status, 200);
+    assert.match(approveSeries.body.message, /3/);
+
+    const afterApproveSeries = await adminClient.request('/api/admin/bookings?status=all');
+    const approvedBookings = afterApproveSeries.body.bookings.filter((b) => b.seriesId === approveSeriesId);
+    assert.ok(approvedBookings.every((b) => b.status === 'active'));
+
+    const cancelSeries = await adminClient.request(`/api/admin/bookings/series/${approveSeriesId}/cancel`, {
+      method: 'POST'
+    });
+    assert.equal(cancelSeries.status, 200);
+    assert.match(cancelSeries.body.message, /3/);
+
+    const afterCancelSeries = await adminClient.request('/api/admin/bookings?status=all');
+    const cancelledBookings = afterCancelSeries.body.bookings.filter((b) => b.seriesId === approveSeriesId);
+    assert.ok(cancelledBookings.every((b) => b.status === 'cancelled'));
+
+    // Cancelling again finds nothing upcoming left.
+    const cancelAgain = await adminClient.request(`/api/admin/bookings/series/${approveSeriesId}/cancel`, { method: 'POST' });
+    assert.equal(cancelAgain.status, 404);
+  });
+
   await t.test('supports loan borrow, edit, and return flow', async () => {
     const client = new TestClient(baseUrl);
     const email = uniqueEmail('loan');
