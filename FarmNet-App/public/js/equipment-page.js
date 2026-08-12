@@ -17,7 +17,8 @@ import { renderListState } from './utils.js';
 /**
  * @typedef {{
  *   equipmentList: HTMLElement,
- *   onBorrow: (equipmentId: number, equipmentName: string) => Promise<void>
+ *   onBorrow: (equipmentId: number, equipmentName: string) => Promise<void>,
+ *   onReserve?: (equipmentId: number, equipmentName: string) => Promise<void>
  * }} EquipmentPageDeps
  */
 
@@ -32,21 +33,32 @@ import { renderListState } from './utils.js';
  * @param {EquipmentPageDeps} deps Dependency bag.
  * @returns {EquipmentPageApi} Equipment page API.
  */
-export function createEquipmentPage({ equipmentList, onBorrow }) {
+export function createEquipmentPage({ equipmentList, onBorrow, onReserve }) {
   /**
    * Handle delegated clicks for borrow buttons in the equipment list.
    * @param {MouseEvent} event
    * @returns {Promise<void>}
    */
   async function handleEquipmentListClick(event) {
-    const button = event.target.closest('[data-action="borrow-equipment"]');
-    if (!button) return;
+    const borrowButton = event.target.closest('[data-action="borrow-equipment"]');
+    if (borrowButton) {
+      const equipmentId = Number(borrowButton.dataset.equipmentId);
+      const equipmentName = borrowButton.dataset.equipmentName || 'equipment';
+      if (!Number.isFinite(equipmentId)) return;
 
-    const equipmentId = Number(button.dataset.equipmentId);
-    const equipmentName = button.dataset.equipmentName || 'equipment';
-    if (!Number.isFinite(equipmentId)) return;
+      await onBorrow(equipmentId, equipmentName);
+      return;
+    }
 
-    await onBorrow(equipmentId, equipmentName);
+    const reserveButton = event.target.closest('[data-action="reserve-equipment"]');
+    if (reserveButton) {
+      const equipmentId = Number(reserveButton.dataset.equipmentId);
+      const equipmentName = reserveButton.dataset.equipmentName || 'equipment';
+      if (!Number.isFinite(equipmentId) || typeof onReserve !== 'function') return;
+
+      await onReserve(equipmentId, equipmentName);
+      return;
+    }
   }
 
   equipmentList.addEventListener('click', handleEquipmentListClick);
@@ -69,7 +81,10 @@ export function createEquipmentPage({ equipmentList, onBorrow }) {
             <strong>${item.name}</strong>
             <p>Available: ${item.available} / ${item.quantity}</p>
           </div>
-          <button ${item.available === 0 ? 'disabled' : ''} data-action="borrow-equipment" data-equipment-id="${item.id}" data-equipment-name="${item.name}">Borrow</button>
+          <div class="item-actions">
+            <button ${item.available === 0 ? 'disabled' : ''} data-action="borrow-equipment" data-equipment-id="${item.id}" data-equipment-name="${item.name}">Borrow</button>
+            <button ${item.available === 0 ? 'disabled' : ''} data-action="reserve-equipment" data-equipment-id="${item.id}" data-equipment-name="${item.name}">Reserve</button>
+          </div>
         </div>
       `;
     }).join('');
