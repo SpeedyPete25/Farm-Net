@@ -641,6 +641,48 @@ async function checkRoomBookingPolicy(room, date, startTime, durationHours, user
 }
 
 /**
+ * Attach a 1-indexed series position and total occurrence count to each booking
+ * that belongs to a recurring series, so the UI can show e.g. "Occurrence 2 of 6".
+ * Position/total are computed from every booking ever created in the series
+ * (rows are never deleted, only status-changed), so the numbering stays stable
+ * even after individual occurrences are edited, cancelled, or denied.
+ * @param {Array<object>} bookings Booking rows, each optionally carrying `seriesId`.
+ * @returns {Promise<Array<object>>} The same rows with `seriesPosition`/`seriesTotal` added where applicable.
+ */
+async function attachSeriesPositions(bookings) {
+  const seriesIds = [...new Set(bookings.map((booking) => booking.seriesId).filter((id) => id != null))];
+  if (seriesIds.length === 0) return bookings;
+
+  const seriesRows = await query(
+    `SELECT id, seriesId FROM bookings WHERE seriesId IN (${seriesIds.map(() => '?').join(',')}) ORDER BY seriesId, date ASC, id ASC`,
+    seriesIds
+  );
+
+  const memberIdsBySeriesId = new Map();
+  for (const row of seriesRows) {
+    if (!memberIdsBySeriesId.has(row.seriesId)) memberIdsBySeriesId.set(row.seriesId, []);
+    memberIdsBySeriesId.get(row.seriesId).push(row.id);
+  }
+
+  const positionByBookingId = new Map();
+  const totalBySeriesId = new Map();
+  for (const [seriesId, memberIds] of memberIdsBySeriesId) {
+    totalBySeriesId.set(seriesId, memberIds.length);
+    memberIds.forEach((id, index) => positionByBookingId.set(id, index + 1));
+  }
+
+  return bookings.map((booking) => (
+    booking.seriesId == null
+      ? booking
+      : {
+        ...booking,
+        seriesPosition: positionByBookingId.get(booking.id) || null,
+        seriesTotal: totalBySeriesId.get(booking.seriesId) || null
+      }
+  ));
+}
+
+/**
  * Ensure the SQLite schema exists and seed default data.
  * This uses CREATE TABLE IF NOT EXISTS so it is safe to run every startup.
  */
@@ -1125,7 +1167,7 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
     );
   }
 
-  res.json({ bookings, loans });
+  res.json({ bookings: await attachSeriesPositions(bookings), loans });
 });
 
 // Cancel a room booking owned by the current user.
@@ -1931,7 +1973,7 @@ app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
     );
   }
 
-  res.json({ bookings });
+  res.json({ bookings: await attachSeriesPositions(bookings) });
 });
 
 // Return equipment loans for admin management.

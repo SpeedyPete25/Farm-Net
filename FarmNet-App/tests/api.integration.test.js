@@ -510,6 +510,54 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.ok(afterCancel.body.bookings.every((booking) => booking.status === 'cancelled'));
   });
 
+  await t.test('reports a stable occurrence position and total for each series booking', async () => {
+    const client = new TestClient(baseUrl);
+    const email = uniqueEmail('recurring-position');
+    const password = 'Password123';
+    await registerUser(client, email, password);
+    await loginUser(client, email, password);
+
+    const resources = await getResources(client);
+    const roomId = resources.rooms[0].id;
+    const startDate = formatDateFromToday(250);
+
+    const created = await client.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId, date: startDate, startTime: '09:00', durationHours: 1,
+        recurrence: { frequency: 'weekly', occurrences: 4 }
+      })
+    });
+    assert.equal(created.status, 200);
+
+    const afterCreate = await client.request('/api/my-requests?status=all');
+    const seriesBookings = afterCreate.body.bookings
+      .filter((booking) => booking.date >= startDate)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    assert.equal(seriesBookings.length, 4);
+    assert.deepEqual(seriesBookings.map((booking) => booking.seriesPosition), [1, 2, 3, 4]);
+    assert.ok(seriesBookings.every((booking) => booking.seriesTotal === 4));
+
+    // Cancelling the second occurrence alone must not renumber or shrink the total —
+    // "2 of 4" should still mean the same thing as when the series was created.
+    const cancelled = await client.request('/api/cancel-booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: seriesBookings[1].id })
+    });
+    assert.equal(cancelled.status, 200);
+
+    const afterSingleCancel = await client.request('/api/my-requests?status=all');
+    const seriesBookingsAfterCancel = afterSingleCancel.body.bookings
+      .filter((booking) => booking.date >= startDate)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    assert.equal(seriesBookingsAfterCancel.length, 4);
+    assert.deepEqual(seriesBookingsAfterCancel.map((booking) => booking.seriesPosition), [1, 2, 3, 4]);
+    assert.ok(seriesBookingsAfterCancel.every((booking) => booking.seriesTotal === 4));
+    assert.equal(seriesBookingsAfterCancel[1].status, 'cancelled');
+  });
+
   await t.test('supports daily and monthly recurrence, and enforces the weekly cap across occurrences', async () => {
     const client = new TestClient(baseUrl);
     const email = uniqueEmail('recurring-freq');

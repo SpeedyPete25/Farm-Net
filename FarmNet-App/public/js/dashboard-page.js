@@ -13,6 +13,8 @@
  *   location: string,
  *   status: string,
  *   seriesId?: number|null,
+ *   seriesPosition?: number|null,
+ *   seriesTotal?: number|null,
  *   returnCondition?: string,
  *   returnConditionPhotoPath?: string,
  *   returnedAt?: string
@@ -182,13 +184,16 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
             }
 
             const isRecurring = booking.seriesId != null;
+            const recurringLabel = (booking.seriesPosition != null && booking.seriesTotal != null)
+              ? `Recurring · Occurrence ${booking.seriesPosition} of ${booking.seriesTotal}`
+              : 'Recurring';
 
             return `
             <div class="request-card ${(isCancelled || isDenied) ? 'cancelled' : ''}">
               <strong>${booking.roomName}</strong>
               <p>${booking.location}</p>
               <p>Date: ${booking.date} · Time: ${booking.startTime} · ${formatDuration(booking.durationHours)}</p>
-              ${isRecurring ? '<span class="status-label recurring">Recurring</span>' : ''}
+              ${isRecurring ? `<span class="status-label recurring">${recurringLabel}</span>` : ''}
               ${statusLabel}
               ${isEditable ? `
                 <div class="request-actions">

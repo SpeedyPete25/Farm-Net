@@ -10,7 +10,7 @@ import { renderListState } from './utils.js';
  */
 
 /**
- * @typedef {{ id: number, userEmail: string, roomName: string, date: string, startTime: string, durationHours: number|string, status: string, seriesId?: number|null }} AdminBooking
+ * @typedef {{ id: number, userEmail: string, roomName: string, date: string, startTime: string, durationHours: number|string, status: string, seriesId?: number|null, seriesPosition?: number|null, seriesTotal?: number|null }} AdminBooking
  */
 
 /**
@@ -227,7 +227,9 @@ export function createAdminPage(deps) {
         const recurringBadge = document.createElement('span');
         recurringBadge.className = 'status-label recurring';
         recurringBadge.style.marginLeft = '6px';
-        recurringBadge.textContent = 'Recurring';
+        recurringBadge.textContent = (booking.seriesPosition != null && booking.seriesTotal != null)
+          ? `Recurring · ${booking.seriesPosition} of ${booking.seriesTotal}`
+          : 'Recurring';
         statusCell.appendChild(recurringBadge);
       }
 
