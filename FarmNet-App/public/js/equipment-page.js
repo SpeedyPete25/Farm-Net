@@ -10,7 +10,8 @@ import { renderListState } from './utils.js';
  *   id: number,
  *   name: string,
  *   quantity: number,
- *   available: number
+ *   available: number,
+ *   statusCounts?: { inMaintenance: number }
  * }} EquipmentAvailability
  */
 
@@ -69,12 +70,19 @@ export function createEquipmentPage({ equipmentList, onBorrow, onReserve }) {
    * @returns {void}
    */
   function render(equipment) {
-    if (!Array.isArray(equipment) || equipment.length === 0) {
+    // Equipment whose entire stock is damaged has nothing to offer and no path
+    // back to availability without admin intervention, so it's dropped from the
+    // borrowing list entirely rather than shown with permanently disabled buttons.
+    const borrowable = Array.isArray(equipment)
+      ? equipment.filter((item) => (item.statusCounts?.inMaintenance || 0) < item.quantity)
+      : [];
+
+    if (borrowable.length === 0) {
       renderListState(equipmentList, { kind: 'empty', message: 'No equipment available.' });
       return;
     }
 
-    equipmentList.innerHTML = equipment.map((item) => {
+    equipmentList.innerHTML = borrowable.map((item) => {
       return `
         <div class="item-row">
           <div>
