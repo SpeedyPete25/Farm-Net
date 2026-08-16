@@ -49,6 +49,7 @@ const equipmentList = document.getElementById('equipment-list');
 const usersList = document.getElementById('users-list');
 const adminBookingsList = document.getElementById('admin-bookings-list');
 const adminLoansList = document.getElementById('admin-loans-list');
+const damageReportsList = document.getElementById('damage-reports-list');
 const auditLogList = document.getElementById('audit-log-list');
 
 // Room management controls.
@@ -528,6 +529,7 @@ const adminPage = createAdminPage({
   usersList,
   adminBookingsList,
   adminLoansList,
+  damageReportsList,
   auditLogList,
   requestJson,
   onReturnLoan: returnLoan

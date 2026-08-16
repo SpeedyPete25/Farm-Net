@@ -848,6 +848,19 @@ async function initDatabase() {
     await run(`ALTER TABLE loans ADD COLUMN returnedAt TEXT`);
   }
 
+  await run(`CREATE TABLE IF NOT EXISTS damage_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    loanId INTEGER NOT NULL,
+    equipmentUnitId INTEGER,
+    reportedByUserId INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    photoPath TEXT,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(loanId) REFERENCES loans(id),
+    FOREIGN KEY(equipmentUnitId) REFERENCES equipment_units(id),
+    FOREIGN KEY(reportedByUserId) REFERENCES users(id)
+  )`);
+
   await run(`CREATE TABLE IF NOT EXISTS activity_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     userId INTEGER NOT NULL,
@@ -1299,6 +1312,11 @@ app.post('/api/return-loan', requireLogin, (req, res, next) => {
     const unitCode = unitRows[0]?.code || loan.equipmentUnitId;
     const damageDescription = `${req.session.email} flagged item ${unitCode} as damaged while returning loan ${loanId}`;
     await logActivity(req.session.userId, 'equipment_condition_updated', 'equipment_unit', loan.equipmentUnitId, damageDescription);
+
+    await run(
+      'INSERT INTO damage_reports (loanId, equipmentUnitId, reportedByUserId, description, photoPath) VALUES (?, ?, ?, ?, ?)',
+      [loanId, loan.equipmentUnitId, req.session.userId, conditionText, photoFilename]
+    );
   }
 
   res.json({
@@ -1350,6 +1368,30 @@ app.get('/api/admin/loans/:id/photo', requireAdmin, async (req, res) => {
   // Use only the stored filename joined against the known photos directory
   // to prevent path traversal attacks.
   const filename = path.basename(rows[0].returnConditionPhotoPath);
+  const filePath = path.join(photosDir, filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Photo file not found on server.' });
+  }
+
+  res.sendFile(filePath);
+});
+
+// Serve the photo attached to a specific damage report. Admin only.
+app.get('/api/admin/damage-reports/:id/photo', requireAdmin, async (req, res) => {
+  const reportId = Number(req.params.id);
+  if (!Number.isFinite(reportId) || reportId <= 0) {
+    return res.status(400).json({ error: 'Invalid damage report ID.' });
+  }
+
+  const rows = await query('SELECT photoPath FROM damage_reports WHERE id = ?', [reportId]);
+  if (rows.length === 0 || !rows[0].photoPath) {
+    return res.status(404).json({ error: 'No photo found for this damage report.' });
+  }
+
+  // Use only the stored filename joined against the known photos directory
+  // to prevent path traversal attacks.
+  const filename = path.basename(rows[0].photoPath);
   const filePath = path.join(photosDir, filename);
 
   if (!fs.existsSync(filePath)) {
@@ -2011,6 +2053,26 @@ app.get('/api/admin/loans', requireAdmin, async (req, res) => {
   }
 
   res.json({ loans });
+});
+
+// Return all damage reports for admin review, each linked back to its loan. Admin only.
+app.get('/api/admin/damage-reports', requireAdmin, async (req, res) => {
+  const reports = await query(
+    `SELECT d.id, d.loanId, d.description, d.photoPath, d.createdAt,
+            reporter.email AS reportedByEmail,
+            borrower.email AS borrowerEmail,
+            e.name AS equipmentName, eu.code AS equipmentCode,
+            l.borrowDate, l.returnDate
+     FROM damage_reports d
+     JOIN loans l ON l.id = d.loanId
+     JOIN users borrower ON borrower.id = l.userId
+     JOIN users reporter ON reporter.id = d.reportedByUserId
+     JOIN equipment e ON e.id = l.equipmentId
+     LEFT JOIN equipment_units eu ON eu.id = d.equipmentUnitId
+     ORDER BY d.createdAt DESC, d.id DESC`
+  );
+
+  res.json({ reports });
 });
 
 // Cancel a booking as admin.
@@ -2932,6 +2994,10 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   try {
     await run('BEGIN TRANSACTION');
     await run('DELETE FROM bookings WHERE userId = ?', [targetUserId]);
+    await run(
+      'DELETE FROM damage_reports WHERE reportedByUserId = ? OR loanId IN (SELECT id FROM loans WHERE userId = ?)',
+      [targetUserId, targetUserId]
+    );
     await run('DELETE FROM loans WHERE userId = ?', [targetUserId]);
     await run('DELETE FROM activity_history WHERE userId = ?', [targetUserId]);
     await run('DELETE FROM users WHERE id = ?', [targetUserId]);

@@ -1020,6 +1020,24 @@ test('automated integration coverage for critical flows', async (t) => {
     const returnedUnit = equipmentEntry.codes.find((unit) => unit.code === returnedLoan.equipmentCode);
     assert.ok(returnedUnit);
     assert.equal(returnedUnit.condition, 'damaged');
+
+    // Flagging damage on return should create a damage report linked back to the loan.
+    const nonAdminReportsAttempt = await borrowerClient.request('/api/admin/damage-reports');
+    assert.equal(nonAdminReportsAttempt.status, 403);
+
+    const damageReports = await adminClient.request('/api/admin/damage-reports');
+    assert.equal(damageReports.status, 200);
+    const report = damageReports.body.reports.find((entry) => entry.loanId === loan.id);
+    assert.ok(report, 'Expected a damage report linked to the returned loan.');
+    assert.equal(report.description, 'Cracked casing found on return.');
+    assert.equal(report.borrowerEmail, borrowerEmail);
+    assert.equal(report.reportedByEmail, adminEmail);
+    assert.equal(report.equipmentCode, returnedLoan.equipmentCode);
+    assert.equal(report.photoPath, null);
+
+    // No photo was uploaded on this return, so the photo route should 404.
+    const missingPhoto = await adminClient.request(`/api/admin/damage-reports/${report.id}/photo`);
+    assert.equal(missingPhoto.status, 404);
   });
 
   await t.test('supports admin listing and edit flows', async () => {

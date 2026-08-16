@@ -23,6 +23,22 @@ import { renderListState } from './utils.js';
 
 /**
  * @typedef {{
+ *   id: number,
+ *   loanId: number,
+ *   description: string,
+ *   photoPath?: string,
+ *   createdAt: string,
+ *   reportedByEmail: string,
+ *   borrowerEmail: string,
+ *   equipmentName: string,
+ *   equipmentCode?: string,
+ *   borrowDate: string,
+ *   returnDate: string
+ * }} DamageReport
+ */
+
+/**
+ * @typedef {{
  *   users?: User[],
  *   error?: string
  * }} UsersResponse
@@ -44,6 +60,13 @@ import { renderListState } from './utils.js';
 
 /**
  * @typedef {{
+ *   reports?: DamageReport[],
+ *   error?: string
+ * }} DamageReportsResponse
+ */
+
+/**
+ * @typedef {{
  *   entries?: AuditLogEntry[],
  *   error?: string
  * }} AuditLogResponse
@@ -54,6 +77,7 @@ import { renderListState } from './utils.js';
  *   usersList: HTMLElement,
  *   adminBookingsList: HTMLElement,
  *   adminLoansList: HTMLElement,
+ *   damageReportsList: HTMLElement,
  *   auditLogList: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onReturnLoan: (loanId: number) => void
@@ -72,7 +96,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, auditLogList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -442,6 +466,85 @@ export function createAdminPage(deps) {
   }
 
   /**
+   * Render the damage reports table. Each row links back to the loan it was filed against.
+    * @param {DamageReport[]} reports
+    * @returns {void}
+   */
+  function renderDamageReports(reports) {
+    if (!reports || reports.length === 0) {
+      renderListState(damageReportsList, { kind: 'empty', message: 'No damage reports filed yet.' });
+      return;
+    }
+
+    damageReportsList.innerHTML = '';
+
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Loan</th>
+          <th>Equipment</th>
+          <th>Borrower</th>
+          <th>Reported By</th>
+          <th>Description</th>
+          <th>Photo</th>
+          <th>Reported</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    reports.forEach((report) => {
+      const row = document.createElement('tr');
+
+      const loanCell = document.createElement('td');
+      loanCell.textContent = `#${report.loanId} (${report.borrowDate} to ${report.returnDate})`;
+
+      const equipmentCell = document.createElement('td');
+      equipmentCell.textContent = report.equipmentCode
+        ? `${report.equipmentName} (${report.equipmentCode})`
+        : report.equipmentName;
+
+      const borrowerCell = document.createElement('td');
+      borrowerCell.textContent = report.borrowerEmail;
+
+      const reporterCell = document.createElement('td');
+      reporterCell.textContent = report.reportedByEmail;
+
+      const descriptionCell = document.createElement('td');
+      descriptionCell.textContent = report.description;
+
+      const photoCell = document.createElement('td');
+      if (report.photoPath) {
+        const link = document.createElement('a');
+        link.href = `/api/admin/damage-reports/${report.id}/photo`;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'View photo';
+        photoCell.appendChild(link);
+      } else {
+        photoCell.textContent = 'None';
+      }
+
+      const reportedCell = document.createElement('td');
+      reportedCell.textContent = new Date(report.createdAt).toLocaleString();
+
+      row.appendChild(loanCell);
+      row.appendChild(equipmentCell);
+      row.appendChild(borrowerCell);
+      row.appendChild(reporterCell);
+      row.appendChild(descriptionCell);
+      row.appendChild(photoCell);
+      row.appendChild(reportedCell);
+      tbody.appendChild(row);
+    });
+
+    damageReportsList.appendChild(table);
+  }
+
+  /**
    * Format duration to a compact hour label.
    * @param {number|string} hours
     * @returns {string}
@@ -760,6 +863,7 @@ export function createAdminPage(deps) {
     renderListState(usersList, { kind: 'loading', message: 'Loading users...' });
     renderListState(adminBookingsList, { kind: 'loading', message: 'Loading bookings...' });
     renderListState(adminLoansList, { kind: 'loading', message: 'Loading loans...' });
+    renderListState(damageReportsList, { kind: 'loading', message: 'Loading damage reports...' });
     renderListState(auditLogList, { kind: 'loading', message: 'Loading audit log...' });
 
     /** @type {UsersResponse} */
@@ -768,19 +872,23 @@ export function createAdminPage(deps) {
     let bookingsResult;
     /** @type {AdminLoansResponse} */
     let loansResult;
+    /** @type {DamageReportsResponse} */
+    let damageReportsResult;
     /** @type {AuditLogResponse} */
     let auditResult;
     try {
-      [usersResult, bookingsResult, loansResult, auditResult] = await Promise.all([
+      [usersResult, bookingsResult, loansResult, damageReportsResult, auditResult] = await Promise.all([
         requestJson('/api/admin/users'),
         requestJson('/api/admin/bookings?status=all'),
         requestJson('/api/admin/loans?status=all'),
+        requestJson('/api/admin/damage-reports'),
         requestJson('/api/admin/audit-log')
       ]);
     } catch (err) {
       renderListState(usersList, { kind: 'error', message: 'Unable to load users.' });
       renderListState(adminBookingsList, { kind: 'error', message: 'Unable to load bookings.' });
       renderListState(adminLoansList, { kind: 'error', message: 'Unable to load loans.' });
+      renderListState(damageReportsList, { kind: 'error', message: 'Unable to load damage reports.' });
       renderListState(auditLogList, { kind: 'error', message: 'Audit log unavailable.' });
       return;
     }
@@ -801,6 +909,12 @@ export function createAdminPage(deps) {
       renderListState(adminLoansList, { kind: 'error', message: loansResult.error });
     } else {
       renderLoans(loansResult.loans || []);
+    }
+
+    if (damageReportsResult.error) {
+      renderListState(damageReportsList, { kind: 'error', message: damageReportsResult.error });
+    } else {
+      renderDamageReports(damageReportsResult.reports || []);
     }
 
     if (auditResult.error) {
