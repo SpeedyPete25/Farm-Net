@@ -930,6 +930,44 @@ test('automated integration coverage for critical flows', async (t) => {
     const afterReturn = await client.request('/api/my-requests?status=all');
     assert.equal(afterReturn.body.loans[0].status, 'returned');
     assert.equal(afterReturn.body.loans[0].returnCondition, 'Returned in good working condition.');
+
+    // Self-service returns (not just admin-on-behalf) should also file a damage
+    // report when the borrower flags the item themselves.
+    const secondBorrow = await client.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId, days: 3 })
+    });
+    assert.equal(secondBorrow.status, 200);
+
+    const secondLoan = (await client.request('/api/my-requests?status=all'))
+      .body.loans.find((row) => row.status === 'active');
+    assert.ok(secondLoan);
+
+    const selfDamagedReturnForm = new FormData();
+    selfDamagedReturnForm.append('loanId', String(secondLoan.id));
+    selfDamagedReturnForm.append('returnCondition', 'Handle snapped during use.');
+    selfDamagedReturnForm.append('damaged', 'true');
+
+    const selfDamagedReturn = await client.request('/api/return-loan', {
+      method: 'POST',
+      body: selfDamagedReturnForm
+    });
+    assert.equal(selfDamagedReturn.status, 200);
+
+    const adminCheck = new TestClient(baseUrl);
+    const adminEmailForCheck = uniqueEmail('admin-selfdamage-check');
+    await registerUser(adminCheck, adminEmailForCheck, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmailForCheck]);
+    await loginUser(adminCheck, adminEmailForCheck, password);
+
+    const selfDamageReports = await adminCheck.request('/api/admin/damage-reports');
+    assert.equal(selfDamageReports.status, 200);
+    const selfReport = selfDamageReports.body.reports.find((entry) => entry.loanId === secondLoan.id);
+    assert.ok(selfReport, 'Expected a damage report for the self-flagged return.');
+    assert.equal(selfReport.description, 'Handle snapped during use.');
+    assert.equal(selfReport.borrowerEmail, email);
+    assert.equal(selfReport.reportedByEmail, email);
   });
 
   await t.test('supports admin borrowing and returning equipment on behalf of another user, with damage flagging on return', async () => {
