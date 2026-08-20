@@ -549,6 +549,49 @@ function addDaysToDateString(dateStr, days) {
 }
 
 /**
+ * Generate notification content for equipment that is due within the next
+ * `thresholdDays` days (inclusive). This only generates the content — it does
+ * not send emails.
+ * @param {number} thresholdDays
+ * @returns {Promise<Array<Object>>} notifications
+ */
+async function generateEquipmentDueNotifications(thresholdDays = 3) {
+  const today = new Date().toISOString().slice(0, 10);
+  const endDate = addDaysToDateString(today, Number(thresholdDays || 0));
+
+  const rows = await query(
+    `SELECT l.id AS loanId, l.userId, l.borrowDate, l.returnDate, l.equipmentId, l.equipmentUnitId,
+            u.email AS userEmail, e.name AS equipmentName, eu.code AS unitCode
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     LEFT JOIN equipment e ON e.id = l.equipmentId
+     LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+     WHERE l.status = 'active' AND l.returnDate BETWEEN ? AND ?`,
+    [today, endDate]
+  );
+
+  return (rows || []).map((r) => {
+    const daysRemaining = Math.ceil((new Date(r.returnDate) - new Date(today)) / (1000 * 60 * 60 * 24));
+    const equipmentLabel = (r.equipmentName || 'equipment') + (r.unitCode ? ` (${r.unitCode})` : '');
+    const subject = `Equipment due soon: ${equipmentLabel} due in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}`;
+    const body = `Hello ${r.userEmail},\n\nThis is a reminder that ${equipmentLabel} borrowed on ${r.borrowDate} is due on ${r.returnDate} (in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}).\n\nIf you need an extension, please contact the lab.\n\nLoan #${r.loanId}`;
+
+    return {
+      loanId: r.loanId,
+      recipientEmail: r.userEmail,
+      equipmentId: r.equipmentId,
+      equipmentName: r.equipmentName,
+      unitCode: r.unitCode,
+      borrowDate: r.borrowDate,
+      returnDate: r.returnDate,
+      daysRemaining,
+      subject,
+      body
+    };
+  });
+}
+
+/**
  * Add a number of months to a YYYY-MM-DD date string, clamping the day to the
  * last valid day of the target month (e.g. 31 Jan + 1 month -> 28/29 Feb,
  * never rolling over into March).
@@ -3039,6 +3082,70 @@ app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   );
 
   res.json({ entries });
+});
+
+// Generate notification content for equipment due soon (admin only).
+app.get('/api/notifications/equipment-due', requireAdmin, async (req, res) => {
+  const daysParam = Number(req.query.days);
+  const days = Number.isFinite(daysParam) && daysParam >= 0 ? Math.floor(daysParam) : 3;
+  if (days > 365) return res.status(400).json({ error: 'days parameter too large' });
+
+  try {
+    const notifications = await generateEquipmentDueNotifications(days);
+    res.json({ count: notifications.length, notifications });
+  } catch (err) {
+    console.error('Failed to generate equipment due notifications:', err);
+    res.status(500).json({ error: 'Failed to generate notifications' });
+  }
+});
+
+// Return generated notification content for the current user (transient preview).
+app.get('/api/notifications/mine', requireLogin, async (req, res) => {
+  const userId = req.session.userId;
+  const daysParam = Number(req.query.days);
+  const days = Number.isFinite(daysParam) && daysParam >= 0 ? Math.floor(daysParam) : 3;
+  if (days > 365) return res.status(400).json({ error: 'days parameter too large' });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const endDate = addDaysToDateString(today, days);
+
+  try {
+    const rows = await query(
+      `SELECT l.id AS loanId, l.userId, l.borrowDate, l.returnDate, l.equipmentId, l.equipmentUnitId,
+              u.email AS userEmail, e.name AS equipmentName, eu.code AS unitCode
+       FROM loans l
+       JOIN users u ON u.id = l.userId
+       LEFT JOIN equipment e ON e.id = l.equipmentId
+       LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+       WHERE l.status = 'active' AND l.userId = ? AND l.returnDate BETWEEN ? AND ?`,
+      [userId, today, endDate]
+    );
+
+    const notifications = (rows || []).map((r) => {
+      const daysRemaining = Math.ceil((new Date(r.returnDate) - new Date(today)) / (1000 * 60 * 60 * 24));
+      const equipmentLabel = (r.equipmentName || 'equipment') + (r.unitCode ? ` (${r.unitCode})` : '');
+      const subject = `Equipment due soon: ${equipmentLabel} due in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}`;
+      const body = `Hello ${r.userEmail},\n\nThis is a reminder that ${equipmentLabel} borrowed on ${r.borrowDate} is due on ${r.returnDate} (in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}).\n\nIf you need an extension, please contact the lab.\n\nLoan #${r.loanId}`;
+
+      return {
+        loanId: r.loanId,
+        recipientEmail: r.userEmail,
+        equipmentId: r.equipmentId,
+        equipmentName: r.equipmentName,
+        unitCode: r.unitCode,
+        borrowDate: r.borrowDate,
+        returnDate: r.returnDate,
+        daysRemaining,
+        subject,
+        body
+      };
+    });
+
+    res.json({ count: notifications.length, notifications });
+  } catch (err) {
+    console.error('Failed to generate user equipment notifications:', err);
+    res.status(500).json({ error: 'Failed to generate notifications' });
+  }
 });
 
 // Serve the frontend application for any unmatched route.

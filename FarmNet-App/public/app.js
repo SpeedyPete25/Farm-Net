@@ -7,6 +7,7 @@ import { createAdminPage } from './js/admin-page.js';
 import { createRoomManagementPage } from './js/room-management-page.js';
 import { createEquipmentManagementPage } from './js/equipment-management-page.js';
 import { createSettingsPage } from './js/settings-page.js';
+import { createNotificationsPage } from './js/notifications-page.js';
 
 /**
  * Main frontend entrypoint.
@@ -30,6 +31,7 @@ const pageRooms = document.getElementById('page-rooms');
 const pageEquipment = document.getElementById('page-equipment');
 const pageSettings = document.getElementById('page-settings');
 const pageAdmin = document.getElementById('page-admin');
+const pageNotifications = document.getElementById('page-notifications');
 const pageRoomManagement = document.getElementById('page-room-management');
 const pageEquipmentManagement = document.getElementById('page-equipment-management');
 
@@ -39,6 +41,7 @@ const navRooms = document.getElementById('nav-rooms');
 const navEquipment = document.getElementById('nav-equipment');
 const navSettings = document.getElementById('nav-settings');
 const navAdmin = document.getElementById('nav-admin');
+const navNotifications = document.getElementById('nav-notifications');
 const navRoomManagement = document.getElementById('nav-room-management');
 const navEquipmentManagement = document.getElementById('nav-equipment-management');
 
@@ -51,6 +54,10 @@ const adminBookingsList = document.getElementById('admin-bookings-list');
 const adminLoansList = document.getElementById('admin-loans-list');
 const damageReportsList = document.getElementById('damage-reports-list');
 const auditLogList = document.getElementById('audit-log-list');
+const notificationsList = document.getElementById('notifications-list');
+const adminNotificationsList = document.getElementById('admin-notifications-list');
+const adminNotificationsDays = document.getElementById('admin-notifications-days');
+const adminNotificationsRefresh = document.getElementById('admin-notifications-refresh');
 
 // Room management controls.
 const roomManagementList = document.getElementById('room-management-list');
@@ -109,7 +116,7 @@ const themeSettingsSuccess = document.getElementById('theme-settings-success');
  * Allowed route fragments used for hash routing and page switching.
  * @type {Array<'dashboard'|'rooms'|'equipment'|'settings'|'admin'|'room-management'|'equipment-management'>}
  */
-const allPages = ['dashboard', 'rooms', 'equipment', 'settings', 'admin', 'room-management', 'equipment-management'];
+const allPages = ['dashboard', 'rooms', 'equipment', 'notifications', 'settings', 'admin', 'room-management', 'equipment-management'];
 
 /**
  * True when the authenticated profile has admin role.
@@ -183,6 +190,7 @@ function setActivePage(page, options = {}) {
   pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
   pageSettings.classList.toggle('hidden', nextPage !== 'settings');
   pageAdmin.classList.toggle('hidden', nextPage !== 'admin');
+  pageNotifications.classList.toggle('hidden', nextPage !== 'notifications');
   pageRoomManagement.classList.toggle('hidden', nextPage !== 'room-management');
   pageEquipmentManagement.classList.toggle('hidden', nextPage !== 'equipment-management');
 
@@ -191,6 +199,7 @@ function setActivePage(page, options = {}) {
   navEquipment.classList.toggle('active', nextPage === 'equipment');
   navSettings.classList.toggle('active', nextPage === 'settings');
   navAdmin.classList.toggle('active', nextPage === 'admin');
+  navNotifications.classList.toggle('active', nextPage === 'notifications');
   navRoomManagement.classList.toggle('active', nextPage === 'room-management');
   navEquipmentManagement.classList.toggle('active', nextPage === 'equipment-management');
 
@@ -204,6 +213,10 @@ function setActivePage(page, options = {}) {
 
   if (nextPage === 'admin' && isAdminUser) {
     adminPage.load();
+  }
+
+  if (nextPage === 'notifications') {
+    notificationsPage.load();
   }
 
   if (nextPage === 'room-management' && isAdminUser) {
@@ -532,7 +545,15 @@ const adminPage = createAdminPage({
   damageReportsList,
   auditLogList,
   requestJson,
+  adminNotificationsList,
+  adminNotificationsDays,
+  adminNotificationsRefresh,
   onReturnLoan: returnLoan
+});
+
+const notificationsPage = createNotificationsPage({
+  notificationsList,
+  requestJson
 });
 
 const roomManagementPage = createRoomManagementPage({
@@ -814,6 +835,13 @@ navRooms.addEventListener('click', () => {
  */
 navEquipment.addEventListener('click', () => {
   setActivePage('equipment');
+});
+
+/**
+ * Navigate to notifications page.
+ */
+navNotifications.addEventListener('click', () => {
+  setActivePage('notifications');
 });
 
 /**

@@ -79,6 +79,9 @@ import { renderListState } from './utils.js';
  *   adminLoansList: HTMLElement,
  *   damageReportsList: HTMLElement,
  *   auditLogList: HTMLElement,
+ *   adminNotificationsList: HTMLElement,
+ *   adminNotificationsDays: HTMLInputElement,
+ *   adminNotificationsRefresh: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onReturnLoan: (loanId: number) => void
  * }} AdminPageDeps
@@ -96,7 +99,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminNotificationsDays, adminNotificationsRefresh, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -591,6 +594,72 @@ export function createAdminPage(deps) {
   }
 
   /**
+   * Render generated notification previews.
+   * @param {Array<any>} notifications
+   */
+  function renderNotifications(notifications) {
+    if (!adminNotificationsList) return;
+    if (!notifications || notifications.length === 0) {
+      renderListState(adminNotificationsList, { kind: 'empty', message: 'No notifications generated for the selected window.' });
+      return;
+    }
+
+    adminNotificationsList.innerHTML = '';
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Recipient</th>
+          <th>Equipment</th>
+          <th>Return Date</th>
+          <th>Days Left</th>
+          <th>Subject</th>
+          <th>Body</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    notifications.forEach((n) => {
+      const row = document.createElement('tr');
+      const recipient = document.createElement('td'); recipient.textContent = n.recipientEmail || '-';
+      const equipment = document.createElement('td'); equipment.textContent = n.unitCode ? `${n.equipmentName} (${n.unitCode})` : (n.equipmentName || '-');
+      const returnDate = document.createElement('td'); returnDate.textContent = n.returnDate || '-';
+      const daysLeft = document.createElement('td'); daysLeft.textContent = String(n.daysRemaining ?? '-');
+      const subject = document.createElement('td'); subject.textContent = n.subject || '-';
+      const body = document.createElement('td'); body.textContent = n.body || '-';
+
+      row.appendChild(recipient);
+      row.appendChild(equipment);
+      row.appendChild(returnDate);
+      row.appendChild(daysLeft);
+      row.appendChild(subject);
+      row.appendChild(body);
+      tbody.appendChild(row);
+    });
+
+    adminNotificationsList.appendChild(table);
+  }
+
+  async function loadNotifications() {
+    if (!adminNotificationsList) return;
+    renderListState(adminNotificationsList, { kind: 'loading', message: 'Loading notifications...' });
+    const days = Number(adminNotificationsDays?.value) || 3;
+    try {
+      const result = await requestJson(`/api/notifications/equipment-due?days=${encodeURIComponent(days)}`);
+      if (result?.error) {
+        renderListState(adminNotificationsList, { kind: 'error', message: result.error });
+      } else {
+        renderNotifications(result.notifications || result); // support both shapes
+      }
+    } catch (err) {
+      renderListState(adminNotificationsList, { kind: 'error', message: 'Unable to load notifications.' });
+    }
+  }
+
+  /**
    * Handle clicks in the users table.
    * Uses event delegation to process delete actions from dynamic rows.
    * @param {MouseEvent} event
@@ -923,6 +992,17 @@ export function createAdminPage(deps) {
     }
 
     renderAuditLog(auditResult.entries || []);
+
+    // Load notifications preview last (independent of other sections)
+    loadNotifications();
+  }
+
+  // Wire up refresh control for notifications preview
+  if (adminNotificationsRefresh) {
+    adminNotificationsRefresh.addEventListener('click', (e) => {
+      e.preventDefault();
+      loadNotifications();
+    });
   }
 
   return {
