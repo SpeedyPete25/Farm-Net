@@ -46,6 +46,7 @@
             <button id="nav-dashboard" class="secondary active">User Bookings</button>
             <button id="nav-rooms" class="secondary">Room Bookings</button>
             <button id="nav-equipment" class="secondary">Equipment Loans</button>
+            <button id="nav-notifications" class="secondary">Notifications</button>
             <button id="nav-settings" class="secondary">Settings</button>
             <button id="nav-admin" class="secondary hidden">User Management</button>
             <button id="nav-room-management" class="secondary hidden">Room Management</button>
@@ -130,6 +131,12 @@
           <div id="equipment-list"></div>
         </article>
 
+        <article id="page-notifications" class="card page-panel hidden">
+          <h2>Notifications</h2>
+          <p>Reminders about equipment due soon and other actionable items.</p>
+          <div id="notifications-list"></div>
+        </article>
+
         <article id="page-settings" class="card page-panel hidden">
           <h2>Settings</h2>
           <p>Manage account and display preferences.</p>
@@ -171,6 +178,15 @@
           <h3 style="margin-top: 24px;">Damage Reports</h3>
           <p>Every damage report is linked back to the loan it was filed against.</p>
           <div id="damage-reports-list"></div>
+
+          <h3 style="margin-top: 24px;">Notifications Preview</h3>
+          <p>Preview generated notification content for equipment due soon.</p>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            Days ahead:
+            <input id="admin-notifications-days" type="number" min="0" value="3" style="width:72px;" />
+            <button id="admin-notifications-refresh" class="secondary">Refresh</button>
+          </label>
+          <div id="admin-notifications-list"></div>
 
           <h3 style="margin-top: 24px;">Audit Log</h3>
           <div id="audit-log-list"></div>
