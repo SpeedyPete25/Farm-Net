@@ -421,9 +421,35 @@ export function createAdminPage(deps) {
 
       const actionsCell = document.createElement('td');
       const today = new Date().toISOString().slice(0, 10);
+      const isPending = loan.status === 'pending';
       const isEditable = loan.status === 'active' && loan.returnDate >= today;
 
-      if (isEditable) {
+      if (isPending) {
+        const approveButton = document.createElement('button');
+        approveButton.className = 'action-button';
+        approveButton.textContent = 'Approve';
+        approveButton.dataset.action = 'admin-approve-loan';
+        approveButton.dataset.loanId = String(loan.id);
+
+        const denyButton = document.createElement('button');
+        denyButton.className = 'cancel-button';
+        denyButton.textContent = 'Deny';
+        denyButton.dataset.action = 'admin-deny-loan';
+        denyButton.dataset.loanId = String(loan.id);
+
+        const cancelButton = document.createElement('button');
+        cancelButton.className = 'cancel-button';
+        cancelButton.textContent = 'Cancel';
+        cancelButton.dataset.action = 'admin-cancel-loan';
+        cancelButton.dataset.loanId = String(loan.id);
+
+        const actionsWrap = document.createElement('div');
+        actionsWrap.className = 'request-actions';
+        actionsWrap.appendChild(approveButton);
+        actionsWrap.appendChild(denyButton);
+        actionsWrap.appendChild(cancelButton);
+        actionsCell.appendChild(actionsWrap);
+      } else if (isEditable) {
         const returnButton = document.createElement('button');
         returnButton.className = 'action-button';
         returnButton.textContent = 'Return';
@@ -804,6 +830,44 @@ export function createAdminPage(deps) {
     if (returnButton) {
       const loanId = Number(returnButton.dataset.loanId);
       onReturnLoan(loanId);
+      return;
+    }
+
+    const approveButton = target.closest('[data-action="admin-approve-loan"]');
+    if (approveButton) {
+      const loanId = Number(approveButton.dataset.loanId);
+      const result = await requestJson(`/api/admin/loans/${loanId}/approve`, {
+        method: 'POST'
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Equipment request approved.');
+      }
+
+      await load();
+      return;
+    }
+
+    const denyButton = target.closest('[data-action="admin-deny-loan"]');
+    if (denyButton) {
+      const loanId = Number(denyButton.dataset.loanId);
+      const reason = prompt('Optional reason for denying this equipment request:', '');
+      if (reason === null) return;
+
+      const result = await requestJson(`/api/admin/loans/${loanId}/deny`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Equipment request denied.');
+      }
+
+      await load();
       return;
     }
 

@@ -512,6 +512,11 @@ button.danger {
   color: var(--warning);
 }
 
+.equipment-code-chip--pending {
+  border-color: color-mix(in srgb, var(--warning) 70%, var(--border));
+  color: var(--warning);
+}
+
 .equipment-code-chip--overdue {
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
   color: var(--danger);

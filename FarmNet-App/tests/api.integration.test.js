@@ -1427,6 +1427,181 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(returnedUnit.statusCounts.available, 1);
   });
 
+  await t.test('supports equipment request and admin approval workflow', async () => {
+    const adminEmail = uniqueEmail('equip-approval-admin');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const equipmentSuffix = Date.now();
+    const equipmentName = `Approval Test Device ${equipmentSuffix}`;
+
+    const addEquipment = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentName, quantity: 1 })
+    });
+    assert.equal(addEquipment.status, 200);
+
+    const equipmentAfterAdd = await adminClient.request('/api/admin/equipment');
+    const addedEquipment = equipmentAfterAdd.body.equipment.find((item) => item.name === equipmentName);
+    assert.ok(addedEquipment);
+    assert.equal(addedEquipment.requiresApproval, 0);
+
+    // New equipment auto-approves by default: a borrow should land as 'active' immediately.
+    const memberEmail = uniqueEmail('equip-approval-member');
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    const autoApprovedBorrow = await memberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 1 })
+    });
+    assert.equal(autoApprovedBorrow.status, 200);
+    assert.equal(autoApprovedBorrow.body.status, 'active');
+
+    const autoApprovedLoan = (await memberClient.request('/api/my-requests?status=all')).body.loans[0];
+    const cancelAutoApproved = await memberClient.request('/api/cancel-loan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ loanId: autoApprovedLoan.id })
+    });
+    assert.equal(cancelAutoApproved.status, 200);
+
+    // Turn on the approval requirement for this equipment.
+    const nonAdminPolicyChange = await memberClient.request(`/api/admin/equipment/${addedEquipment.id}/policy`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requiresApproval: true })
+    });
+    assert.equal(nonAdminPolicyChange.status, 403);
+
+    const policyUpdate = await adminClient.request(`/api/admin/equipment/${addedEquipment.id}/policy`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requiresApproval: true })
+    });
+    assert.equal(policyUpdate.status, 200);
+
+    const resourcesAfterPolicy = await getResources(memberClient);
+    const equipmentAfterPolicy = resourcesAfterPolicy.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(equipmentAfterPolicy.requiresApproval, 1);
+
+    // Borrowing now creates a pending request rather than an active loan.
+    const requestBorrow = await memberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 2 })
+    });
+    assert.equal(requestBorrow.status, 200);
+    assert.equal(requestBorrow.body.status, 'pending');
+    assert.match(requestBorrow.body.message, /awaiting admin approval/);
+
+    const memberRequests = await memberClient.request('/api/my-requests?status=all');
+    const pendingLoan = memberRequests.body.loans.find((loan) => loan.status === 'pending');
+    assert.ok(pendingLoan);
+
+    // The single unit is now tied up by the pending request, so it should not
+    // also show up as available to borrow, and a second user should be blocked.
+    const resourcesWhilePending = await getResources(memberClient);
+    const equipmentWhilePending = resourcesWhilePending.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(equipmentWhilePending.available, 0);
+    assert.equal(equipmentWhilePending.statusCounts.pending, 1);
+
+    const otherMemberEmail = uniqueEmail('equip-approval-other');
+    const otherMemberClient = new TestClient(baseUrl);
+    await registerUser(otherMemberClient, otherMemberEmail, password);
+    await loginUser(otherMemberClient, otherMemberEmail, password);
+
+    const blockedByPending = await otherMemberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 1 })
+    });
+    assert.equal(blockedByPending.status, 400);
+
+    // Non-admins cannot approve or deny.
+    const nonAdminApprove = await memberClient.request(`/api/admin/loans/${pendingLoan.id}/approve`, { method: 'POST' });
+    assert.equal(nonAdminApprove.status, 403);
+
+    // Admin approves the request; it becomes an active loan.
+    const approve = await adminClient.request(`/api/admin/loans/${pendingLoan.id}/approve`, { method: 'POST' });
+    assert.equal(approve.status, 200);
+
+    const memberRequestsAfterApprove = await memberClient.request('/api/my-requests?status=all');
+    const approvedLoan = memberRequestsAfterApprove.body.loans.find((loan) => loan.id === pendingLoan.id);
+    assert.equal(approvedLoan.status, 'active');
+
+    const reApprove = await adminClient.request(`/api/admin/loans/${pendingLoan.id}/approve`, { method: 'POST' });
+    assert.equal(reApprove.status, 400);
+
+    // Cancel the now-active loan to free the unit up again for the deny scenario below.
+    const cancelApproved = await memberClient.request('/api/cancel-loan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ loanId: approvedLoan.id })
+    });
+    assert.equal(cancelApproved.status, 200);
+
+    // A second pending request can be denied, and the reason is recorded, freeing the unit.
+    const secondRequest = await otherMemberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 1 })
+    });
+    assert.equal(secondRequest.status, 200);
+    assert.equal(secondRequest.body.status, 'pending');
+
+    const secondPendingLoan = (await otherMemberClient.request('/api/my-requests?status=all'))
+      .body.loans.find((loan) => loan.status === 'pending');
+    assert.ok(secondPendingLoan);
+
+    const deny = await adminClient.request(`/api/admin/loans/${secondPendingLoan.id}/deny`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Equipment needed for a lab session.' })
+    });
+    assert.equal(deny.status, 200);
+
+    const otherMemberRequestsAfterDeny = await otherMemberClient.request('/api/my-requests?status=all');
+    const deniedLoan = otherMemberRequestsAfterDeny.body.loans.find((loan) => loan.id === secondPendingLoan.id);
+    assert.equal(deniedLoan.status, 'denied');
+
+    // Denying frees the unit back up for another request.
+    const resourcesAfterDeny = await getResources(memberClient);
+    const equipmentAfterDeny = resourcesAfterDeny.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(equipmentAfterDeny.available, 1);
+
+    // A user can withdraw their own pending request by cancelling it.
+    const thirdRequest = await memberClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, days: 1 })
+    });
+    assert.equal(thirdRequest.status, 200);
+    const thirdPendingLoan = (await memberClient.request('/api/my-requests?status=all'))
+      .body.loans.find((loan) => loan.status === 'pending');
+    assert.ok(thirdPendingLoan);
+
+    const selfCancelPending = await memberClient.request('/api/cancel-loan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ loanId: thirdPendingLoan.id })
+    });
+    assert.equal(selfCancelPending.status, 200);
+
+    const memberRequestsAfterCancel = await memberClient.request('/api/my-requests?status=all');
+    const cancelledLoan = memberRequestsAfterCancel.body.loans.find((loan) => loan.id === thirdPendingLoan.id);
+    assert.equal(cancelledLoan.status, 'cancelled');
+  });
+
   await t.test('enforces configurable room policies and the admin booking approval workflow', async () => {
     const adminEmail = uniqueEmail('policy-admin');
     const password = 'Password123';

@@ -216,10 +216,16 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
             const isExpired = loan.returnDate < today;
             const isCancelled = loan.status === 'cancelled';
             const isReturned = loan.status === 'returned';
+            const isPending = loan.status === 'pending';
+            const isDenied = loan.status === 'denied';
             let statusLabel = '';
 
             if (isCancelled) {
               statusLabel = '<span class="status-label cancelled">Cancelled</span>';
+            } else if (isDenied) {
+              statusLabel = '<span class="status-label denied">Denied</span>';
+            } else if (isPending) {
+              statusLabel = '<span class="status-label pending">Pending approval</span>';
             } else if (isReturned) {
               statusLabel = '<span class="status-label returned">Returned</span>';
             } else if (isExpired) {
@@ -246,6 +252,11 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
                   <button class="secondary action-button" data-action="edit-loan" data-loan-id="${loan.id}" data-loan-borrow-date="${loan.borrowDate}" data-loan-return-date="${loan.returnDate}">Edit</button>
                   <button class="action-button" data-action="return-loan" data-loan-id="${loan.id}">Return</button>
                   <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel</button>
+                </div>
+              ` : ''}
+              ${isPending ? `
+                <div class="request-actions">
+                  <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel request</button>
                 </div>
               ` : ''}
             </div>

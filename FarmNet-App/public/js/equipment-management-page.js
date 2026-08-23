@@ -6,15 +6,15 @@
 import { renderListState } from './utils.js';
 
 /**
- * @typedef {{ id: number, code: string, condition: 'working' | 'damaged', status: 'available'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }} EquipmentUnit
+ * @typedef {{ id: number, code: string, condition: 'working' | 'damaged', status: 'available'|'pending'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }} EquipmentUnit
  */
 
 /**
- * @typedef {{ available: number, reserved: number, checkedOut: number, overdue: number, inMaintenance: number }} StatusCounts
+ * @typedef {{ available: number, pending: number, reserved: number, checkedOut: number, overdue: number, inMaintenance: number }} StatusCounts
  */
 
 /**
- * @typedef {{ id: number, name: string, quantity: number, codes?: EquipmentUnit[], statusCounts?: StatusCounts }} EquipmentItem
+ * @typedef {{ id: number, name: string, quantity: number, requiresApproval?: 0|1, codes?: EquipmentUnit[], statusCounts?: StatusCounts }} EquipmentItem
  */
 
 /**
@@ -23,6 +23,7 @@ import { renderListState } from './utils.js';
 
 const STATUS_LABELS = {
   available: 'Available',
+  pending: 'Pending approval',
   reserved: 'Reserved',
   'checked-out': 'Checked out',
   overdue: 'Overdue',
@@ -91,9 +92,10 @@ export function createEquipmentManagementPage(deps) {
     }
 
     equipmentManagementList.innerHTML = equipment.map((item) => {
-      const counts = item.statusCounts || { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
+      const counts = item.statusCounts || { available: 0, pending: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
       const statusSummary = [
         `Available: ${counts.available}`,
+        `Pending: ${counts.pending}`,
         `Checked out: ${counts.checkedOut}`,
         `Reserved: ${counts.reserved}`,
         `Overdue: ${counts.overdue}`,
@@ -117,6 +119,13 @@ export function createEquipmentManagementPage(deps) {
               <button data-action="update-equipment" data-equipment-id="${item.id}">Update</button>
             </p>
             <p class="status-summary">${statusSummary}</p>
+            <p>
+              <label class="room-policy-checkbox">
+                <input type="checkbox" data-policy-field="requiresApproval" data-equipment-id="${item.id}" ${item.requiresApproval ? 'checked' : ''} />
+                Requires admin approval
+              </label>
+              <button type="button" data-action="save-equipment-policy" data-equipment-id="${item.id}">Save policy</button>
+            </p>
             <details class="equipment-codes-panel">
               <summary>Item codes (${Array.isArray(item.codes) ? item.codes.length : 0})</summary>
               <div class="equipment-codes-list">
@@ -263,6 +272,29 @@ export function createEquipmentManagementPage(deps) {
       const result = await requestJson(`/api/admin/equipment/units/${unitId}/condition`, {
         method: 'PATCH',
         body: JSON.stringify({ condition: nextCondition })
+      });
+
+      if (result.error) {
+        equipmentManagementError.textContent = result.error;
+        return;
+      }
+
+      equipmentManagementError.textContent = '';
+      await load();
+      await onEquipmentChanged();
+      return;
+    }
+
+    const policyButton = target.closest('[data-action="save-equipment-policy"]');
+    if (policyButton) {
+      const equipmentId = Number(policyButton.dataset.equipmentId);
+      if (!Number.isFinite(equipmentId)) return;
+
+      const checkbox = equipmentManagementList.querySelector(`[data-policy-field="requiresApproval"][data-equipment-id="${equipmentId}"]`);
+
+      const result = await requestJson(`/api/admin/equipment/${equipmentId}/policy`, {
+        method: 'PATCH',
+        body: JSON.stringify({ requiresApproval: Boolean(checkbox?.checked) })
       });
 
       if (result.error) {

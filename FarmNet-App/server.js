@@ -401,11 +401,11 @@ async function addEquipmentUnits(equipmentId, equipmentName, count) {
 }
 
 /**
- * Compute the lifecycle status of equipment units from their condition and any active loan.
- * Status priority: in-maintenance (damaged) > reserved (future-dated loan) > overdue
- * (past return date) > checked-out (active loan) > available.
+ * Compute the lifecycle status of equipment units from their condition and any active/pending loan.
+ * Status priority: in-maintenance (damaged) > pending (awaiting admin approval) > reserved
+ * (future-dated loan) > overdue (past return date) > checked-out (active loan) > available.
  * @param {number|null} [equipmentId] Restrict to a single equipment category, or all when omitted.
- * @returns {Promise<Array<{ id: number, equipmentId: number, code: string, condition: string, status: 'available'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }>>}
+ * @returns {Promise<Array<{ id: number, equipmentId: number, code: string, condition: string, status: 'available'|'pending'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }>>}
  */
 async function getEquipmentUnitStatuses(equipmentId = null) {
   const today = new Date().toISOString().slice(0, 10);
@@ -419,7 +419,7 @@ async function getEquipmentUnitStatuses(equipmentId = null) {
   const units = await query(unitSql, unitParams);
 
   const loanParams = [];
-  let loanSql = "SELECT equipmentUnitId, borrowDate, returnDate FROM loans WHERE status = 'active' AND equipmentUnitId IS NOT NULL";
+  let loanSql = "SELECT equipmentUnitId, borrowDate, returnDate, status FROM loans WHERE status IN ('active', 'pending') AND equipmentUnitId IS NOT NULL";
   if (equipmentId != null) {
     loanSql += ' AND equipmentId = ?';
     loanParams.push(equipmentId);
@@ -434,7 +434,9 @@ async function getEquipmentUnitStatuses(equipmentId = null) {
     if (unit.condition === 'damaged') {
       status = 'in-maintenance';
     } else if (loan) {
-      if (loan.borrowDate > today) {
+      if (loan.status === 'pending') {
+        status = 'pending';
+      } else if (loan.borrowDate > today) {
         status = 'reserved';
       } else if (loan.returnDate < today) {
         status = 'overdue';
@@ -448,8 +450,8 @@ async function getEquipmentUnitStatuses(equipmentId = null) {
 }
 
 /**
- * Return equipment units that are free (not damaged and not occupied) for the
- * requested date range (inclusive).
+ * Return equipment units that are free (not damaged and not occupied by an active or
+ * pending loan) for the requested date range (inclusive).
  * @param {number} equipmentId
  * @param {string} startDate YYYY-MM-DD
  * @param {string} endDate YYYY-MM-DD
@@ -458,10 +460,10 @@ async function getEquipmentUnitStatuses(equipmentId = null) {
 async function getAvailableUnitsForPeriod(equipmentId, startDate, endDate) {
   const units = await query('SELECT id, equipmentId, code, condition FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
 
-  // Find active loans that overlap the requested period
+  // Find active or pending loans that overlap the requested period
   const occupiedRows = await query(
     `SELECT equipmentUnitId FROM loans
-     WHERE status = 'active' AND equipmentUnitId IS NOT NULL
+     WHERE status IN ('active', 'pending') AND equipmentUnitId IS NOT NULL
        AND equipmentId = ?
        AND NOT (returnDate < ? OR borrowDate > ?)`,
     [equipmentId, startDate, endDate]
@@ -760,8 +762,15 @@ async function initDatabase() {
   await run(`CREATE TABLE IF NOT EXISTS equipment (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    quantity INTEGER NOT NULL
+    quantity INTEGER NOT NULL,
+    requiresApproval INTEGER NOT NULL DEFAULT 0
   )`);
+
+  const equipmentColumns = await query('PRAGMA table_info(equipment)');
+  const hasEquipmentRequiresApproval = equipmentColumns.some(col => col.name === 'requiresApproval');
+  if (!hasEquipmentRequiresApproval) {
+    await run(`ALTER TABLE equipment ADD COLUMN requiresApproval INTEGER NOT NULL DEFAULT 0`);
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS equipment_units (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1079,7 +1088,7 @@ app.post('/api/change-password', requireLogin, async (req, res) => {
 app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
   const equipment = await query(
-    `SELECT e.id, e.name, e.quantity,
+    `SELECT e.id, e.name, e.quantity, e.requiresApproval,
             COALESCE(unitCounts.totalUnits, 0) AS totalUnits
      FROM equipment e
      LEFT JOIN (
@@ -1089,15 +1098,16 @@ app.get('/api/resources', requireLogin, async (req, res) => {
      ) unitCounts ON unitCounts.equipmentId = e.id`
   );
 
-  // Derive per-status unit counts (available/reserved/checked-out/overdue/in-maintenance)
-  // so damaged, reserved, and overdue units are all excluded from what's offered to borrow.
+  // Derive per-status unit counts (available/pending/reserved/checked-out/overdue/in-maintenance)
+  // so damaged, pending, reserved, and overdue units are all excluded from what's offered to borrow.
   const unitStatuses = await getEquipmentUnitStatuses();
   const statusCountsByEquipmentId = unitStatuses.reduce((acc, unit) => {
     if (!acc[unit.equipmentId]) {
-      acc[unit.equipmentId] = { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
+      acc[unit.equipmentId] = { available: 0, pending: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
     }
     const bucket = acc[unit.equipmentId];
     if (unit.status === 'available') bucket.available += 1;
+    else if (unit.status === 'pending') bucket.pending += 1;
     else if (unit.status === 'reserved') bucket.reserved += 1;
     else if (unit.status === 'checked-out') bucket.checkedOut += 1;
     else if (unit.status === 'overdue') bucket.overdue += 1;
@@ -1107,13 +1117,14 @@ app.get('/api/resources', requireLogin, async (req, res) => {
 
   const equipmentWithAvailability = equipment.map((item) => {
     const counts = statusCountsByEquipmentId[item.id]
-      || { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
+      || { available: 0, pending: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
     const totalQuantity = Number(item.totalUnits || item.quantity || 0);
     return {
       id: item.id,
       name: item.name,
       quantity: totalQuantity,
       available: counts.available,
+      requiresApproval: item.requiresApproval,
       statusCounts: counts
     };
   });
@@ -1173,7 +1184,7 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
        JOIN equipment e ON e.id = l.equipmentId
        LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
        WHERE l.userId = ?
-         AND l.status = 'active'
+         AND l.status IN ('active', 'pending')
          AND l.returnDate >= ?
        ORDER BY l.borrowDate DESC`,
       [userId, today]
@@ -1228,8 +1239,8 @@ app.post('/api/cancel-loan', requireLogin, async (req, res) => {
   }
 
   const loan = existing[0];
-  if (loan.status !== 'active') {
-    return res.status(400).json({ error: 'Only active loans can be cancelled.' });
+  if (!['active', 'pending'].includes(loan.status)) {
+    return res.status(400).json({ error: 'Only active or pending loans can be cancelled.' });
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -1833,21 +1844,34 @@ app.post('/api/borrow-equipment', requireLogin, async (req, res) => {
   const borrowDate = new Date().toISOString().slice(0, 10);
   const returnDate = new Date(Date.now() + parsedDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+  const status = equipmentRow.requiresApproval ? 'pending' : 'active';
   const result = await run(
-    'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate) VALUES (?, ?, ?, ?, ?)',
-    [targetUserId, equipmentId, assignedUnit.id, borrowDate, returnDate]
+    'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate, status) VALUES (?, ?, ?, ?, ?, ?)',
+    [targetUserId, equipmentId, assignedUnit.id, borrowDate, returnDate, status]
   );
 
+  const actionVerb = status === 'pending' ? 'requested to borrow' : 'borrowed';
+  const pendingSuffix = status === 'pending' ? ' (pending admin approval)' : '';
+
   if (targetUserId !== req.session.userId) {
-    const description = `${req.session.email} borrowed ${equipmentRow.name} (${assignedUnit.code}) on behalf of ${targetEmail}, due ${returnDate}`;
-    await logActivity(req.session.userId, 'admin_equipment_borrowed', 'loan', result.lastID, description);
+    const description = `${req.session.email} ${actionVerb} ${equipmentRow.name} (${assignedUnit.code}) on behalf of ${targetEmail}, due ${returnDate}${pendingSuffix}`;
+    await logActivity(req.session.userId, status === 'pending' ? 'equipment_requested' : 'admin_equipment_borrowed', 'loan', result.lastID, description);
     return res.json({
-      message: `Equipment borrowed successfully on behalf of ${targetEmail}. Assigned item: ${assignedUnit.code}.`,
-      equipmentCode: assignedUnit.code
+      message: status === 'pending'
+        ? `Equipment request submitted on behalf of ${targetEmail} and is awaiting admin approval. Assigned item: ${assignedUnit.code}.`
+        : `Equipment borrowed successfully on behalf of ${targetEmail}. Assigned item: ${assignedUnit.code}.`,
+      equipmentCode: assignedUnit.code,
+      status
     });
   }
 
-  res.json({ message: `Equipment borrowed successfully. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
+  res.json({
+    message: status === 'pending'
+      ? `Equipment request submitted and is awaiting admin approval. Assigned item: ${assignedUnit.code}.`
+      : `Equipment borrowed successfully. Assigned item: ${assignedUnit.code}.`,
+    equipmentCode: assignedUnit.code,
+    status
+  });
 });
 
 // Reserve equipment for a future date range. Similar to borrowing but with a
@@ -1911,18 +1935,34 @@ app.post('/api/reserve-equipment', requireLogin, async (req, res) => {
 
   const assignedUnit = availableUnits[0];
 
+  const status = equipmentRow.requiresApproval ? 'pending' : 'active';
   const result = await run(
-    'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate) VALUES (?, ?, ?, ?, ?)',
-    [targetUserId, equipmentId, assignedUnit.id, startDate, returnDate]
+    'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate, status) VALUES (?, ?, ?, ?, ?, ?)',
+    [targetUserId, equipmentId, assignedUnit.id, startDate, returnDate, status]
   );
 
+  const actionVerb = status === 'pending' ? 'requested to reserve' : 'reserved';
+  const pendingSuffix = status === 'pending' ? ' (pending admin approval)' : '';
+
   if (targetUserId !== req.session.userId) {
-    const description = `${req.session.email} reserved ${equipmentRow.name} (${assignedUnit.code}) on behalf of ${targetEmail}, starting ${startDate}`;
-    await logActivity(req.session.userId, 'admin_equipment_reserved', 'loan', result.lastID, description);
-    return res.json({ message: `Equipment reserved successfully on behalf of ${targetEmail}. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
+    const description = `${req.session.email} ${actionVerb} ${equipmentRow.name} (${assignedUnit.code}) on behalf of ${targetEmail}, starting ${startDate}${pendingSuffix}`;
+    await logActivity(req.session.userId, status === 'pending' ? 'equipment_requested' : 'admin_equipment_reserved', 'loan', result.lastID, description);
+    return res.json({
+      message: status === 'pending'
+        ? `Equipment reservation request submitted on behalf of ${targetEmail} and is awaiting admin approval. Assigned item: ${assignedUnit.code}.`
+        : `Equipment reserved successfully on behalf of ${targetEmail}. Assigned item: ${assignedUnit.code}.`,
+      equipmentCode: assignedUnit.code,
+      status
+    });
   }
 
-  res.json({ message: `Equipment reserved successfully. Assigned item: ${assignedUnit.code}.`, equipmentCode: assignedUnit.code });
+  res.json({
+    message: status === 'pending'
+      ? `Equipment reservation request submitted and is awaiting admin approval. Assigned item: ${assignedUnit.code}.`
+      : `Equipment reserved successfully. Assigned item: ${assignedUnit.code}.`,
+    equipmentCode: assignedUnit.code,
+    status
+  });
 });
 
 // Return bookings for a single room across a 7-day week for the timetable view.
@@ -2369,8 +2409,8 @@ app.post('/api/admin/loans/:id/cancel', requireAdmin, async (req, res) => {
   }
 
   const loan = rows[0];
-  if (loan.status !== 'active') {
-    return res.status(400).json({ error: 'Only active loans can be cancelled.' });
+  if (!['active', 'pending'].includes(loan.status)) {
+    return res.status(400).json({ error: 'Only active or pending loans can be cancelled.' });
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -2384,6 +2424,73 @@ app.post('/api/admin/loans/:id/cancel', requireAdmin, async (req, res) => {
   await logActivity(req.session.userId, 'admin_loan_cancelled', 'loan', loanId, description);
 
   res.json({ message: 'Loan cancelled successfully.' });
+});
+
+// Approve a pending equipment loan request as admin.
+app.post('/api/admin/loans/:id/approve', requireAdmin, async (req, res) => {
+  const loanId = Number(req.params.id);
+  if (!Number.isFinite(loanId) || loanId <= 0) {
+    return res.status(400).json({ error: 'Invalid loan ID.' });
+  }
+
+  const rows = await query(
+    `SELECT l.id, l.borrowDate, l.returnDate, l.status, u.email AS userEmail
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     WHERE l.id = ?`,
+    [loanId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Loan not found.' });
+  }
+
+  const loan = rows[0];
+  if (loan.status !== 'pending') {
+    return res.status(400).json({ error: 'Only pending loans can be approved.' });
+  }
+
+  await run('UPDATE loans SET status = ? WHERE id = ?', ['active', loanId]);
+
+  const description = `${req.session.email} approved equipment request #${loanId} for ${loan.userEmail} (${loan.borrowDate} to ${loan.returnDate})`;
+  await logActivity(req.session.userId, 'admin_loan_approved', 'loan', loanId, description);
+
+  res.json({ message: 'Equipment request approved successfully.' });
+});
+
+// Deny a pending equipment loan request as admin.
+app.post('/api/admin/loans/:id/deny', requireAdmin, async (req, res) => {
+  const loanId = Number(req.params.id);
+  const reason = String(req.body?.reason || '').trim();
+
+  if (!Number.isFinite(loanId) || loanId <= 0) {
+    return res.status(400).json({ error: 'Invalid loan ID.' });
+  }
+
+  const rows = await query(
+    `SELECT l.id, l.borrowDate, l.returnDate, l.status, u.email AS userEmail
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     WHERE l.id = ?`,
+    [loanId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Loan not found.' });
+  }
+
+  const loan = rows[0];
+  if (loan.status !== 'pending') {
+    return res.status(400).json({ error: 'Only pending loans can be denied.' });
+  }
+
+  await run('UPDATE loans SET status = ? WHERE id = ?', ['denied', loanId]);
+
+  const description = `${req.session.email} denied equipment request #${loanId} for ${loan.userEmail} (${loan.borrowDate} to ${loan.returnDate})`
+    + (reason ? ` — Reason: ${reason}` : '');
+  await logActivity(req.session.userId, 'admin_loan_denied', 'loan', loanId, description);
+
+  res.json({ message: 'Equipment request denied successfully.' });
 });
 
 // Edit an equipment loan return date as admin.
@@ -2659,7 +2766,7 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
 // Return all equipment for admin equipment management.
 app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
   const equipmentRows = await query(
-    `SELECT e.id, e.name,
+    `SELECT e.id, e.name, e.requiresApproval,
             COALESCE(unitCounts.totalUnits, 0) AS quantity
      FROM equipment e
      LEFT JOIN (
@@ -2692,10 +2799,10 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
     return acc;
   }, {});
 
-  const statusCountKeys = { available: 'available', reserved: 'reserved', 'checked-out': 'checkedOut', overdue: 'overdue', 'in-maintenance': 'inMaintenance' };
+  const statusCountKeys = { available: 'available', pending: 'pending', reserved: 'reserved', 'checked-out': 'checkedOut', overdue: 'overdue', 'in-maintenance': 'inMaintenance' };
   const equipment = equipmentRows.map((item) => {
     const codes = codesByEquipmentId[item.id] || [];
-    const statusCounts = { available: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
+    const statusCounts = { available: 0, pending: 0, reserved: 0, checkedOut: 0, overdue: 0, inMaintenance: 0 };
     for (const unit of codes) {
       const key = statusCountKeys[unit.status];
       if (key) statusCounts[key] += 1;
@@ -2831,6 +2938,32 @@ app.patch('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
       name: equipmentName,
       quantity
     }
+  });
+});
+
+// Update whether an equipment item requires admin approval before a borrow/reserve
+// request becomes active. Admin only.
+app.patch('/api/admin/equipment/:id/policy', requireAdmin, async (req, res) => {
+  const equipmentId = Number(req.params.id);
+  if (!Number.isFinite(equipmentId) || equipmentId <= 0) {
+    return res.status(400).json({ error: 'Invalid equipment ID.' });
+  }
+
+  const equipmentRows = await query('SELECT id, name FROM equipment WHERE id = ?', [equipmentId]);
+  if (equipmentRows.length === 0) {
+    return res.status(404).json({ error: 'Equipment not found.' });
+  }
+
+  const requiresApproval = req.body?.requiresApproval === true || req.body?.requiresApproval === 'true' ? 1 : 0;
+
+  await run('UPDATE equipment SET requiresApproval = ? WHERE id = ?', [requiresApproval, equipmentId]);
+
+  const description = `${req.session.email} set ${equipmentRows[0].name} to ${requiresApproval ? 'require' : 'not require'} admin approval`;
+  await logActivity(req.session.userId, 'equipment_policy_updated', 'equipment', equipmentId, description);
+
+  res.json({
+    message: 'Equipment policy updated successfully.',
+    equipment: { id: equipmentId, requiresApproval }
   });
 });
 

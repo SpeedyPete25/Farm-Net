@@ -11,6 +11,7 @@ import { renderListState } from './utils.js';
  *   name: string,
  *   quantity: number,
  *   available: number,
+ *   requiresApproval?: 0|1,
  *   statusCounts?: { inMaintenance: number }
  * }} EquipmentAvailability
  */
@@ -88,6 +89,7 @@ export function createEquipmentPage({ equipmentList, onBorrow, onReserve }) {
           <div>
             <strong>${item.name}</strong>
             <p>Available: ${item.available} / ${item.quantity}</p>
+            ${item.requiresApproval ? '<span class="status-label pending">Requires admin approval</span>' : ''}
           </div>
           <div class="item-actions">
             <button ${item.available === 0 ? 'disabled' : ''} data-action="borrow-equipment" data-equipment-id="${item.id}" data-equipment-name="${item.name}">Borrow</button>
