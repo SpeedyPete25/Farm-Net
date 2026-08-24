@@ -1600,6 +1600,292 @@ test('automated integration coverage for critical flows', async (t) => {
     const memberRequestsAfterCancel = await memberClient.request('/api/my-requests?status=all');
     const cancelledLoan = memberRequestsAfterCancel.body.loans.find((loan) => loan.id === thirdPendingLoan.id);
     assert.equal(cancelledLoan.status, 'cancelled');
+
+    // Reservations (not just immediate borrows) also respect the approval policy
+    // and hold their unit for the reserved period while pending.
+    const reserveStartDate = formatDateFromToday(10);
+    const reservationRequest = await memberClient.request('/api/reserve-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, startDate: reserveStartDate, days: 2 })
+    });
+    assert.equal(reservationRequest.status, 200);
+    assert.equal(reservationRequest.body.status, 'pending');
+    assert.match(reservationRequest.body.message, /reservation request submitted.*awaiting admin approval/i);
+
+    const pendingReservation = (await memberClient.request('/api/my-requests?status=all'))
+      .body.loans.find((loan) => loan.status === 'pending' && loan.borrowDate === reserveStartDate);
+    assert.ok(pendingReservation);
+
+    // The single unit is now held for that period, so an overlapping reservation is blocked.
+    const blockedReservation = await otherMemberClient.request('/api/reserve-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: addedEquipment.id, startDate: reserveStartDate, days: 1 })
+    });
+    assert.equal(blockedReservation.status, 400);
+    assert.equal(blockedReservation.body.error, 'No equipment available for the requested period.');
+
+    const approveReservation = await adminClient.request(`/api/admin/loans/${pendingReservation.id}/approve`, { method: 'POST' });
+    assert.equal(approveReservation.status, 200);
+
+    const memberRequestsAfterReservationApprove = await memberClient.request('/api/my-requests?status=all');
+    const approvedReservation = memberRequestsAfterReservationApprove.body.loans.find((loan) => loan.id === pendingReservation.id);
+    assert.equal(approvedReservation.status, 'active');
+  });
+
+  await t.test('supports bundling equipment into kits and borrowing/reserving them as one request', async () => {
+    const adminEmail = uniqueEmail('kit-admin');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    const login = await loginUser(adminClient, adminEmail, password);
+    assert.equal(login.role, 'admin');
+
+    const suffix = Date.now();
+    const testerName = `Fence Tester ${suffix}`;
+    const driverName = `Post Driver ${suffix}`;
+
+    const addTester = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: testerName, quantity: 1 })
+    });
+    assert.equal(addTester.status, 200);
+
+    const addDriver = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: driverName, quantity: 2 })
+    });
+    assert.equal(addDriver.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const testerEquipment = equipmentList.body.equipment.find((item) => item.name === testerName);
+    const driverEquipment = equipmentList.body.equipment.find((item) => item.name === driverName);
+    assert.ok(testerEquipment);
+    assert.ok(driverEquipment);
+
+    const memberEmail = uniqueEmail('kit-member');
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    // Non-admins cannot manage kits.
+    const nonAdminCreate = await memberClient.request('/api/admin/kits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Sneaky Kit', items: [{ equipmentId: testerEquipment.id, quantity: 1 }] })
+    });
+    assert.equal(nonAdminCreate.status, 403);
+
+    // Validation: no items, and a reference to equipment that doesn't exist.
+    const emptyKit = await adminClient.request('/api/admin/kits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `Fencing Kit ${suffix}`, items: [] })
+    });
+    assert.equal(emptyKit.status, 400);
+
+    const badKit = await adminClient.request('/api/admin/kits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `Fencing Kit ${suffix}`, items: [{ equipmentId: 9999999, quantity: 1 }] })
+    });
+    assert.equal(badKit.status, 400);
+
+    // Create a real kit: 1 tester + 2 post drivers.
+    const kitName = `Fencing Kit ${suffix}`;
+    const createKit = await adminClient.request('/api/admin/kits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: kitName,
+        items: [
+          { equipmentId: testerEquipment.id, quantity: 1 },
+          { equipmentId: driverEquipment.id, quantity: 2 }
+        ]
+      })
+    });
+    assert.equal(createKit.status, 200);
+
+    const duplicateKit = await adminClient.request('/api/admin/kits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: kitName, items: [{ equipmentId: testerEquipment.id, quantity: 1 }] })
+    });
+    assert.equal(duplicateKit.status, 400);
+
+    const kitsAfterCreate = await adminClient.request('/api/admin/kits');
+    const kit = kitsAfterCreate.body.kits.find((k) => k.name === kitName);
+    assert.ok(kit);
+    assert.equal(kit.items.length, 2);
+
+    // The kit should surface in /api/resources with computed availability
+    // (limited by the scarcer component — 1 tester caps it at 1 complete kit).
+    const resourcesBeforeBorrow = await getResources(memberClient);
+    const kitResource = resourcesBeforeBorrow.kits.find((k) => k.id === kit.id);
+    assert.ok(kitResource);
+    assert.equal(kitResource.available, 1);
+    assert.equal(kitResource.requiresApproval, 0);
+
+    // Borrowing the kit creates one loan per unit (1 + 2 = 3), all sharing a kitLoanGroupId.
+    const borrowKit = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 3 })
+    });
+    assert.equal(borrowKit.status, 200);
+    assert.equal(borrowKit.body.items.length, 3);
+    assert.ok(borrowKit.body.items.every((item) => item.status === 'active'));
+    const kitLoanGroupId = borrowKit.body.kitLoanGroupId;
+    assert.ok(kitLoanGroupId);
+
+    const memberRequestsAfterBorrow = await memberClient.request('/api/my-requests?status=all');
+    const groupLoans = memberRequestsAfterBorrow.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
+    assert.equal(groupLoans.length, 3);
+    assert.ok(groupLoans.every((loan) => loan.kitId === kit.id && loan.kitName === kitName && loan.status === 'active'));
+
+    // With the tester's only unit now checked out, the kit is fully unavailable.
+    const resourcesAfterBorrow = await getResources(memberClient);
+    const kitResourceAfterBorrow = resourcesAfterBorrow.kits.find((k) => k.id === kit.id);
+    assert.equal(kitResourceAfterBorrow.available, 0);
+
+    // A second borrow attempt fails outright (atomic all-or-nothing) rather than
+    // partially assigning the still-available post drivers.
+    const shortageBorrow = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 1 })
+    });
+    assert.equal(shortageBorrow.status, 400);
+    assert.match(shortageBorrow.body.error, /Fence Tester/);
+
+    // Cancel the whole kit request at once as the borrower, freeing every component.
+    const selfCancelKit = await memberClient.request('/api/cancel-kit-loan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitLoanGroupId })
+    });
+    assert.equal(selfCancelKit.status, 200);
+
+    const memberRequestsAfterCancel = await memberClient.request('/api/my-requests?status=all');
+    const cancelledGroupLoans = memberRequestsAfterCancel.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
+    assert.ok(cancelledGroupLoans.every((loan) => loan.status === 'cancelled'));
+
+    const resourcesAfterCancel = await getResources(memberClient);
+    assert.equal(resourcesAfterCancel.kits.find((k) => k.id === kit.id).available, 1);
+
+    // Turning on approval for just the tester makes a fresh kit borrow mixed-status:
+    // the tester's loan goes pending while the post drivers (no approval needed) stay active.
+    const policyUpdate = await adminClient.request(`/api/admin/equipment/${testerEquipment.id}/policy`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requiresApproval: true })
+    });
+    assert.equal(policyUpdate.status, 200);
+
+    const resourcesWithPolicy = await getResources(memberClient);
+    assert.equal(resourcesWithPolicy.kits.find((k) => k.id === kit.id).requiresApproval, 1);
+
+    const mixedBorrow = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 2 })
+    });
+    assert.equal(mixedBorrow.status, 200);
+    const mixedGroupId = mixedBorrow.body.kitLoanGroupId;
+    const pendingItems = mixedBorrow.body.items.filter((item) => item.status === 'pending');
+    const activeItems = mixedBorrow.body.items.filter((item) => item.status === 'active');
+    assert.equal(pendingItems.length, 1);
+    assert.equal(activeItems.length, 2);
+
+    // Bulk-approving the kit request only touches the pending item(s); already-active
+    // items are untouched (and re-approving is a no-op, not an error, per-item).
+    const nonAdminApproveKit = await memberClient.request(`/api/admin/kit-loans/${mixedGroupId}/approve`, { method: 'POST' });
+    assert.equal(nonAdminApproveKit.status, 403);
+
+    const approveKit = await adminClient.request(`/api/admin/kit-loans/${mixedGroupId}/approve`, { method: 'POST' });
+    assert.equal(approveKit.status, 200);
+
+    const memberRequestsAfterApprove = await memberClient.request('/api/my-requests?status=all');
+    const approvedGroupLoans = memberRequestsAfterApprove.body.loans.filter((loan) => loan.kitLoanGroupId === mixedGroupId);
+    assert.equal(approvedGroupLoans.length, 3);
+    assert.ok(approvedGroupLoans.every((loan) => loan.status === 'active'));
+
+    // Admin can bulk-cancel the whole (now fully active) kit request too.
+    const adminCancelKit = await adminClient.request(`/api/admin/kit-loans/${mixedGroupId}/cancel`, { method: 'POST' });
+    assert.equal(adminCancelKit.status, 200);
+
+    const memberRequestsAfterAdminCancel = await memberClient.request('/api/my-requests?status=all');
+    const cancelledMixedGroupLoans = memberRequestsAfterAdminCancel.body.loans.filter((loan) => loan.kitLoanGroupId === mixedGroupId);
+    assert.ok(cancelledMixedGroupLoans.every((loan) => loan.status === 'cancelled'));
+
+    // Denying a pending kit request marks its pending item(s) denied and frees them up.
+    const secondMixedBorrow = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 2 })
+    });
+    assert.equal(secondMixedBorrow.status, 200);
+    const secondMixedGroupId = secondMixedBorrow.body.kitLoanGroupId;
+
+    const denyKit = await adminClient.request(`/api/admin/kit-loans/${secondMixedGroupId}/deny`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Tester needs recalibration.' })
+    });
+    assert.equal(denyKit.status, 200);
+
+    const memberRequestsAfterDeny = await memberClient.request('/api/my-requests?status=all');
+    const deniedGroupLoans = memberRequestsAfterDeny.body.loans.filter((loan) => loan.kitLoanGroupId === secondMixedGroupId);
+    const deniedTesterLoan = deniedGroupLoans.find((loan) => loan.equipmentName === testerName);
+    const stillActiveDriverLoans = deniedGroupLoans.filter((loan) => loan.equipmentName === driverName);
+    assert.equal(deniedTesterLoan.status, 'denied');
+    assert.ok(stillActiveDriverLoans.every((loan) => loan.status === 'active'));
+
+    // Clean up the still-active driver loans from the denied request so later
+    // assertions in this test aren't affected by leftover state.
+    await memberClient.request('/api/cancel-kit-loan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitLoanGroupId: secondMixedGroupId })
+    });
+
+    // Updating a kit's composition (admin) changes future availability computation.
+    const updateKit = await adminClient.request(`/api/admin/kits/${kit.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: kitName, items: [{ equipmentId: driverEquipment.id, quantity: 1 }] })
+    });
+    assert.equal(updateKit.status, 200);
+
+    const resourcesAfterUpdate = await getResources(memberClient);
+    const updatedKitResource = resourcesAfterUpdate.kits.find((k) => k.id === kit.id);
+    assert.equal(updatedKitResource.items.length, 1);
+    assert.equal(updatedKitResource.available, 2);
+
+    // Reserving a kit for a future period respects the same all-or-nothing availability check.
+    const reserveStartDate = formatDateFromToday(12);
+    const reserveKit = await memberClient.request('/api/reserve-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, startDate: reserveStartDate, days: 2 })
+    });
+    assert.equal(reserveKit.status, 200);
+    assert.equal(reserveKit.body.items.length, 1);
+
+    // Deleting a kit does not disturb loans already created from it.
+    const deleteKit = await adminClient.request(`/api/admin/kits/${kit.id}`, { method: 'DELETE' });
+    assert.equal(deleteKit.status, 200);
+
+    const memberRequestsAfterDelete = await memberClient.request('/api/my-requests?status=all');
+    const survivingLoan = memberRequestsAfterDelete.body.loans.find((loan) => loan.kitLoanGroupId === reserveKit.body.kitLoanGroupId);
+    assert.ok(survivingLoan);
+    assert.equal(survivingLoan.status, 'active');
   });
 
   await t.test('enforces configurable room policies and the admin booking approval workflow', async () => {

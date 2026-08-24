@@ -475,6 +475,87 @@ async function getAvailableUnitsForPeriod(equipmentId, startDate, endDate) {
 }
 
 /**
+ * Load every equipment kit with its component items (equipment id, name, quantity required).
+ * @returns {Promise<Array<{ id: number, name: string, items: Array<{ id: number, equipmentId: number, equipmentName: string, quantity: number }> }>>}
+ */
+async function getKits() {
+  const kits = await query('SELECT id, name FROM equipment_kits ORDER BY name ASC');
+  const items = await query(
+    `SELECT ki.id, ki.kitId, ki.equipmentId, ki.quantity, e.name AS equipmentName
+     FROM equipment_kit_items ki
+     JOIN equipment e ON e.id = ki.equipmentId
+     ORDER BY e.name ASC`
+  );
+
+  const itemsByKitId = items.reduce((acc, item) => {
+    if (!acc[item.kitId]) acc[item.kitId] = [];
+    acc[item.kitId].push(item);
+    return acc;
+  }, {});
+
+  return kits.map((kit) => ({ ...kit, items: itemsByKitId[kit.id] || [] }));
+}
+
+/**
+ * Compute how many complete kits could currently be assembled from available equipment,
+ * given a status-count breakdown per equipment id (see /api/resources).
+ * @param {Record<number, { available: number }>} statusCountsByEquipmentId
+ * @param {Array<{ id: number, requiresApproval: number }>} equipmentRows
+ * @returns {Promise<Array<{ id: number, name: string, available: number, requiresApproval: 0|1, items: Array<{ equipmentId: number, equipmentName: string, quantity: number, available: number }> }>>}
+ */
+async function getKitsWithAvailability(statusCountsByEquipmentId, equipmentRows) {
+  const kits = await getKits();
+  const requiresApprovalByEquipmentId = new Map(equipmentRows.map((row) => [row.id, row.requiresApproval]));
+
+  return kits.map((kit) => {
+    const items = kit.items.map((item) => ({
+      equipmentId: item.equipmentId,
+      equipmentName: item.equipmentName,
+      quantity: item.quantity,
+      available: statusCountsByEquipmentId[item.equipmentId]?.available || 0
+    }));
+
+    const available = items.length === 0
+      ? 0
+      : Math.min(...items.map((item) => Math.floor(item.available / item.quantity)));
+
+    const requiresApproval = kit.items.some((item) => requiresApprovalByEquipmentId.get(item.equipmentId)) ? 1 : 0;
+
+    return { id: kit.id, name: kit.name, available, requiresApproval, items };
+  });
+}
+
+/**
+ * Create one loan row per assigned unit for a kit borrow/reserve request. All rows
+ * share a kitLoanGroupId (the first row's own id) so they can be tracked, approved,
+ * denied, and cancelled together, while each row's status is still governed
+ * independently by its own equipment's approval policy.
+ * @param {{ targetUserId: number, kitId: number, assignments: Array<{ equipmentId: number, equipmentName: string, requiresApproval: number, assignedUnits: Array<{ id: number, code: string }> }>, borrowDate: string, returnDate: string }} params
+ * @returns {Promise<{ kitLoanGroupId: number, createdLoans: Array<{ equipmentName: string, code: string, status: 'active'|'pending' }> }>}
+ */
+async function createKitLoanRows({ targetUserId, kitId, assignments, borrowDate, returnDate }) {
+  let kitLoanGroupId = null;
+  const createdLoans = [];
+
+  for (const item of assignments) {
+    const status = item.requiresApproval ? 'pending' : 'active';
+    for (const unit of item.assignedUnits) {
+      const result = await run(
+        'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate, status, kitId, kitLoanGroupId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [targetUserId, item.equipmentId, unit.id, borrowDate, returnDate, status, kitId, kitLoanGroupId]
+      );
+      if (kitLoanGroupId === null) {
+        kitLoanGroupId = result.lastID;
+        await run('UPDATE loans SET kitLoanGroupId = ? WHERE id = ?', [kitLoanGroupId, result.lastID]);
+      }
+      createdLoans.push({ equipmentName: item.equipmentName, code: unit.code, status });
+    }
+  }
+
+  return { kitLoanGroupId, createdLoans };
+}
+
+/**
  * Remove unassigned equipment units from a category.
  * @param {number} equipmentId
  * @param {number} count
@@ -900,6 +981,33 @@ async function initDatabase() {
     await run(`ALTER TABLE loans ADD COLUMN returnedAt TEXT`);
   }
 
+  const hasKitId = loanColumns.some(col => col.name === 'kitId');
+  if (!hasKitId) {
+    await run(`ALTER TABLE loans ADD COLUMN kitId INTEGER`);
+  }
+
+  // kitLoanGroupId groups every per-item loan created by a single kit borrow/reserve
+  // request. It's the id of the first loan row in the group; null for standalone loans.
+  const hasKitLoanGroupId = loanColumns.some(col => col.name === 'kitLoanGroupId');
+  if (!hasKitLoanGroupId) {
+    await run(`ALTER TABLE loans ADD COLUMN kitLoanGroupId INTEGER`);
+  }
+
+  await run(`CREATE TABLE IF NOT EXISTS equipment_kits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS equipment_kit_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kitId INTEGER NOT NULL,
+    equipmentId INTEGER NOT NULL,
+    quantity INTEGER NOT NULL,
+    FOREIGN KEY(kitId) REFERENCES equipment_kits(id),
+    FOREIGN KEY(equipmentId) REFERENCES equipment(id)
+  )`);
+
   await run(`CREATE TABLE IF NOT EXISTS damage_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     loanId INTEGER NOT NULL,
@@ -1172,7 +1280,9 @@ app.get('/api/resources', requireLogin, async (req, res) => {
     };
   });
 
-  res.json({ rooms, equipment: equipmentWithAvailability });
+  const kits = await getKitsWithAvailability(statusCountsByEquipmentId, equipment);
+
+  res.json({ rooms, equipment: equipmentWithAvailability, kits });
 });
 
 // Return the current user's room bookings and equipment loans.
@@ -1210,10 +1320,12 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   if (statusFilter === 'all') {
     loans = await query(
       `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate,
-              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt
+              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt,
+              l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
        LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+       LEFT JOIN equipment_kits k ON k.id = l.kitId
        WHERE l.userId = ?
        ORDER BY l.borrowDate DESC`,
       [userId]
@@ -1222,10 +1334,12 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     loans = await query(
       `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate,
-              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt
+              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt,
+              l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
        LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+       LEFT JOIN equipment_kits k ON k.id = l.kitId
        WHERE l.userId = ?
          AND l.status IN ('active', 'pending')
          AND l.returnDate >= ?
@@ -1293,6 +1407,30 @@ app.post('/api/cancel-loan', requireLogin, async (req, res) => {
 
   await run('UPDATE loans SET status = ? WHERE id = ?', ['cancelled', loanId]);
   res.json({ message: 'Loan cancelled successfully.' });
+});
+
+// Cancel every active/pending loan created by one kit borrow/reserve request, owned by the current user.
+app.post('/api/cancel-kit-loan', requireLogin, async (req, res) => {
+  const { kitLoanGroupId } = req.body;
+  if (!kitLoanGroupId) {
+    return res.status(400).json({ error: 'Kit loan group ID is required.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await query(
+    `SELECT id FROM loans
+     WHERE kitLoanGroupId = ? AND userId = ? AND status IN ('active', 'pending') AND returnDate >= ?`,
+    [kitLoanGroupId, req.session.userId, today]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'No cancellable loans found for this kit request.' });
+  }
+
+  const ids = rows.map((row) => row.id);
+  await run(`UPDATE loans SET status = 'cancelled' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  res.json({ message: `Cancelled ${ids.length} item(s) from this kit request.` });
 });
 
 // Mark an equipment loan as returned and capture return condition notes + optional photo.
@@ -2008,6 +2146,218 @@ app.post('/api/reserve-equipment', requireLogin, async (req, res) => {
   });
 });
 
+/**
+ * Resolve who a kit borrow/reserve request is for, honoring the same
+ * admin-borrows-on-behalf-of-another-user rule as single-item borrow/reserve.
+ * @param {import('express').Request} req
+ * @param {string} borrowerEmail Raw borrowerEmail from the request body.
+ * @param {string} verb Used only in the error message (e.g. "borrow a kit").
+ * @returns {Promise<{ error: string, status?: number }|{ targetUserId: number, targetEmail: string }>}
+ */
+async function resolveKitBorrower(req, borrowerEmail, verb) {
+  let targetUserId = req.session.userId;
+  let targetEmail = req.session.email;
+  const requestedEmail = typeof borrowerEmail === 'string' ? borrowerEmail.trim() : '';
+  if (requestedEmail) {
+    if (req.session.role !== 'admin') {
+      return { error: `Only admins can ${verb} on behalf of another user.`, status: 403 };
+    }
+    const targetUsers = await query('SELECT id, email FROM users WHERE email = ?', [requestedEmail]);
+    if (targetUsers.length === 0) {
+      return { error: 'No user found with that email.', status: 404 };
+    }
+    targetUserId = targetUsers[0].id;
+    targetEmail = targetUsers[0].email;
+  }
+  return { targetUserId, targetEmail };
+}
+
+/**
+ * Build the borrow/reserve response message and activity description for a kit request.
+ * @param {{ kitName: string, createdLoans: Array<{ status: 'active'|'pending' }>, summary: string, onBehalfEmail: string|null, verbActive: string, verbPending: string }} params
+ */
+function describeKitOutcome({ kitName, createdLoans, summary, onBehalfEmail, verbActive, verbPending }) {
+  const allActive = createdLoans.every((loan) => loan.status === 'active');
+  const onBehalf = onBehalfEmail ? ` on behalf of ${onBehalfEmail}` : '';
+  const message = allActive
+    ? `Kit "${kitName}" ${verbActive} successfully${onBehalf}. Assigned items: ${summary}.`
+    : `Kit "${kitName}" request submitted${onBehalf} and is awaiting admin approval (${verbPending}). Assigned items: ${summary}.`;
+  return { allActive, message };
+}
+
+// Borrow every component of an equipment kit as one request. Admin only. Either every
+// item is assigned immediately (status 'active') or, per component, held pending
+// approval if that equipment requires it — mirroring single-item borrow/reserve.
+app.post('/api/borrow-kit', requireLogin, async (req, res) => {
+  const { kitId, days, borrowerEmail } = req.body;
+  if (!kitId || !days) {
+    return res.status(400).json({ error: 'Kit and borrow duration are required.' });
+  }
+
+  const parsedDays = Number(days);
+  if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
+    return res.status(400).json({ error: 'Borrow duration must be a whole number of days.' });
+  }
+
+  const borrower = await resolveKitBorrower(req, borrowerEmail, 'borrow a kit');
+  if (borrower.error) {
+    return res.status(borrower.status).json({ error: borrower.error });
+  }
+  const { targetUserId, targetEmail } = borrower;
+
+  const kitRows = await query('SELECT id, name FROM equipment_kits WHERE id = ?', [kitId]);
+  if (kitRows.length === 0) {
+    return res.status(404).json({ error: 'Kit not found.' });
+  }
+  const kit = kitRows[0];
+
+  const kitItemRows = await query(
+    `SELECT ki.equipmentId, ki.quantity, e.name AS equipmentName, e.quantity AS equipmentQuantity, e.requiresApproval
+     FROM equipment_kit_items ki
+     JOIN equipment e ON e.id = ki.equipmentId
+     WHERE ki.kitId = ?`,
+    [kitId]
+  );
+  if (kitItemRows.length === 0) {
+    return res.status(400).json({ error: 'This kit has no items configured.' });
+  }
+
+  // Keep each component's unit pool in sync with its configured quantity before checking availability.
+  for (const item of kitItemRows) {
+    const unitCountRows = await query('SELECT COUNT(*) AS count FROM equipment_units WHERE equipmentId = ?', [item.equipmentId]);
+    const unitCount = Number(unitCountRows[0]?.count || 0);
+    const requiredUnits = Number(item.equipmentQuantity || 0);
+    if (unitCount < requiredUnits) {
+      await addEquipmentUnits(item.equipmentId, item.equipmentName, requiredUnits - unitCount);
+    }
+  }
+
+  const borrowDate = new Date().toISOString().slice(0, 10);
+  const returnDate = new Date(Date.now() + parsedDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  // Validate every component has enough available units before creating any loans,
+  // so a kit request either fully succeeds or fails outright rather than partially assigning.
+  const shortages = [];
+  const assignments = [];
+  for (const item of kitItemRows) {
+    const unitStatuses = await getEquipmentUnitStatuses(item.equipmentId);
+    const freeUnits = unitStatuses.filter((unit) => unit.status === 'available');
+    if (freeUnits.length < item.quantity) {
+      shortages.push(`${item.equipmentName} (need ${item.quantity}, ${freeUnits.length} available)`);
+      continue;
+    }
+    assignments.push({ ...item, assignedUnits: freeUnits.slice(0, item.quantity) });
+  }
+
+  if (shortages.length > 0) {
+    return res.status(400).json({ error: `Not enough equipment available for this kit: ${shortages.join(', ')}.` });
+  }
+
+  const { kitLoanGroupId, createdLoans } = await createKitLoanRows({
+    targetUserId, kitId: kit.id, assignments, borrowDate, returnDate
+  });
+
+  const summary = createdLoans.map((loan) => `${loan.equipmentName} (${loan.code})`).join(', ');
+  const onBehalfEmail = targetUserId !== req.session.userId ? targetEmail : null;
+  const { allActive, message } = describeKitOutcome({
+    kitName: kit.name, createdLoans, summary, onBehalfEmail, verbActive: 'borrowed', verbPending: 'due ' + returnDate
+  });
+
+  const description = `${req.session.email} ${allActive ? 'borrowed' : 'requested to borrow'} kit "${kit.name}" (${summary})`
+    + (onBehalfEmail ? ` on behalf of ${onBehalfEmail}` : '') + `, due ${returnDate}`;
+  await logActivity(req.session.userId, allActive ? 'kit_borrowed' : 'kit_requested', 'loan', kitLoanGroupId, description);
+
+  res.json({ message, kitLoanGroupId, items: createdLoans });
+});
+
+// Reserve every component of an equipment kit for a future date range. Same all-or-nothing
+// validation as borrow-kit, but checks availability across the requested period.
+app.post('/api/reserve-kit', requireLogin, async (req, res) => {
+  const { kitId, startDate, days, borrowerEmail } = req.body;
+  if (!kitId || !startDate || !days) {
+    return res.status(400).json({ error: 'Kit, start date and duration are required.' });
+  }
+
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(startDate)) {
+    return res.status(400).json({ error: 'Start date must be in YYYY-MM-DD format.' });
+  }
+
+  const parsedDays = Number(days);
+  if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
+    return res.status(400).json({ error: 'Reservation duration must be a whole number of days.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (startDate <= today) {
+    return res.status(400).json({ error: 'Start date must be in the future for reservations.' });
+  }
+
+  const borrower = await resolveKitBorrower(req, borrowerEmail, 'reserve a kit');
+  if (borrower.error) {
+    return res.status(borrower.status).json({ error: borrower.error });
+  }
+  const { targetUserId, targetEmail } = borrower;
+
+  const kitRows = await query('SELECT id, name FROM equipment_kits WHERE id = ?', [kitId]);
+  if (kitRows.length === 0) {
+    return res.status(404).json({ error: 'Kit not found.' });
+  }
+  const kit = kitRows[0];
+
+  const kitItemRows = await query(
+    `SELECT ki.equipmentId, ki.quantity, e.name AS equipmentName, e.quantity AS equipmentQuantity, e.requiresApproval
+     FROM equipment_kit_items ki
+     JOIN equipment e ON e.id = ki.equipmentId
+     WHERE ki.kitId = ?`,
+    [kitId]
+  );
+  if (kitItemRows.length === 0) {
+    return res.status(400).json({ error: 'This kit has no items configured.' });
+  }
+
+  for (const item of kitItemRows) {
+    const unitCountRows = await query('SELECT COUNT(*) AS count FROM equipment_units WHERE equipmentId = ?', [item.equipmentId]);
+    const unitCount = Number(unitCountRows[0]?.count || 0);
+    const requiredUnits = Number(item.equipmentQuantity || 0);
+    if (unitCount < requiredUnits) {
+      await addEquipmentUnits(item.equipmentId, item.equipmentName, requiredUnits - unitCount);
+    }
+  }
+
+  const returnDate = new Date(Date.parse(`${startDate}T00:00:00`) + parsedDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const shortages = [];
+  const assignments = [];
+  for (const item of kitItemRows) {
+    const freeUnits = await getAvailableUnitsForPeriod(item.equipmentId, startDate, returnDate);
+    if (!freeUnits || freeUnits.length < item.quantity) {
+      shortages.push(`${item.equipmentName} (need ${item.quantity}, ${freeUnits ? freeUnits.length : 0} available)`);
+      continue;
+    }
+    assignments.push({ ...item, assignedUnits: freeUnits.slice(0, item.quantity) });
+  }
+
+  if (shortages.length > 0) {
+    return res.status(400).json({ error: `Not enough equipment available for this kit for the requested period: ${shortages.join(', ')}.` });
+  }
+
+  const { kitLoanGroupId, createdLoans } = await createKitLoanRows({
+    targetUserId, kitId: kit.id, assignments, borrowDate: startDate, returnDate
+  });
+
+  const summary = createdLoans.map((loan) => `${loan.equipmentName} (${loan.code})`).join(', ');
+  const onBehalfEmail = targetUserId !== req.session.userId ? targetEmail : null;
+  const { allActive, message } = describeKitOutcome({
+    kitName: kit.name, createdLoans, summary, onBehalfEmail, verbActive: 'reserved', verbPending: 'starting ' + startDate
+  });
+
+  const description = `${req.session.email} ${allActive ? 'reserved' : 'requested to reserve'} kit "${kit.name}" (${summary})`
+    + (onBehalfEmail ? ` on behalf of ${onBehalfEmail}` : '') + `, starting ${startDate}`;
+  await logActivity(req.session.userId, allActive ? 'kit_reserved' : 'kit_requested', 'loan', kitLoanGroupId, description);
+
+  res.json({ message, kitLoanGroupId, items: createdLoans });
+});
+
 // Return bookings for a single room across a 7-day week for the timetable view.
 // weekStart must be a Monday in YYYY-MM-DD format.
 app.get('/api/timetable', requireLogin, async (req, res) => {
@@ -2110,11 +2460,13 @@ app.get('/api/admin/loans', requireAdmin, async (req, res) => {
     loans = await query(
       `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
               eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status,
-              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt
+              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt,
+              l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN users u ON u.id = l.userId
        JOIN equipment e ON e.id = l.equipmentId
        LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+       LEFT JOIN equipment_kits k ON k.id = l.kitId
        ORDER BY l.borrowDate DESC, l.id DESC`,
       []
     );
@@ -2123,11 +2475,13 @@ app.get('/api/admin/loans', requireAdmin, async (req, res) => {
     loans = await query(
       `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
               eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status,
-              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt
+              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt,
+              l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN users u ON u.id = l.userId
        JOIN equipment e ON e.id = l.equipmentId
        LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+       LEFT JOIN equipment_kits k ON k.id = l.kitId
        WHERE l.status = 'active'
          AND l.returnDate >= ?
        ORDER BY l.borrowDate DESC, l.id DESC`,
@@ -2534,6 +2888,96 @@ app.post('/api/admin/loans/:id/deny', requireAdmin, async (req, res) => {
   await logActivity(req.session.userId, 'admin_loan_denied', 'loan', loanId, description);
 
   res.json({ message: 'Equipment request denied successfully.' });
+});
+
+// Approve every pending loan created by one kit borrow/reserve request. Admin only.
+app.post('/api/admin/kit-loans/:groupId/approve', requireAdmin, async (req, res) => {
+  const groupId = Number(req.params.groupId);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    return res.status(400).json({ error: 'Invalid kit loan group ID.' });
+  }
+
+  const rows = await query(
+    `SELECT l.id, u.email AS userEmail, k.name AS kitName
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     LEFT JOIN equipment_kits k ON k.id = l.kitId
+     WHERE l.kitLoanGroupId = ? AND l.status = 'pending'`,
+    [groupId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'No pending loans found for this kit request.' });
+  }
+
+  const ids = rows.map((row) => row.id);
+  await run(`UPDATE loans SET status = 'active' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  const description = `${req.session.email} approved ${ids.length} pending item(s) of kit request "${rows[0].kitName}" for ${rows[0].userEmail}`;
+  await logActivity(req.session.userId, 'admin_kit_loan_approved', 'loan', groupId, description);
+
+  res.json({ message: `Approved ${ids.length} item(s) in this kit request.` });
+});
+
+// Deny every pending loan created by one kit borrow/reserve request. Admin only.
+app.post('/api/admin/kit-loans/:groupId/deny', requireAdmin, async (req, res) => {
+  const groupId = Number(req.params.groupId);
+  const reason = String(req.body?.reason || '').trim();
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    return res.status(400).json({ error: 'Invalid kit loan group ID.' });
+  }
+
+  const rows = await query(
+    `SELECT l.id, u.email AS userEmail, k.name AS kitName
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     LEFT JOIN equipment_kits k ON k.id = l.kitId
+     WHERE l.kitLoanGroupId = ? AND l.status = 'pending'`,
+    [groupId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'No pending loans found for this kit request.' });
+  }
+
+  const ids = rows.map((row) => row.id);
+  await run(`UPDATE loans SET status = 'denied' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  const description = `${req.session.email} denied ${ids.length} pending item(s) of kit request "${rows[0].kitName}" for ${rows[0].userEmail}`
+    + (reason ? ` — Reason: ${reason}` : '');
+  await logActivity(req.session.userId, 'admin_kit_loan_denied', 'loan', groupId, description);
+
+  res.json({ message: `Denied ${ids.length} item(s) in this kit request.` });
+});
+
+// Cancel every active/pending loan created by one kit borrow/reserve request. Admin only.
+app.post('/api/admin/kit-loans/:groupId/cancel', requireAdmin, async (req, res) => {
+  const groupId = Number(req.params.groupId);
+  if (!Number.isFinite(groupId) || groupId <= 0) {
+    return res.status(400).json({ error: 'Invalid kit loan group ID.' });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await query(
+    `SELECT l.id, u.email AS userEmail, k.name AS kitName
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     LEFT JOIN equipment_kits k ON k.id = l.kitId
+     WHERE l.kitLoanGroupId = ? AND l.status IN ('active', 'pending') AND l.returnDate >= ?`,
+    [groupId, today]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'No cancellable loans found for this kit request.' });
+  }
+
+  const ids = rows.map((row) => row.id);
+  await run(`UPDATE loans SET status = 'cancelled' WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+
+  const description = `${req.session.email} cancelled ${ids.length} item(s) of kit request "${rows[0].kitName}" for ${rows[0].userEmail}`;
+  await logActivity(req.session.userId, 'admin_kit_loan_cancelled', 'loan', groupId, description);
+
+  res.json({ message: `Cancelled ${ids.length} item(s) in this kit request.` });
 });
 
 // Edit an equipment loan return date as admin.
@@ -3081,6 +3525,147 @@ app.delete('/api/admin/equipment/:id', requireAdmin, async (req, res) => {
   await logActivity(req.session.userId, 'equipment_removed', 'equipment', equipmentId, description);
 
   res.json({ message: 'Equipment removed successfully.' });
+});
+
+/**
+ * Validate a kit's name and items payload shared by create/update endpoints.
+ * @param {object} body Request body containing `name` and `items`.
+ * @returns {Promise<{ error: string }|{ name: string, items: Array<{ equipmentId: number, quantity: number }> }>}
+ */
+async function parseKitInput(body) {
+  const name = String(body?.name || '').trim();
+  if (!name) {
+    return { error: 'Kit name is required.' };
+  }
+
+  const rawItems = Array.isArray(body?.items) ? body.items : [];
+  if (rawItems.length === 0) {
+    return { error: 'A kit must contain at least one equipment item.' };
+  }
+
+  const items = [];
+  const seenEquipmentIds = new Set();
+  for (const rawItem of rawItems) {
+    const equipmentId = Number(rawItem?.equipmentId);
+    const quantity = Number(rawItem?.quantity);
+
+    if (!Number.isFinite(equipmentId) || equipmentId <= 0) {
+      return { error: 'Each kit item must reference a valid equipment ID.' };
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return { error: 'Each kit item quantity must be a whole number greater than 0.' };
+    }
+    if (seenEquipmentIds.has(equipmentId)) {
+      return { error: 'Each equipment item can only appear once per kit.' };
+    }
+    seenEquipmentIds.add(equipmentId);
+    items.push({ equipmentId, quantity });
+  }
+
+  const equipmentIds = items.map((item) => item.equipmentId);
+  const existingRows = await query(
+    `SELECT id FROM equipment WHERE id IN (${equipmentIds.map(() => '?').join(',')})`,
+    equipmentIds
+  );
+  if (existingRows.length !== equipmentIds.length) {
+    return { error: 'One or more kit items reference equipment that no longer exists.' };
+  }
+
+  return { name, items };
+}
+
+// Return all equipment kits with their component items. Admin only.
+app.get('/api/admin/kits', requireAdmin, async (req, res) => {
+  const kits = await getKits();
+  res.json({ kits });
+});
+
+// Create a new equipment kit. Admin only.
+app.post('/api/admin/kits', requireAdmin, async (req, res) => {
+  const parsed = await parseKitInput(req.body);
+  if (parsed.error) {
+    return res.status(400).json({ error: parsed.error });
+  }
+
+  const duplicateName = await query('SELECT id FROM equipment_kits WHERE LOWER(name) = LOWER(?) LIMIT 1', [parsed.name]);
+  if (duplicateName.length > 0) {
+    return res.status(400).json({ error: 'A kit with this name already exists.' });
+  }
+
+  const result = await run('INSERT INTO equipment_kits (name) VALUES (?)', [parsed.name]);
+  for (const item of parsed.items) {
+    await run(
+      'INSERT INTO equipment_kit_items (kitId, equipmentId, quantity) VALUES (?, ?, ?)',
+      [result.lastID, item.equipmentId, item.quantity]
+    );
+  }
+
+  const description = `${req.session.email} created kit ${parsed.name} (${parsed.items.length} item type(s))`;
+  await logActivity(req.session.userId, 'kit_created', 'equipment_kit', result.lastID, description);
+
+  res.json({ message: 'Kit created successfully.' });
+});
+
+// Update an equipment kit's name and items. Admin only.
+app.patch('/api/admin/kits/:id', requireAdmin, async (req, res) => {
+  const kitId = Number(req.params.id);
+  if (!Number.isFinite(kitId) || kitId <= 0) {
+    return res.status(400).json({ error: 'Invalid kit ID.' });
+  }
+
+  const kitRows = await query('SELECT id FROM equipment_kits WHERE id = ?', [kitId]);
+  if (kitRows.length === 0) {
+    return res.status(404).json({ error: 'Kit not found.' });
+  }
+
+  const parsed = await parseKitInput(req.body);
+  if (parsed.error) {
+    return res.status(400).json({ error: parsed.error });
+  }
+
+  const duplicateName = await query(
+    'SELECT id FROM equipment_kits WHERE LOWER(name) = LOWER(?) AND id != ? LIMIT 1',
+    [parsed.name, kitId]
+  );
+  if (duplicateName.length > 0) {
+    return res.status(400).json({ error: 'A kit with this name already exists.' });
+  }
+
+  await run('UPDATE equipment_kits SET name = ? WHERE id = ?', [parsed.name, kitId]);
+  await run('DELETE FROM equipment_kit_items WHERE kitId = ?', [kitId]);
+  for (const item of parsed.items) {
+    await run(
+      'INSERT INTO equipment_kit_items (kitId, equipmentId, quantity) VALUES (?, ?, ?)',
+      [kitId, item.equipmentId, item.quantity]
+    );
+  }
+
+  const description = `${req.session.email} updated kit ${parsed.name} (${parsed.items.length} item type(s))`;
+  await logActivity(req.session.userId, 'kit_updated', 'equipment_kit', kitId, description);
+
+  res.json({ message: 'Kit updated successfully.' });
+});
+
+// Delete an equipment kit. Existing loans created from it are unaffected since they
+// reference their own equipment/unit directly. Admin only.
+app.delete('/api/admin/kits/:id', requireAdmin, async (req, res) => {
+  const kitId = Number(req.params.id);
+  if (!Number.isFinite(kitId) || kitId <= 0) {
+    return res.status(400).json({ error: 'Invalid kit ID.' });
+  }
+
+  const kitRows = await query('SELECT id, name FROM equipment_kits WHERE id = ?', [kitId]);
+  if (kitRows.length === 0) {
+    return res.status(404).json({ error: 'Kit not found.' });
+  }
+
+  await run('DELETE FROM equipment_kit_items WHERE kitId = ?', [kitId]);
+  await run('DELETE FROM equipment_kits WHERE id = ?', [kitId]);
+
+  const description = `${req.session.email} removed kit ${kitRows[0].name}`;
+  await logActivity(req.session.userId, 'kit_removed', 'equipment_kit', kitId, description);
+
+  res.json({ message: 'Kit removed successfully.' });
 });
 
 // Update a user's role. Admins can promote/demote other users.

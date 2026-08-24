@@ -265,6 +265,20 @@ button.danger {
   background: var(--soft-surface);
 }
 
+.kit-request-card {
+  background: var(--soft-surface);
+}
+
+.kit-request-items {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.kit-request-items .request-card {
+  background: var(--panel-surface);
+}
+
 .status-label {
   display: inline-block;
   padding: 2px 8px;
@@ -466,6 +480,21 @@ button.danger {
 
 #room-management-list .item-row {
   align-items: center;
+}
+
+.kit-item-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.kit-item-row .kit-item-equipment {
+  flex: 1;
+}
+
+.kit-item-row .kit-item-quantity {
+  width: 80px;
 }
 
 .equipment-codes-panel {

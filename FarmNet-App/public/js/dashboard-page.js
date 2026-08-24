@@ -31,7 +31,10 @@
  *   status: string,
  *   returnCondition?: string,
  *   returnConditionPhotoPath?: string,
- *   returnedAt?: string
+ *   returnedAt?: string,
+ *   kitId?: number|null,
+ *   kitLoanGroupId?: number|null,
+ *   kitName?: string|null
  * }} DashboardLoan
  */
 
@@ -46,6 +49,7 @@
  *   onCancelBooking: (bookingId: number) => Promise<void>,
  *   onCancelBookingSeries: (seriesId: number) => Promise<void>,
  *   onCancelLoan: (loanId: number) => Promise<void>,
+ *   onCancelKitLoan: (kitLoanGroupId: number) => Promise<void>,
  *   onReturnLoan: (loanId: number) => Promise<void>,
  *   onEditBooking: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
  *   onEditBookingSeries: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
@@ -64,7 +68,7 @@
  * @param {DashboardPageDeps} deps Dependency bag.
  * @returns {DashboardPageApi} Dashboard page API.
  */
-export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelBookingSeries, onCancelLoan, onReturnLoan, onEditBooking, onEditBookingSeries, onEditLoan }) {
+export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelBookingSeries, onCancelLoan, onCancelKitLoan, onReturnLoan, onEditBooking, onEditBookingSeries, onEditLoan }) {
   requestsList.addEventListener('click', async (event) => {
     const editBookingBtn = event.target.closest('[data-action="edit-booking"]');
     if (editBookingBtn) {
@@ -145,6 +149,15 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
       return;
     }
 
+    const cancelKitLoanBtn = event.target.closest('[data-action="cancel-kit-loan"]');
+    if (cancelKitLoanBtn) {
+      const kitLoanGroupId = Number(cancelKitLoanBtn.dataset.kitLoanGroupId);
+      if (Number.isFinite(kitLoanGroupId)) {
+        await onCancelKitLoan(kitLoanGroupId);
+      }
+      return;
+    }
+
     const returnLoanBtn = event.target.closest('[data-action="return-loan"]');
     if (returnLoanBtn) {
       const loanId = Number(returnLoanBtn.dataset.loanId);
@@ -153,6 +166,89 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
       }
     }
   });
+
+  /**
+   * Render a single equipment loan card.
+   * @param {DashboardLoan} loan
+   * @returns {string}
+   */
+  function renderLoanCard(loan) {
+    const today = new Date().toISOString().slice(0, 10);
+    const isExpired = loan.returnDate < today;
+    const isCancelled = loan.status === 'cancelled';
+    const isReturned = loan.status === 'returned';
+    const isPending = loan.status === 'pending';
+    const isDenied = loan.status === 'denied';
+    let statusLabel = '';
+
+    if (isCancelled) {
+      statusLabel = '<span class="status-label cancelled">Cancelled</span>';
+    } else if (isDenied) {
+      statusLabel = '<span class="status-label denied">Denied</span>';
+    } else if (isPending) {
+      statusLabel = '<span class="status-label pending">Pending approval</span>';
+    } else if (isReturned) {
+      statusLabel = '<span class="status-label returned">Returned</span>';
+    } else if (isExpired) {
+      statusLabel = '<span class="status-label past">Expired</span>';
+    }
+
+    const hasCondition = typeof loan.returnCondition === 'string' && loan.returnCondition.trim().length > 0;
+    const photoText = loan.returnConditionPhotoPath
+      ? `Photo: <a href="/api/loans/${loan.id}/photo" target="_blank" rel="noopener noreferrer">View photo</a>`
+      : 'Photo: None';
+
+    return `
+      <div class="request-card ${isCancelled ? 'cancelled' : ''}">
+        <strong>${loan.equipmentName}</strong>
+        ${loan.equipmentCode ? `<p>Assigned item: ${loan.equipmentCode}</p>` : ''}
+        <p>Borrowed: ${loan.borrowDate}</p>
+        <p>Return by: ${loan.returnDate}</p>
+        ${loan.returnedAt ? `<p>Returned at: ${new Date(loan.returnedAt).toLocaleString()}</p>` : ''}
+        ${hasCondition ? `<p>Condition: ${loan.returnCondition}</p>` : ''}
+        ${(isReturned || hasCondition) ? `<p>${photoText}</p>` : ''}
+        ${statusLabel}
+        ${(loan.status === 'active') ? `
+          <div class="request-actions">
+            <button class="secondary action-button" data-action="edit-loan" data-loan-id="${loan.id}" data-loan-borrow-date="${loan.borrowDate}" data-loan-return-date="${loan.returnDate}">Edit</button>
+            <button class="action-button" data-action="return-loan" data-loan-id="${loan.id}">Return</button>
+            <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel</button>
+          </div>
+        ` : ''}
+        ${isPending ? `
+          <div class="request-actions">
+            <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel request</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  /**
+   * Render every loan created by one kit borrow/reserve request as a single grouped
+   * card, with a bulk cancel action alongside each item's own status/actions.
+   * @param {number} kitLoanGroupId
+   * @param {string} kitName
+   * @param {DashboardLoan[]} loansInGroup
+   * @returns {string}
+   */
+  function renderKitLoanGroupCard(kitLoanGroupId, kitName, loansInGroup) {
+    const anyCancellable = loansInGroup.some((loan) => ['active', 'pending'].includes(loan.status));
+
+    return `
+      <div class="request-card kit-request-card">
+        <strong>Kit: ${kitName}</strong>
+        <div class="kit-request-items">
+          ${loansInGroup.map((loan) => renderLoanCard(loan)).join('')}
+        </div>
+        ${anyCancellable ? `
+          <div class="request-actions">
+            <button class="cancel-button" data-action="cancel-kit-loan" data-kit-loan-group-id="${kitLoanGroupId}">Cancel entire kit request</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
 
   /**
    * Render bookings and loans cards for the dashboard page.
@@ -211,57 +307,19 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
       <div class="request-group">
         <h3>Equipment Loans</h3>
         <div class="request-list">
-          ${requests.loans.length === 0 ? '<div class="request-card"><p>No equipment loans yet.</p></div>' : requests.loans.map((loan) => {
-            const today = new Date().toISOString().slice(0, 10);
-            const isExpired = loan.returnDate < today;
-            const isCancelled = loan.status === 'cancelled';
-            const isReturned = loan.status === 'returned';
-            const isPending = loan.status === 'pending';
-            const isDenied = loan.status === 'denied';
-            let statusLabel = '';
+          ${requests.loans.length === 0 ? '<div class="request-card"><p>No equipment loans yet.</p></div>' : (() => {
+            const standaloneLoans = requests.loans.filter((loan) => loan.kitLoanGroupId == null);
+            const groupedLoans = requests.loans.filter((loan) => loan.kitLoanGroupId != null);
+            const groupIds = [...new Set(groupedLoans.map((loan) => loan.kitLoanGroupId))];
 
-            if (isCancelled) {
-              statusLabel = '<span class="status-label cancelled">Cancelled</span>';
-            } else if (isDenied) {
-              statusLabel = '<span class="status-label denied">Denied</span>';
-            } else if (isPending) {
-              statusLabel = '<span class="status-label pending">Pending approval</span>';
-            } else if (isReturned) {
-              statusLabel = '<span class="status-label returned">Returned</span>';
-            } else if (isExpired) {
-              statusLabel = '<span class="status-label past">Expired</span>';
-            }
+            const standaloneCards = standaloneLoans.map(renderLoanCard);
+            const groupCards = groupIds.map((groupId) => {
+              const loansInGroup = groupedLoans.filter((loan) => loan.kitLoanGroupId === groupId);
+              return renderKitLoanGroupCard(groupId, loansInGroup[0].kitName || 'Kit', loansInGroup);
+            });
 
-            const hasCondition = typeof loan.returnCondition === 'string' && loan.returnCondition.trim().length > 0;
-            const photoText = loan.returnConditionPhotoPath
-              ? `Photo: <a href="/api/loans/${loan.id}/photo" target="_blank" rel="noopener noreferrer">View photo</a>`
-              : 'Photo: None';
-
-            return `
-            <div class="request-card ${isCancelled ? 'cancelled' : ''}">
-              <strong>${loan.equipmentName}</strong>
-              ${loan.equipmentCode ? `<p>Assigned item: ${loan.equipmentCode}</p>` : ''}
-              <p>Borrowed: ${loan.borrowDate}</p>
-              <p>Return by: ${loan.returnDate}</p>
-              ${loan.returnedAt ? `<p>Returned at: ${new Date(loan.returnedAt).toLocaleString()}</p>` : ''}
-              ${hasCondition ? `<p>Condition: ${loan.returnCondition}</p>` : ''}
-              ${(isReturned || hasCondition) ? `<p>${photoText}</p>` : ''}
-              ${statusLabel}
-              ${(loan.status === 'active') ? `
-                <div class="request-actions">
-                  <button class="secondary action-button" data-action="edit-loan" data-loan-id="${loan.id}" data-loan-borrow-date="${loan.borrowDate}" data-loan-return-date="${loan.returnDate}">Edit</button>
-                  <button class="action-button" data-action="return-loan" data-loan-id="${loan.id}">Return</button>
-                  <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel</button>
-                </div>
-              ` : ''}
-              ${isPending ? `
-                <div class="request-actions">
-                  <button class="cancel-button" data-action="cancel-loan" data-loan-id="${loan.id}">Cancel request</button>
-                </div>
-              ` : ''}
-            </div>
-          `;
-          }).join('')}
+            return [...standaloneCards, ...groupCards].join('');
+          })()}
         </div>
       </div>
     `;

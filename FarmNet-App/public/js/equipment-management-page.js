@@ -21,6 +21,14 @@ import { renderListState } from './utils.js';
  * @typedef {{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string, status: 'checked-out'|'overdue' }} BookedOutLoan
  */
 
+/**
+ * @typedef {{ id: number, kitId: number, equipmentId: number, equipmentName: string, quantity: number }} KitItem
+ */
+
+/**
+ * @typedef {{ id: number, name: string, items: KitItem[] }} Kit
+ */
+
 const STATUS_LABELS = {
   available: 'Available',
   pending: 'Pending approval',
@@ -39,6 +47,10 @@ const STATUS_LABELS = {
  */
 
 /**
+ * @typedef {{ kits?: Kit[], error?: string }} KitsResponse
+ */
+
+/**
  * @typedef {{
  *   equipmentManagementList: HTMLElement,
  *   bookedOutEquipmentList: HTMLElement,
@@ -46,6 +58,15 @@ const STATUS_LABELS = {
  *   equipmentNameInput: HTMLInputElement,
  *   equipmentQuantityInput: HTMLInputElement,
  *   equipmentManagementError: HTMLElement,
+ *   kitManagementList: HTMLElement,
+ *   kitManagementForm: HTMLFormElement,
+ *   kitNameInput: HTMLInputElement,
+ *   kitItemsEditor: HTMLElement,
+ *   kitAddItemRowButton: HTMLButtonElement,
+ *   kitFormSubmitButton: HTMLButtonElement,
+ *   kitFormCancelEditButton: HTMLButtonElement,
+ *   kitEditingIdInput: HTMLInputElement,
+ *   kitManagementError: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onEquipmentChanged: () => Promise<void>
  * }} EquipmentManagementPageDeps
@@ -70,6 +91,15 @@ export function createEquipmentManagementPage(deps) {
     equipmentNameInput,
     equipmentQuantityInput,
     equipmentManagementError,
+    kitManagementList,
+    kitManagementForm,
+    kitNameInput,
+    kitItemsEditor,
+    kitAddItemRowButton,
+    kitFormSubmitButton,
+    kitFormCancelEditButton,
+    kitEditingIdInput,
+    kitManagementError,
     requestJson,
     onEquipmentChanged
   } = deps;
@@ -78,6 +108,8 @@ export function createEquipmentManagementPage(deps) {
   let equipment = [];
   /** @type {BookedOutLoan[]} */
   let bookedOutLoans = [];
+  /** @type {Kit[]} */
+  let kits = [];
 
   /**
    * Render the editable equipment inventory list.
@@ -177,26 +209,93 @@ export function createEquipmentManagementPage(deps) {
   }
 
   /**
-   * Load inventory and booked-out equipment data in parallel, then render both
-   * sections independently so one failed request does not block the other.
+   * Render the kit inventory list, each showing its component items and quantities.
+   * @returns {void}
+   */
+  function renderKits() {
+    if (!kits || kits.length === 0) {
+      renderListState(kitManagementList, { kind: 'empty', message: 'No kits found.' });
+      return;
+    }
+
+    kitManagementList.innerHTML = kits.map((kit) => {
+      const itemsSummary = kit.items.map((item) => `${item.equipmentName} × ${item.quantity}`).join(', ');
+      return `
+        <div class="item-row">
+          <div>
+            <strong>${kit.name}</strong>
+            <p>${itemsSummary || 'No items configured'}</p>
+          </div>
+          <div class="item-actions">
+            <button type="button" data-action="edit-kit" data-kit-id="${kit.id}">Edit</button>
+            <button class="danger" data-action="remove-kit" data-kit-id="${kit.id}">Remove</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /**
+   * Build one editable equipment/quantity row for the kit item editor.
+   * @param {number|string} [selectedEquipmentId]
+   * @param {number} [quantity]
+   * @returns {string}
+   */
+  function renderKitItemRow(selectedEquipmentId = '', quantity = 1) {
+    const options = equipment.map((item) => (
+      `<option value="${item.id}" ${String(item.id) === String(selectedEquipmentId) ? 'selected' : ''}>${item.name}</option>`
+    )).join('');
+
+    return `
+      <div class="kit-item-row">
+        <select class="kit-item-equipment">
+          <option value="">— Select equipment —</option>
+          ${options}
+        </select>
+        <input type="number" class="kit-item-quantity" min="1" step="1" value="${quantity}" />
+        <button type="button" class="danger" data-action="remove-kit-item-row">Remove</button>
+      </div>
+    `;
+  }
+
+  /**
+   * Reset the kit form back to "create" mode with a single empty item row.
+   * @returns {void}
+   */
+  function resetKitForm() {
+    kitEditingIdInput.value = '';
+    kitNameInput.value = '';
+    kitItemsEditor.innerHTML = renderKitItemRow();
+    kitFormSubmitButton.textContent = 'Create kit';
+    kitFormCancelEditButton.classList.add('hidden');
+    kitManagementError.textContent = '';
+  }
+
+  /**
+   * Load inventory, booked-out equipment, and kit data in parallel, then render each
+   * section independently so one failed request does not block the others.
    * @returns {Promise<void>}
    */
   async function load() {
     equipmentManagementError.textContent = '';
     renderListState(equipmentManagementList, { kind: 'loading', message: 'Loading equipment...' });
     renderListState(bookedOutEquipmentList, { kind: 'loading', message: 'Loading booked-out equipment...' });
+    renderListState(kitManagementList, { kind: 'loading', message: 'Loading kits...' });
 
-    /** @type {[EquipmentListResponse, BookedOutLoansResponse]} */
+    /** @type {[EquipmentListResponse, BookedOutLoansResponse, KitsResponse]} */
     let equipmentResult;
     let bookedOutResult;
+    let kitsResult;
     try {
-      [equipmentResult, bookedOutResult] = await Promise.all([
+      [equipmentResult, bookedOutResult, kitsResult] = await Promise.all([
         requestJson('/api/admin/equipment'),
-        requestJson('/api/admin/equipment/booked-out')
+        requestJson('/api/admin/equipment/booked-out'),
+        requestJson('/api/admin/kits')
       ]);
     } catch (error) {
       renderListState(equipmentManagementList, { kind: 'error', message: 'Unable to load equipment.' });
       renderListState(bookedOutEquipmentList, { kind: 'error', message: 'Unable to load booked-out equipment.' });
+      renderListState(kitManagementList, { kind: 'error', message: 'Unable to load kits.' });
       return;
     }
 
@@ -209,11 +308,24 @@ export function createEquipmentManagementPage(deps) {
 
     if (bookedOutResult.error) {
       renderListState(bookedOutEquipmentList, { kind: 'error', message: bookedOutResult.error });
+    } else {
+      bookedOutLoans = Array.isArray(bookedOutResult.loans) ? bookedOutResult.loans : [];
+      renderBookedOutLoans();
+    }
+
+    if (kitsResult.error) {
+      renderListState(kitManagementList, { kind: 'error', message: kitsResult.error });
       return;
     }
 
-    bookedOutLoans = Array.isArray(bookedOutResult.loans) ? bookedOutResult.loans : [];
-    renderBookedOutLoans();
+    kits = Array.isArray(kitsResult.kits) ? kitsResult.kits : [];
+    renderKits();
+
+    // Refresh the equipment picker options in the (currently empty, not-being-edited)
+    // item editor rows now that the equipment list may have changed.
+    if (!kitEditingIdInput.value && kitItemsEditor.children.length === 0) {
+      kitItemsEditor.innerHTML = renderKitItemRow();
+    }
   }
 
   /**
@@ -365,6 +477,147 @@ export function createEquipmentManagementPage(deps) {
   }
 
   equipmentManagementList.addEventListener('click', handleEquipmentManagementListClick);
+
+  kitAddItemRowButton.addEventListener('click', () => {
+    kitItemsEditor.insertAdjacentHTML('beforeend', renderKitItemRow());
+  });
+
+  kitItemsEditor.addEventListener('click', (event) => {
+    const removeButton = event.target instanceof HTMLElement ? event.target.closest('[data-action="remove-kit-item-row"]') : null;
+    if (!removeButton) return;
+    removeButton.closest('.kit-item-row')?.remove();
+  });
+
+  kitFormCancelEditButton.addEventListener('click', () => {
+    resetKitForm();
+  });
+
+  /**
+   * Read the current kit item rows into a validated payload for the create/update request.
+   * @returns {{ error: string }|{ items: Array<{ equipmentId: number, quantity: number }> }}
+   */
+  function collectKitItemsFromForm() {
+    const rows = Array.from(kitItemsEditor.querySelectorAll('.kit-item-row'));
+    const items = [];
+    for (const row of rows) {
+      const equipmentSelect = row.querySelector('.kit-item-equipment');
+      const quantityInput = row.querySelector('.kit-item-quantity');
+      const equipmentId = Number(equipmentSelect?.value);
+      const quantity = Number(quantityInput?.value);
+
+      if (!equipmentSelect?.value) continue; // skip rows the admin left blank
+
+      if (!Number.isFinite(equipmentId) || equipmentId <= 0) {
+        return { error: 'Each kit item must reference a valid equipment selection.' };
+      }
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        return { error: 'Each kit item quantity must be a whole number greater than 0.' };
+      }
+      items.push({ equipmentId, quantity });
+    }
+
+    if (items.length === 0) {
+      return { error: 'A kit must contain at least one equipment item.' };
+    }
+
+    return { items };
+  }
+
+  /**
+   * Handle kit create/update submissions, switching request method based on
+   * whether an existing kit is currently being edited.
+   * @param {SubmitEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleKitManagementFormSubmit(event) {
+    event.preventDefault();
+    kitManagementError.textContent = '';
+
+    const name = kitNameInput.value.trim();
+    if (!name) {
+      kitManagementError.textContent = 'Kit name is required.';
+      return;
+    }
+
+    const parsed = collectKitItemsFromForm();
+    if (parsed.error) {
+      kitManagementError.textContent = parsed.error;
+      return;
+    }
+
+    const editingId = kitEditingIdInput.value;
+    const result = await requestJson(editingId ? `/api/admin/kits/${editingId}` : '/api/admin/kits', {
+      method: editingId ? 'PATCH' : 'POST',
+      body: JSON.stringify({ name, items: parsed.items })
+    });
+
+    if (result.error) {
+      kitManagementError.textContent = result.error;
+      return;
+    }
+
+    resetKitForm();
+    await load();
+  }
+
+  kitManagementForm.addEventListener('submit', handleKitManagementFormSubmit);
+
+  /**
+   * Handle edit and removal actions from the rendered kit list.
+   * @param {MouseEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleKitManagementListClick(event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) return;
+
+    const editButton = target.closest('[data-action="edit-kit"]');
+    if (editButton) {
+      const kitId = Number(editButton.dataset.kitId);
+      const kit = kits.find((entry) => entry.id === kitId);
+      if (!kit) return;
+
+      kitEditingIdInput.value = String(kit.id);
+      kitNameInput.value = kit.name;
+      kitItemsEditor.innerHTML = kit.items.length > 0
+        ? kit.items.map((item) => renderKitItemRow(item.equipmentId, item.quantity)).join('')
+        : renderKitItemRow();
+      kitFormSubmitButton.textContent = 'Update kit';
+      kitFormCancelEditButton.classList.remove('hidden');
+      kitManagementError.textContent = '';
+      kitManagementForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+
+    const removeButton = target.closest('[data-action="remove-kit"]');
+    if (!removeButton) return;
+
+    const kitId = Number(removeButton.dataset.kitId);
+    if (!Number.isFinite(kitId)) return;
+
+    const kit = kits.find((entry) => entry.id === kitId);
+    const kitName = kit?.name || 'this kit';
+
+    if (!confirm(`Are you sure you want to remove ${kitName}? Existing loans created from it are unaffected.`)) {
+      return;
+    }
+
+    const result = await requestJson(`/api/admin/kits/${kitId}`, { method: 'DELETE' });
+    if (result.error) {
+      kitManagementError.textContent = result.error;
+      return;
+    }
+
+    if (kitEditingIdInput.value === String(kitId)) {
+      resetKitForm();
+    }
+    kitManagementError.textContent = '';
+    await load();
+  }
+
+  kitManagementList.addEventListener('click', handleKitManagementListClick);
+
+  resetKitForm();
 
   return {
     load

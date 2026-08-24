@@ -3,6 +3,7 @@ import { showError, formatDuration, getTodayDateString, getNextQuarterTime, rend
 import { createDashboardPage } from './js/dashboard-page.js';
 import { createRoomsPage } from './js/rooms-page.js';
 import { createEquipmentPage } from './js/equipment-page.js';
+import { createEquipmentKitsPage } from './js/equipment-kits-page.js';
 import { createAdminPage } from './js/admin-page.js';
 import { createRoomManagementPage } from './js/room-management-page.js';
 import { createEquipmentManagementPage } from './js/equipment-management-page.js';
@@ -73,6 +74,20 @@ const equipmentManagementForm = document.getElementById('equipment-management-fo
 const equipmentNameInput = document.getElementById('equipment-name');
 const equipmentQuantityInput = document.getElementById('equipment-quantity');
 const equipmentManagementError = document.getElementById('equipment-management-error');
+
+// Kit management controls.
+const kitManagementList = document.getElementById('kit-management-list');
+const kitManagementForm = document.getElementById('kit-management-form');
+const kitNameInput = document.getElementById('kit-name');
+const kitItemsEditor = document.getElementById('kit-items-editor');
+const kitAddItemRowButton = document.getElementById('kit-add-item-row');
+const kitFormSubmitButton = document.getElementById('kit-form-submit');
+const kitFormCancelEditButton = document.getElementById('kit-form-cancel-edit');
+const kitEditingIdInput = document.getElementById('kit-editing-id');
+const kitManagementError = document.getElementById('kit-management-error');
+
+// User-facing equipment kits list.
+const equipmentKitsList = document.getElementById('equipment-kits-list');
 
 // Dashboard requests and filters.
 const requestsList = document.getElementById('requests-list');
@@ -490,12 +505,107 @@ async function reserveEquipment(equipmentId, equipmentName) {
   }
 }
 
+/**
+ * Trigger a kit borrow request for the selected kit.
+ * @param {number} kitId Kit identifier.
+ * @param {string} kitName Kit display name.
+ */
+async function borrowKit(kitId, kitName) {
+  const days = prompt(`How many days do you need the ${kitName} kit?`);
+  if (!days) return;
+
+  let borrowerEmail = '';
+  if (isAdminUser) {
+    const input = prompt('Borrow on behalf of (email), or leave blank to borrow for yourself:', '');
+    if (input === null) return;
+    borrowerEmail = input.trim();
+  }
+
+  const result = await requestJson('/api/borrow-kit', {
+    method: 'POST',
+    body: JSON.stringify({ kitId, days: Number(days), borrowerEmail })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+  if (activePage === 'admin') {
+    await adminPage.load();
+  }
+}
+
+/**
+ * Reserve a kit for a future start date.
+ * @param {number} kitId
+ * @param {string} kitName
+ */
+async function reserveKit(kitId, kitName) {
+  const startDate = prompt(`Enter start date for reservation (YYYY-MM-DD) for the ${kitName} kit:`);
+  if (!startDate) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+    alert('Start date must be in YYYY-MM-DD format.');
+    return;
+  }
+
+  const days = prompt(`How many days will you reserve the ${kitName} kit for?`);
+  if (!days) return;
+
+  let borrowerEmail = '';
+  if (isAdminUser) {
+    const input = prompt('Reserve on behalf of (email), or leave blank to reserve for yourself:', '');
+    if (input === null) return;
+    borrowerEmail = input.trim();
+  }
+
+  const result = await requestJson('/api/reserve-kit', {
+    method: 'POST',
+    body: JSON.stringify({ kitId, startDate, days: Number(days), borrowerEmail })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+  if (activePage === 'admin') {
+    await adminPage.load();
+  }
+}
+
+/**
+ * Cancel every item created by a kit borrow/reserve request, owned by the current user.
+ * @param {number} kitLoanGroupId
+ */
+async function cancelKitLoan(kitLoanGroupId) {
+  if (!confirm('Cancel this entire kit request?')) return;
+
+  const result = await requestJson('/api/cancel-kit-loan', {
+    method: 'POST',
+    body: JSON.stringify({ kitLoanGroupId })
+  });
+
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+}
+
 const dashboardPage = createDashboardPage({
   requestsList,
   formatDuration,
   onCancelBooking: cancelBooking,
   onCancelBookingSeries: cancelBookingSeries,
   onCancelLoan: cancelLoan,
+  onCancelKitLoan: cancelKitLoan,
   onReturnLoan: returnLoan,
   onEditBooking: editBooking,
   onEditBookingSeries: editBookingSeries,
@@ -538,6 +648,12 @@ const equipmentPage = createEquipmentPage({
   onReserve: reserveEquipment
 });
 
+const equipmentKitsPage = createEquipmentKitsPage({
+  equipmentKitsList,
+  onBorrowKit: borrowKit,
+  onReserveKit: reserveKit
+});
+
 const adminPage = createAdminPage({
   usersList,
   adminBookingsList,
@@ -573,6 +689,15 @@ const equipmentManagementPage = createEquipmentManagementPage({
   equipmentNameInput,
   equipmentQuantityInput,
   equipmentManagementError,
+  kitManagementList,
+  kitManagementForm,
+  kitNameInput,
+  kitItemsEditor,
+  kitAddItemRowButton,
+  kitFormSubmitButton,
+  kitFormCancelEditButton,
+  kitEditingIdInput,
+  kitManagementError,
   requestJson,
   onEquipmentChanged: async () => refreshDashboard(bookingFilter.value)
 });
@@ -630,6 +755,7 @@ async function refreshDashboard(statusFilter = 'active') {
 
   renderListState(roomsList, { kind: 'loading', message: 'Loading rooms...' });
   renderListState(equipmentList, { kind: 'loading', message: 'Loading equipment...' });
+  renderListState(equipmentKitsList, { kind: 'loading', message: 'Loading kits...' });
   renderListState(requestsList, { kind: 'loading', message: 'Loading your requests...' });
 
   let resources;
@@ -642,6 +768,7 @@ async function refreshDashboard(statusFilter = 'active') {
   } catch (error) {
     renderListState(roomsList, { kind: 'error', message: 'Unable to load rooms.' });
     renderListState(equipmentList, { kind: 'error', message: 'Unable to load equipment.' });
+    renderListState(equipmentKitsList, { kind: 'error', message: 'Unable to load kits.' });
     renderListState(requestsList, { kind: 'error', message: 'Unable to load your requests.' });
     return;
   }
@@ -649,9 +776,11 @@ async function refreshDashboard(statusFilter = 'active') {
   if (resources.error) {
     renderListState(roomsList, { kind: 'error', message: resources.error });
     renderListState(equipmentList, { kind: 'error', message: resources.error });
+    renderListState(equipmentKitsList, { kind: 'error', message: resources.error });
   } else {
     roomsPage.render(resources.rooms || []);
     equipmentPage.render(resources.equipment || []);
+    equipmentKitsPage.render(resources.kits || []);
   }
 
   if (requests.error) {

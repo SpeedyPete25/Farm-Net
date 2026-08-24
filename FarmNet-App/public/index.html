@@ -129,6 +129,10 @@
         <article id="page-equipment" class="card page-panel hidden">
           <h2>Equipment Loans</h2>
           <div id="equipment-list"></div>
+
+          <h3 style="margin-top: 24px;">Equipment Kits</h3>
+          <p>Borrow or reserve a bundle of equipment items together in one request.</p>
+          <div id="equipment-kits-list"></div>
         </article>
 
         <article id="page-notifications" class="card page-panel hidden">
@@ -224,6 +228,24 @@
           <h3 style="margin-top: 24px;">Booked Out Equipment</h3>
           <p>Shows currently active loans and who has each item.</p>
           <div id="booked-out-equipment-list"></div>
+
+          <h3 style="margin-top: 24px;">Kit Management</h3>
+          <p>Bundle multiple equipment items into a kit that users can borrow or reserve together in one request.</p>
+
+          <form id="kit-management-form" class="room-management-form">
+            <input type="hidden" id="kit-editing-id" />
+            <label>Kit Name<input type="text" id="kit-name" required /></label>
+            <div id="kit-items-editor"></div>
+            <button type="button" id="kit-add-item-row" class="secondary">Add item</button>
+            <div class="form-actions" style="display:flex; gap:12px; margin-top: 12px;">
+              <button type="submit" id="kit-form-submit">Create kit</button>
+              <button type="button" id="kit-form-cancel-edit" class="secondary hidden">Cancel edit</button>
+            </div>
+            <div id="kit-management-error" class="form-error"></div>
+          </form>
+
+          <h4 style="margin-top: 24px;">Existing Kits</h4>
+          <div id="kit-management-list"></div>
         </article>
       </section>
     </main>

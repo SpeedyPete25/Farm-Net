@@ -386,6 +386,13 @@ export function createAdminPage(deps) {
       equipmentCell.textContent = loan.equipmentCode
         ? `${loan.equipmentName} (${loan.equipmentCode})`
         : loan.equipmentName;
+      if (loan.kitName) {
+        const kitBadge = document.createElement('span');
+        kitBadge.className = 'status-label recurring';
+        kitBadge.style.marginLeft = '6px';
+        kitBadge.textContent = `Kit: ${loan.kitName}`;
+        equipmentCell.appendChild(kitBadge);
+      }
 
       const windowCell = document.createElement('td');
       windowCell.textContent = `${loan.borrowDate} to ${loan.returnDate}`;
@@ -451,6 +458,24 @@ export function createAdminPage(deps) {
         actionsWrap.appendChild(approveButton);
         actionsWrap.appendChild(denyButton);
         actionsWrap.appendChild(cancelButton);
+
+        if (loan.kitLoanGroupId != null) {
+          const approveKitButton = document.createElement('button');
+          approveKitButton.className = 'action-button';
+          approveKitButton.textContent = 'Approve kit';
+          approveKitButton.dataset.action = 'admin-approve-kit-loan';
+          approveKitButton.dataset.kitLoanGroupId = String(loan.kitLoanGroupId);
+
+          const denyKitButton = document.createElement('button');
+          denyKitButton.className = 'cancel-button';
+          denyKitButton.textContent = 'Deny kit';
+          denyKitButton.dataset.action = 'admin-deny-kit-loan';
+          denyKitButton.dataset.kitLoanGroupId = String(loan.kitLoanGroupId);
+
+          actionsWrap.appendChild(approveKitButton);
+          actionsWrap.appendChild(denyKitButton);
+        }
+
         actionsCell.appendChild(actionsWrap);
       } else if (isEditable) {
         const returnButton = document.createElement('button');
@@ -477,6 +502,16 @@ export function createAdminPage(deps) {
         actionsWrap.appendChild(returnButton);
         actionsWrap.appendChild(editButton);
         actionsWrap.appendChild(cancelButton);
+
+        if (loan.kitLoanGroupId != null) {
+          const cancelKitButton = document.createElement('button');
+          cancelKitButton.className = 'cancel-button';
+          cancelKitButton.textContent = 'Cancel kit';
+          cancelKitButton.dataset.action = 'admin-cancel-kit-loan';
+          cancelKitButton.dataset.kitLoanGroupId = String(loan.kitLoanGroupId);
+          actionsWrap.appendChild(cancelKitButton);
+        }
+
         actionsCell.appendChild(actionsWrap);
       } else {
         actionsCell.textContent = '-';
@@ -934,6 +969,63 @@ export function createAdminPage(deps) {
         alert(result.error);
       } else {
         alert(result.message || 'Equipment request denied.');
+      }
+
+      await load();
+      return;
+    }
+
+    const approveKitButton = target.closest('[data-action="admin-approve-kit-loan"]');
+    if (approveKitButton) {
+      const groupId = Number(approveKitButton.dataset.kitLoanGroupId);
+      const result = await requestJson(`/api/admin/kit-loans/${groupId}/approve`, {
+        method: 'POST'
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Kit request approved.');
+      }
+
+      await load();
+      return;
+    }
+
+    const denyKitButton = target.closest('[data-action="admin-deny-kit-loan"]');
+    if (denyKitButton) {
+      const groupId = Number(denyKitButton.dataset.kitLoanGroupId);
+      const reason = prompt('Optional reason for denying this kit request:', '');
+      if (reason === null) return;
+
+      const result = await requestJson(`/api/admin/kit-loans/${groupId}/deny`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Kit request denied.');
+      }
+
+      await load();
+      return;
+    }
+
+    const cancelKitButton = target.closest('[data-action="admin-cancel-kit-loan"]');
+    if (cancelKitButton) {
+      const groupId = Number(cancelKitButton.dataset.kitLoanGroupId);
+      if (!confirm('Cancel every item in this kit request?')) return;
+
+      const result = await requestJson(`/api/admin/kit-loans/${groupId}/cancel`, {
+        method: 'POST'
+      });
+
+      if (result.error) {
+        alert(result.error);
+      } else {
+        alert(result.message || 'Kit request cancelled.');
       }
 
       await load();
