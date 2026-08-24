@@ -82,6 +82,8 @@ import { renderListState } from './utils.js';
  *   adminNotificationsList: HTMLElement,
  *   adminNotificationsDays: HTMLInputElement,
  *   adminNotificationsRefresh: HTMLElement,
+ *   adminNotificationsEscalation: HTMLInputElement,
+ *   adminNotificationsLevels: HTMLInputElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onReturnLoan: (loanId: number) => void
  * }} AdminPageDeps
@@ -99,7 +101,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminNotificationsDays, adminNotificationsRefresh, requestJson, onReturnLoan } = deps;
+  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsEscalation, adminNotificationsLevels, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -707,8 +709,20 @@ export function createAdminPage(deps) {
   async function loadNotifications() {
     if (!adminNotificationsList) return;
     renderListState(adminNotificationsList, { kind: 'loading', message: 'Loading notifications...' });
-    const days = Number(adminNotificationsDays?.value) || 3;
     try {
+      if (adminNotificationsEscalation && adminNotificationsEscalation.checked) {
+        const levelsRaw = String(adminNotificationsLevels?.value || '3,7,14');
+        const levels = levelsRaw.split(',').map((s) => s.trim()).filter(Boolean).join(',');
+        const result = await requestJson(`/api/notifications/overdue-escalations?levels=${encodeURIComponent(levels)}`);
+        if (result?.error) {
+          renderListState(adminNotificationsList, { kind: 'error', message: result.error });
+        } else {
+          renderNotifications(result.notifications || result);
+        }
+        return;
+      }
+
+      const days = Number(adminNotificationsDays?.value) || 3;
       const result = await requestJson(`/api/notifications/equipment-due?days=${encodeURIComponent(days)}`);
       if (result?.error) {
         renderListState(adminNotificationsList, { kind: 'error', message: result.error });

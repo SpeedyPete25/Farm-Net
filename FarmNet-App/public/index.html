@@ -190,6 +190,13 @@
             <input id="admin-notifications-days" type="number" min="0" value="3" style="width:72px;" />
             <button id="admin-notifications-refresh" class="secondary">Refresh</button>
           </label>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <input id="admin-notifications-escalation" type="checkbox" />
+            <span>Preview overdue escalations instead</span>
+            <label style="margin-left:12px;font-size:90%;">Levels (days, comma-separated):
+              <input id="admin-notifications-levels" type="text" value="3,7,14" style="width:120px; margin-left:6px;" />
+            </label>
+          </label>
           <div id="admin-notifications-list"></div>
 
           <h3 style="margin-top: 24px;">Audit Log</h3>

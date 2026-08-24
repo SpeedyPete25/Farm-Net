@@ -59,6 +59,8 @@ const notificationsList = document.getElementById('notifications-list');
 const adminNotificationsList = document.getElementById('admin-notifications-list');
 const adminNotificationsDays = document.getElementById('admin-notifications-days');
 const adminNotificationsRefresh = document.getElementById('admin-notifications-refresh');
+const adminNotificationsEscalation = document.getElementById('admin-notifications-escalation');
+const adminNotificationsLevels = document.getElementById('admin-notifications-levels');
 
 // Room management controls.
 const roomManagementList = document.getElementById('room-management-list');
@@ -664,6 +666,8 @@ const adminPage = createAdminPage({
   adminNotificationsList,
   adminNotificationsDays,
   adminNotificationsRefresh,
+  adminNotificationsEscalation,
+  adminNotificationsLevels,
   onReturnLoan: returnLoan
 });
 

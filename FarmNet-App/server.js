@@ -675,6 +675,74 @@ async function generateEquipmentDueNotifications(thresholdDays = 3) {
 }
 
 /**
+ * Generate escalating notification content for overdue loans.
+ * levels: ascending array of day thresholds (e.g. [3,7,14]) that determine escalation tiers.
+ * Returns notifications for loans overdue at least the first threshold.
+ * @param {number[]} levels
+ * @returns {Promise<Array<Object>>}
+ */
+async function generateOverdueEscalationNotifications(levels = [3, 7, 14]) {
+  if (!Array.isArray(levels) || levels.length === 0) levels = [3, 7, 14];
+  // Ensure numeric, sorted ascending
+  levels = levels.map(Number).filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
+  if (levels.length === 0) levels = [3, 7, 14];
+
+  const levelLabels = ['Reminder', 'Escalation', 'Final notice'];
+  const today = new Date().toISOString().slice(0, 10);
+
+  const rows = await query(
+    `SELECT l.id AS loanId, l.userId, l.borrowDate, l.returnDate, l.equipmentId, l.equipmentUnitId,
+            u.email AS userEmail, e.name AS equipmentName, eu.code AS unitCode
+     FROM loans l
+     JOIN users u ON u.id = l.userId
+     LEFT JOIN equipment e ON e.id = l.equipmentId
+     LEFT JOIN equipment_units eu ON eu.id = l.equipmentUnitId
+     WHERE l.status = 'active' AND l.returnDate < ?`,
+    [today]
+  );
+
+  return (rows || []).map((r) => {
+    const daysOverdue = Math.ceil((new Date(today) - new Date(r.returnDate)) / (1000 * 60 * 60 * 24));
+    // find highest level index where daysOverdue >= level
+    let idx = -1;
+    for (let i = 0; i < levels.length; i++) {
+      if (daysOverdue >= levels[i]) idx = i;
+    }
+    if (idx === -1) return null; // not yet escalated to first threshold
+
+    const levelName = levelLabels[idx] || `Level ${idx + 1}`;
+    const equipmentLabel = (r.equipmentName || 'equipment') + (r.unitCode ? ` (${r.unitCode})` : '');
+
+    let bodyIntro = '';
+    if (idx === 0) {
+      bodyIntro = `This is a polite reminder that ${equipmentLabel} you borrowed is overdue by ${daysOverdue} day${daysOverdue === 1 ? '' : 's'}.`;
+    } else if (idx === 1) {
+      bodyIntro = `Our records show ${equipmentLabel} is overdue by ${daysOverdue} days. Please return it or request an extension to avoid further action.`;
+    } else {
+      bodyIntro = `Final notice: ${equipmentLabel} is overdue by ${daysOverdue} days. Continued non-return may result in account hold or fines.`;
+    }
+
+    const subject = `Overdue equipment (${levelName}): ${equipmentLabel} overdue by ${daysOverdue} day${daysOverdue === 1 ? '' : 's'}`;
+    const body = `Hello ${r.userEmail},\n\n${bodyIntro}\n\nBorrowed on: ${r.borrowDate}\nDue on: ${r.returnDate}\n\nIf you believe this is in error or need more time, reply to this message or contact the lab.\n\nLoan #${r.loanId}`;
+
+    return {
+      loanId: r.loanId,
+      recipientEmail: r.userEmail,
+      equipmentId: r.equipmentId,
+      equipmentName: r.equipmentName,
+      unitCode: r.unitCode,
+      borrowDate: r.borrowDate,
+      returnDate: r.returnDate,
+      daysOverdue,
+      escalationIndex: idx,
+      escalationLabel: levelName,
+      subject,
+      body
+    };
+  }).filter(Boolean);
+}
+
+/**
  * Add a number of months to a YYYY-MM-DD date string, clamping the day to the
  * last valid day of the target month (e.g. 31 Jan + 1 month -> 28/29 Feb,
  * never rolling over into March).
@@ -3862,6 +3930,35 @@ app.get('/api/notifications/mine', requireLogin, async (req, res) => {
     res.json({ count: notifications.length, notifications });
   } catch (err) {
     console.error('Failed to generate user equipment notifications:', err);
+    res.status(500).json({ error: 'Failed to generate notifications' });
+  }
+});
+
+// Generate escalating overdue notifications for all users (admin only).
+app.get('/api/notifications/overdue-escalations', requireAdmin, async (req, res) => {
+  const levelsParam = String(req.query.levels || '').trim();
+  const levels = levelsParam ? levelsParam.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0) : [3, 7, 14];
+  try {
+    const notifications = await generateOverdueEscalationNotifications(levels);
+    res.json({ count: notifications.length, notifications });
+  } catch (err) {
+    console.error('Failed to generate overdue escalation notifications:', err);
+    res.status(500).json({ error: 'Failed to generate notifications' });
+  }
+});
+
+// Return escalating overdue notifications for the current user.
+app.get('/api/notifications/overdue', requireLogin, async (req, res) => {
+  const userId = req.session.userId;
+  const levelsParam = String(req.query.levels || '').trim();
+  const levels = levelsParam ? levelsParam.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0) : [3, 7, 14];
+
+  try {
+    const all = await generateOverdueEscalationNotifications(levels);
+    const mine = (all || []).filter((n) => Number(n.userId) === Number(userId));
+    res.json({ count: mine.length, notifications: mine });
+  } catch (err) {
+    console.error('Failed to generate user overdue notifications:', err);
     res.status(500).json({ error: 'Failed to generate notifications' });
   }
 });
