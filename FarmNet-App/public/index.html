@@ -49,6 +49,7 @@
             <button id="nav-notifications" class="secondary">Notifications</button>
             <button id="nav-settings" class="secondary">Settings</button>
             <button id="nav-admin" class="secondary hidden">User Management</button>
+            <button id="nav-reports" class="secondary hidden">Reports</button>
             <button id="nav-room-management" class="secondary hidden">Room Management</button>
             <button id="nav-equipment-management" class="secondary hidden">Equipment Management</button>
           </div>
@@ -201,6 +202,18 @@
 
           <h3 style="margin-top: 24px;">Audit Log</h3>
           <div id="audit-log-list"></div>
+
+          <h3 id="room-usage-section" style="margin-top: 24px;">Room Usage Reports</h3>
+          <p>Generate and export room usage metrics for a date range.</p>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            Start:
+            <input id="room-usage-start" type="date" />
+            End:
+            <input id="room-usage-end" type="date" />
+            <button id="room-usage-generate" class="secondary">Generate</button>
+            <button id="room-usage-export" class="secondary">Export CSV</button>
+          </label>
+          <div id="room-usage-list"></div>
         </article>
 
         <article id="page-room-management" class="card page-panel hidden">

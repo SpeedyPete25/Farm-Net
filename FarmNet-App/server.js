@@ -3934,6 +3934,62 @@ app.get('/api/notifications/mine', requireLogin, async (req, res) => {
   }
 });
 
+// Generate room usage report for a date range. Admin only.
+// Query params: ?start=YYYY-MM-DD&end=YYYY-MM-DD
+app.get('/api/reports/room-usage', requireAdmin, async (req, res) => {
+  const start = String(req.query.start || '').trim();
+  const end = String(req.query.end || '').trim();
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(start) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query parameters are required in YYYY-MM-DD format.' });
+  }
+  if (start > end) return res.status(400).json({ error: 'start must be <= end.' });
+
+  try {
+    // Aggregate per-room totals
+    const rows = await query(
+      `SELECT r.id AS roomId, r.name AS roomName, r.location AS roomLocation,
+              COUNT(b.id) AS totalBookings,
+              COALESCE(SUM(b.durationHours), 0) AS totalHours,
+              COUNT(DISTINCT b.userId) AS uniqueUsers
+       FROM rooms r
+       LEFT JOIN bookings b ON b.roomId = r.id AND b.date >= ? AND b.date <= ? AND b.status IN ('active', 'pending')
+       GROUP BY r.id, r.name, r.location
+       ORDER BY r.name ASC`,
+      [start, end]
+    );
+
+    // For each room find busiest date (highest booked hours) within range
+    const results = [];
+    for (const row of rows) {
+      const busiest = await query(
+        `SELECT b.date, COALESCE(SUM(b.durationHours), 0) AS hours
+         FROM bookings b
+         WHERE b.roomId = ? AND b.date >= ? AND b.date <= ? AND b.status IN ('active', 'pending')
+         GROUP BY b.date
+         ORDER BY hours DESC, b.date ASC
+         LIMIT 1`,
+        [row.roomId, start, end]
+      );
+
+      results.push({
+        roomId: row.roomId,
+        roomName: row.roomName,
+        roomLocation: row.roomLocation,
+        totalBookings: Number(row.totalBookings || 0),
+        totalHours: Number(row.totalHours || 0),
+        uniqueUsers: Number(row.uniqueUsers || 0),
+        busiestDate: busiest[0]?.date || null,
+        busiestDateHours: Number(busiest[0]?.hours || 0)
+      });
+    }
+
+    res.json({ start, end, rooms: results });
+  } catch (err) {
+    console.error('Failed to generate room usage report:', err);
+    res.status(500).json({ error: 'Failed to generate room usage report' });
+  }
+});
+
 // Generate escalating overdue notifications for all users (admin only).
 app.get('/api/notifications/overdue-escalations', requireAdmin, async (req, res) => {
   const levelsParam = String(req.query.levels || '').trim();

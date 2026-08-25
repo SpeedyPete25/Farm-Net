@@ -101,7 +101,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsEscalation, adminNotificationsLevels, requestJson, onReturnLoan } = deps;
+  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsEscalation, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -734,6 +734,107 @@ export function createAdminPage(deps) {
     }
   }
 
+  // Room usage report state
+  let lastRoomReport = null;
+
+  function renderRoomUsage(report) {
+    if (!roomUsageList) return;
+    if (!report || !Array.isArray(report.rooms) || report.rooms.length === 0) {
+      renderListState(roomUsageList, { kind: 'empty', message: 'No room usage data for the selected range.' });
+      return;
+    }
+
+    roomUsageList.innerHTML = '';
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Room</th>
+          <th>Location</th>
+          <th>Total Bookings</th>
+          <th>Total Hours</th>
+          <th>Unique Users</th>
+          <th>Busiest Date</th>
+          <th>Busiest Hours</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    report.rooms.forEach((r) => {
+      const row = document.createElement('tr');
+      const name = document.createElement('td'); name.textContent = r.roomName || '-';
+      const loc = document.createElement('td'); loc.textContent = r.roomLocation || '-';
+      const bookings = document.createElement('td'); bookings.textContent = String(r.totalBookings || 0);
+      const hours = document.createElement('td'); hours.textContent = String(r.totalHours || 0);
+      const users = document.createElement('td'); users.textContent = String(r.uniqueUsers || 0);
+      const busiest = document.createElement('td'); busiest.textContent = r.busiestDate || '-';
+      const busiestHours = document.createElement('td'); busiestHours.textContent = String(r.busiestDateHours || 0);
+
+      row.appendChild(name);
+      row.appendChild(loc);
+      row.appendChild(bookings);
+      row.appendChild(hours);
+      row.appendChild(users);
+      row.appendChild(busiest);
+      row.appendChild(busiestHours);
+      tbody.appendChild(row);
+    });
+
+    roomUsageList.appendChild(table);
+  }
+
+  async function loadRoomUsageReport() {
+    if (!roomUsageList || !roomUsageStart || !roomUsageEnd) return;
+    const start = String(roomUsageStart.value || '');
+    const end = String(roomUsageEnd.value || '');
+    if (!start || !end) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+    renderListState(roomUsageList, { kind: 'loading', message: 'Generating report...' });
+    try {
+      const result = await requestJson(`/api/reports/room-usage?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+      if (result?.error) {
+        renderListState(roomUsageList, { kind: 'error', message: result.error });
+      } else {
+        lastRoomReport = result;
+        renderRoomUsage(result);
+      }
+    } catch (err) {
+      renderListState(roomUsageList, { kind: 'error', message: 'Unable to generate report.' });
+    }
+  }
+
+  function exportRoomUsageCsv() {
+    if (!lastRoomReport || !Array.isArray(lastRoomReport.rooms)) {
+      alert('No report data to export. Generate the report first.');
+      return;
+    }
+    const rows = lastRoomReport.rooms;
+    const header = ['Room','Location','TotalBookings','TotalHours','UniqueUsers','BusiestDate','BusiestHours'];
+    const csvLines = [header.join(',')];
+    rows.forEach((r) => {
+      const line = [r.roomName, r.roomLocation, r.totalBookings, r.totalHours, r.uniqueUsers, r.busiestDate || '', r.busiestDateHours || 0]
+        .map((v) => String(v).replace(/"/g, '""'))
+        .map((v) => (v.includes(',') || v.includes('\n') ? `"${v}"` : v));
+      csvLines.push(line.join(','));
+    });
+    const csv = csvLines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const filename = `room-usage-${lastRoomReport.start || ''}_to_${lastRoomReport.end || ''}.csv`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   /**
    * Handle clicks in the users table.
    * Uses event delegation to process delete actions from dynamic rows.
@@ -768,6 +869,10 @@ export function createAdminPage(deps) {
   }
 
   usersList.addEventListener('click', handleUsersListClick);
+
+  // Wire up room usage buttons
+  if (roomUsageGenerate) roomUsageGenerate.addEventListener('click', () => loadRoomUsageReport());
+  if (roomUsageExport) roomUsageExport.addEventListener('click', () => exportRoomUsageCsv());
 
   /**
    * Handle clicks in the bookings table.

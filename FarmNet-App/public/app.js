@@ -45,6 +45,7 @@ const navAdmin = document.getElementById('nav-admin');
 const navNotifications = document.getElementById('nav-notifications');
 const navRoomManagement = document.getElementById('nav-room-management');
 const navEquipmentManagement = document.getElementById('nav-equipment-management');
+const navReports = document.getElementById('nav-reports');
 
 // Shared status/read-only display elements.
 const userStatus = document.getElementById('user-status');
@@ -61,6 +62,11 @@ const adminNotificationsDays = document.getElementById('admin-notifications-days
 const adminNotificationsRefresh = document.getElementById('admin-notifications-refresh');
 const adminNotificationsEscalation = document.getElementById('admin-notifications-escalation');
 const adminNotificationsLevels = document.getElementById('admin-notifications-levels');
+const roomUsageStart = document.getElementById('room-usage-start');
+const roomUsageEnd = document.getElementById('room-usage-end');
+const roomUsageGenerate = document.getElementById('room-usage-generate');
+const roomUsageExport = document.getElementById('room-usage-export');
+const roomUsageList = document.getElementById('room-usage-list');
 
 // Room management controls.
 const roomManagementList = document.getElementById('room-management-list');
@@ -662,12 +668,17 @@ const adminPage = createAdminPage({
   adminLoansList,
   damageReportsList,
   auditLogList,
-  requestJson,
   adminNotificationsList,
   adminNotificationsDays,
   adminNotificationsRefresh,
   adminNotificationsEscalation,
   adminNotificationsLevels,
+  roomUsageStart,
+  roomUsageEnd,
+  roomUsageGenerate,
+  roomUsageExport,
+  roomUsageList,
+  requestJson,
   onReturnLoan: returnLoan
 });
 
@@ -730,6 +741,7 @@ async function refreshDashboard(statusFilter = 'active') {
     applyTheme('dark');
     isAdminUser = false;
     navAdmin.classList.add('hidden');
+    if (navReports) navReports.classList.add('hidden');
     navRoomManagement.classList.add('hidden');
     navEquipmentManagement.classList.add('hidden');
     authSection.classList.remove('hidden');
@@ -744,6 +756,7 @@ async function refreshDashboard(statusFilter = 'active') {
   settingsPage.setTheme(profile.theme || 'dark');
   isAdminUser = profile.role === 'admin';
   navAdmin.classList.toggle('hidden', !isAdminUser);
+  if (navReports) navReports.classList.toggle('hidden', !isAdminUser);
   navRoomManagement.classList.toggle('hidden', !isAdminUser);
   navEquipmentManagement.classList.toggle('hidden', !isAdminUser);
 
@@ -944,6 +957,7 @@ logoutButton.addEventListener('click', async () => {
   settingsPage.clearMessages();
   changePasswordForm.reset();
   navAdmin.classList.add('hidden');
+  if (navReports) navReports.classList.add('hidden');
   navRoomManagement.classList.add('hidden');
   navEquipmentManagement.classList.add('hidden');
   await refreshDashboard(bookingFilter.value);
@@ -993,6 +1007,19 @@ navAdmin.addEventListener('click', () => {
     return;
   }
   setActivePage('admin');
+});
+
+// Navigate to Reports (open Admin and scroll to reports section)
+if (navReports) navReports.addEventListener('click', () => {
+  if (!isAdminUser) {
+    setActivePage('dashboard');
+    return;
+  }
+  setActivePage('admin');
+  setTimeout(() => {
+    const el = document.getElementById('room-usage-section');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 120);
 });
 
 /**
