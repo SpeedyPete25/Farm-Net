@@ -1,27 +1,37 @@
-const path = require('path');
-const sqlite3 = require('sqlite3');
+const { Client } = require('pg');
 const { test, expect } = require('@playwright/test');
 
-const browserDataDir = path.join(__dirname, '..', '..', '.test-data', 'browser');
-const browserDbFile = path.join(browserDataDir, 'lab-booking.db');
+const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL
+  || 'postgres://farmnet:farmnet@localhost:5432/farmnet_test';
 
 function uniqueEmail(label) {
   return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 }
 
-function runSql(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(browserDbFile);
-    db.run(sql, params, function onRun(error) {
-      db.close(() => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(this);
-      });
-    });
-  });
+// Translate `?` placeholders to Postgres's `$1, $2, ...` syntax (mirrors server.js's
+// own conversion, kept as a small local copy since this file is a separate process).
+function convertPlaceholders(sql) {
+  let result = '';
+  let paramIndex = 0;
+  for (const ch of sql) {
+    if (ch === '?') {
+      paramIndex += 1;
+      result += `$${paramIndex}`;
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+async function runSql(sql, params = []) {
+  const client = new Client({ connectionString: TEST_DATABASE_URL });
+  await client.connect();
+  try {
+    return await client.query(convertPlaceholders(sql), params);
+  } finally {
+    await client.end();
+  }
 }
 
 test('loads the signed-out shell', async ({ page }) => {

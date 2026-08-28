@@ -1,39 +1,48 @@
 # Farm-Net App
 
-Farm-Net App is a university room booking and equipment checkout web app. It combines an Express backend, SQLite persistence, and a static (no build step) frontend with a weekly timetable for booking rooms. This folder is the active development line; [`../Prototype/`](../Prototype/) is kept as a frozen reference copy of the earlier prototype.
+Farm-Net App is a university room booking and equipment checkout web app. It combines an Express backend, PostgreSQL persistence, and a static (no build step) frontend with a weekly timetable for booking rooms. This folder is the active development line; [`../Prototype/`](../Prototype/) is kept as a frozen reference copy of the earlier prototype.
 
 ## Requirements
 
 - Node.js 18+ (uses only the packages listed in `package.json`).
-- No external database is required — SQLite storage is created automatically on first run.
+- A PostgreSQL server. The included `docker-compose.yml` is the easiest way to get one locally (requires Docker Desktop); a cloud/managed Postgres instance also works — just point `DATABASE_URL` at it.
 
 ## Run Locally
 
 1. Open a terminal in `FarmNet-App/`.
-2. Install dependencies.
+2. Start a local Postgres server (skip this if pointing `DATABASE_URL` at your own instance).
+
+```bash
+docker compose up -d
+```
+
+This starts Postgres on `localhost:5432` with a `farmnet` database for the app and a separate `farmnet_test` database for the automated test suite (so tests never touch dev data).
+
+3. Install dependencies.
 
 ```bash
 npm install
 ```
 
-3. Start the app.
+4. Start the app.
 
 ```bash
 npm start
 ```
 
-4. Open `http://localhost:3000`.
+5. Open `http://localhost:3000`.
 
 Optional: create `FarmNet-App/.env` to override configuration values.
 
 ```env
 PORT=3000
+DATABASE_URL=postgres://farmnet:farmnet@localhost:5432/farmnet
 EMAIL_VERIFICATION_ENABLED=false
 EMAIL_VERIFICATION_TIMEOUT_MS=8000
 EMAIL_VERIFICATION_MAX_MX=3
 ```
 
-No default admin account is seeded. Register a normal account first, then promote it to `admin` directly in the SQLite database (`UPDATE users SET role = 'admin' WHERE email = '...'`) — only existing admins can promote other users through the app itself.
+No default admin account is seeded. Register a normal account first, then promote it to `admin` directly in the database (`UPDATE users SET role = 'admin' WHERE email = '...'`, e.g. via `docker exec -it <postgres-container> psql -U farmnet -d farmnet`) — only existing admins can promote other users through the app itself.
 
 ## Testing
 
@@ -65,7 +74,7 @@ Browser smoke suite (`tests/browser/smoke.spec.js`, `playwright.config.js`):
 - Register, login, page navigation, and logout journey.
 - Admin-only navigation appears for an admin account.
 
-Test runs use an isolated SQLite database and return-photo directory under `FarmNet-App/.test-data/` (the Playwright suite further isolates itself under `.test-data/browser/` on port `3201`), so they do not touch your normal `FarmNet-App/data/` files or default port `3000`.
+Test runs use the dedicated `farmnet_test` Postgres database (wiped via `DROP SCHEMA public CASCADE` before each run — see `scripts/reset-test-data.js`) and an isolated return-photo directory under `FarmNet-App/.test-data/` (the Playwright suite further isolates its uploaded files under `.test-data/browser/` on port `3201`), so they never touch your dev database, `FarmNet-App/data/` files, or default port `3000`. Requires the local Postgres container (`docker compose up -d`) to be running.
 
 If Playwright reports a missing browser runtime on a new machine, run:
 
@@ -96,7 +105,7 @@ npx playwright install chromium
 
 ## Project Structure
 
-- `server.js`: Express backend — session handling, SQLite schema/migrations, mailbox verification, and all API routes.
+- `server.js`: Express backend — session handling, Postgres schema/migrations, mailbox verification, and all API routes.
 - `public/index.html`: page structure and form markup for every screen.
 - `public/app.js`: application bootstrap and page/router wiring.
 - `public/js/api.js`: shared `fetch` wrapper used by all page modules.
@@ -109,16 +118,17 @@ npx playwright install chromium
 - `public/js/room-management-page.js`: admin room CRUD.
 - `public/js/equipment-management-page.js`: admin equipment CRUD.
 - `public/styles.css`: shared styling for the whole app.
-- `scripts/reset-test-data.js`: deletes `.test-data/` for a clean test run.
-- `data/lab-booking.db`: SQLite database created at runtime (default data dir).
+- `docker-compose.yml`: local Postgres server for development and testing.
+- `scripts/init-test-db.sql`: one-time init script that creates the separate `farmnet_test` database inside the Postgres container.
+- `scripts/reset-test-data.js`: wipes the `farmnet_test` database schema and deletes `.test-data/` for a clean test run.
 - `data/return-photos/`: uploaded photos attached to equipment returns (default data dir).
 - `tests/api.integration.test.js`: Node.js test runner API/integration suite.
 - `tests/browser/smoke.spec.js`: Playwright browser smoke suite.
-- `playwright.config.js`: Playwright config — boots the server on port `3201` against an isolated data dir.
+- `playwright.config.js`: Playwright config — boots the server on port `3201` against the test database and an isolated data dir.
 
 ## Data Model
 
-SQLite tables, created and migrated automatically on startup (`initDatabase()` in `server.js`):
+PostgreSQL tables, created and migrated automatically on startup (`initDatabase()` in `server.js`). Column names are camelCase in application code; Postgres folds them to lowercase in storage, and `server.js` restores the original casing on every result row (see the `CAMEL_CASE_COLUMN_MAP` comment in `server.js`) so this doesn't leak into the API or the rest of the codebase:
 
 - `users`: `id`, `email` (unique), `passwordHash`, `role` (`user`/`admin`, default `user`), `theme` (default `dark`).
 - `rooms`: `id`, `name`, `location`, `minDurationMinutes`, `maxDurationMinutes`, `maxBookingsPerUserPerWeek` (all nullable — unset means no limit), `requiresApproval` (0/1, default 0).
@@ -204,7 +214,9 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `EMAIL_VERIFICATION_TIMEOUT_MS`: defaults to `8000`. Timeout for each DNS/SMTP step during mailbox verification.
 - `EMAIL_VERIFICATION_MAX_MX`: defaults to `3`. Maximum number of MX servers probed per registration.
 - `PORT`: defaults to `3000`.
-- `DATA_DIR`: optional override for the app data directory (SQLite database + `return-photos/`). Used by automated tests to isolate data from `data/`.
+- `DATABASE_URL`: Postgres connection string. Defaults to `postgres://farmnet:farmnet@localhost:5432/farmnet`, matching `docker-compose.yml`.
+- `DATABASE_SSL`: defaults to `false`. Set to `true` when connecting to a managed Postgres provider that requires SSL (e.g. most cloud hosts) — connects with `rejectUnauthorized: false`.
+- `DATA_DIR`: optional override for the app data directory (`return-photos/` only — used by automated tests to isolate uploaded files from `data/`).
 
 `EMAIL_VERIFICATION_ENABLED` accepts `true/false`, `1/0`, `yes/no`, and `on/off` (case-insensitive).
 
@@ -212,21 +224,25 @@ Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as vali
 
 ## Resetting Data
 
-- Delete `FarmNet-App/data/lab-booking.db` to recreate the seeded database on the next launch.
+- Run `docker exec -it <postgres-container> psql -U farmnet -d farmnet -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"` (or connect with any Postgres client) and restart the app to recreate the seeded database from scratch.
 - Delete files in `FarmNet-App/data/return-photos/` if you want to clear uploaded return photos during local development.
-- Run `npm run test:reset` to clear automated test artifacts in `FarmNet-App/.test-data/`.
+- Run `npm run test:reset` to wipe the `farmnet_test` database and clear automated test artifacts in `FarmNet-App/.test-data/`.
+- `docker compose down -v` removes the Postgres container's data volume entirely (both `farmnet` and `farmnet_test`).
 
 ## Troubleshooting
 
 - App does not start because port `3000` is already in use:
 	- Set a different port in `FarmNet-App/.env`, for example `PORT=3001`, then restart with `npm start`.
 	- Or stop the process currently using port `3000` and start the app again.
+- App fails to start with a database connection error:
+	- Make sure Postgres is running: `docker compose up -d`, then check `docker compose ps`.
+	- Confirm `DATABASE_URL` (in `.env` or your shell) points at the right host/port/database.
 - Registration fails while testing offline or on restricted networks:
 	- Set `EMAIL_VERIFICATION_ENABLED=false` in `FarmNet-App/.env` to bypass MX/SMTP mailbox checks during development.
 	- Restart the server after changing environment variables.
 - Login/auth issues after schema changes or old local data:
-	- Remove `FarmNet-App/data/lab-booking.db` and restart to rebuild the database from the current schema.
-	- Re-register users after a reset because local accounts are deleted with the database file.
+	- Reset the database schema (see "Resetting Data" above) and restart to rebuild it from the current schema.
+	- Re-register users after a reset because accounts are deleted along with the schema.
 - Return photo upload problems:
 	- Ensure uploads are image files and under 5 MB.
 	- Confirm `FarmNet-App/data/return-photos/` exists and is writable by the running process.
@@ -238,6 +254,7 @@ Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as vali
 - The Express session secret is a fixed string in `server.js`, suitable for local development only — do not deploy this as-is without moving it to an environment variable.
 - Registration validates mailbox reachability (MX + SMTP checks when enabled) but does not send a click-to-confirm email.
 - No rate limiting on login/registration endpoints.
+- Foreign-key relationships (e.g. a loan referencing its equipment, a booking referencing its room) are stored as plain columns without database-level `FOREIGN KEY` constraints. This preserves the exact behaviour of the original SQLite version, which never enabled foreign-key enforcement — several admin delete routes (equipment, rooms) only guard against *active* references, not full history, and would need that audited before real FK enforcement could be turned on safely.
 
 ## Notes
 

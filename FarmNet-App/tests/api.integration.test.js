@@ -5,11 +5,15 @@ const path = require('path');
 const net = require('net');
 const { once } = require('events');
 const { spawn } = require('child_process');
-const sqlite3 = require('sqlite3');
+const { Client } = require('pg');
 
 const prototypeDir = path.join(__dirname, '..');
 const testDataDir = path.join(prototypeDir, '.test-data', 'api');
-const dbFile = path.join(testDataDir, 'lab-booking.db');
+
+// Dedicated test database, kept separate from the dev database (see
+// scripts/init-test-db.sql / docker-compose.yml) so this suite never touches real data.
+const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL
+  || 'postgres://farmnet:farmnet@localhost:5432/farmnet_test';
 
 let serverProcess;
 let baseUrl;
@@ -67,23 +71,26 @@ async function waitForServer(url, timeoutMs = 15000) {
   throw new Error(`Timed out waiting for test server.\n${serverOutput}`);
 }
 
-function openDatabase() {
-  return new sqlite3.Database(dbFile);
+let testDbClient;
+
+// Translate `?` placeholders to Postgres's `$1, $2, ...` syntax (mirrors server.js's
+// own conversion, kept as a small local copy since this file is a separate process).
+function convertPlaceholders(sql) {
+  let result = '';
+  let paramIndex = 0;
+  for (const ch of sql) {
+    if (ch === '?') {
+      paramIndex += 1;
+      result += `$${paramIndex}`;
+    } else {
+      result += ch;
+    }
+  }
+  return result;
 }
 
-function runSql(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    const db = openDatabase();
-    db.run(sql, params, function onRun(err) {
-      db.close(() => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(this);
-      });
-    });
-  });
+async function runSql(sql, params = []) {
+  return testDbClient.query(convertPlaceholders(sql), params);
 }
 
 function formatDateFromToday(daysAhead) {
@@ -192,6 +199,9 @@ test.before(async () => {
   removeDir(testDataDir);
   ensureDir(testDataDir);
 
+  testDbClient = new Client({ connectionString: TEST_DATABASE_URL });
+  await testDbClient.connect();
+
   const port = await getFreePort();
   baseUrl = `http://127.0.0.1:${port}`;
 
@@ -201,6 +211,7 @@ test.before(async () => {
       ...process.env,
       PORT: String(port),
       DATA_DIR: testDataDir,
+      DATABASE_URL: TEST_DATABASE_URL,
       EMAIL_VERIFICATION_ENABLED: 'false'
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -220,6 +231,10 @@ test.after(async () => {
   if (serverProcess && serverProcess.exitCode == null) {
     serverProcess.kill();
     await once(serverProcess, 'exit');
+  }
+
+  if (testDbClient) {
+    await testDbClient.end();
   }
 
   removeDir(testDataDir);

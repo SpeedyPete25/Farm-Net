@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const sqlite3 = require('sqlite3');
+const { Pool, types: pgTypes } = require('pg');
 const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
@@ -12,11 +12,11 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 // Farm-Net backend.
 // - Serves the static frontend and JSON API.
 // - Handles login sessions, password hashing, and account preferences.
-// - Stores users, rooms, equipment, bookings, loans, return photos, and audit data in SQLite.
+// - Stores users, rooms, equipment, bookings, loans, return photos, and audit data in PostgreSQL.
 const app = express();
 
-// Application data directory for SQLite storage.
-// Tests can override this to isolate their database and uploaded files.
+// Application data directory for uploaded return-condition photos.
+// Tests can override this to isolate their uploaded files.
 const dataDir = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : path.join(__dirname, 'data');
@@ -47,9 +47,6 @@ const uploadPhoto = multer({
   }
 });
 
-const dbFile = path.join(dataDir, 'lab-booking.db');
-const db = new sqlite3.Database(dbFile);
-
 function parseBooleanEnv(value, defaultValue) {
   if (value == null) return defaultValue;
   const normalized = String(value).trim().toLowerCase();
@@ -68,7 +65,28 @@ const EMAIL_VERIFICATION_ENABLED = parseBooleanEnv(process.env.EMAIL_VERIFICATIO
 const EMAIL_VERIFICATION_TIMEOUT_MS = parseNumberEnv(process.env.EMAIL_VERIFICATION_TIMEOUT_MS, 8000);
 const EMAIL_VERIFICATION_MAX_MX = Math.max(1, Math.trunc(parseNumberEnv(process.env.EMAIL_VERIFICATION_MAX_MX, 3)));
 
-// Handle database errors
+// PostgreSQL connection pool. Ordinary queries go through the pool so concurrent
+// requests each get their own connection instead of contending for one. The one route
+// that needs a real transaction (account deletion, below) explicitly checks out a
+// single dedicated client for its duration instead of using the pool directly --
+// with a pool, separate BEGIN/COMMIT/DELETE calls could each land on a different
+// physical connection and silently stop being one atomic transaction.
+const DATABASE_URL = process.env.DATABASE_URL || 'postgres://farmnet:farmnet@localhost:5432/farmnet';
+const DATABASE_SSL = parseBooleanEnv(process.env.DATABASE_SSL, false);
+
+const db = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: DATABASE_SSL ? { rejectUnauthorized: false } : false
+});
+
+// COUNT(*)/SUM() over an INTEGER column return Postgres's 8-byte "bigint" type, which
+// node-postgres parses as a string by default (a bigint can exceed what a JS number can
+// represent exactly). This app's counts/sums are always small, and a lot of existing code
+// expects a plain JS number here (matching sqlite3's behaviour), so bigint is parsed as a
+// number globally rather than patching every call site.
+pgTypes.setTypeParser(20, (value) => parseInt(value, 10));
+
+// Handle unexpected connection-level errors (e.g. the connection to Postgres drops).
 db.on('error', (err) => {
   console.error('Database error:', err);
   process.exit(1);
@@ -85,34 +103,139 @@ app.use(session({
   cookie: { maxAge: 24 * 60 * 60 * 1000 }
 }));
 
+// Postgres folds every unquoted SQL identifier (column names, aliases) to lowercase.
+// This app's queries were written for SQLite using camelCase columns and aliases
+// (e.g. roomId, startTime, roomName) and every route reads results by that exact
+// camelCase property name. Rather than rewrite the SQL text throughout this file,
+// every result row's keys are restored to their original camelCase spelling via
+// this lookup table -- built from the app's actual schema columns and query aliases --
+// so bare columns, `SELECT *`, and aliases all round-trip correctly with zero changes
+// to any of the query strings below.
+const CAMEL_CASE_COLUMN_MAP = {
+  passwordhash: 'passwordHash',
+  mindurationminutes: 'minDurationMinutes',
+  maxdurationminutes: 'maxDurationMinutes',
+  maxbookingsperuserperweek: 'maxBookingsPerUserPerWeek',
+  requiresapproval: 'requiresApproval',
+  roomid: 'roomId',
+  starttime: 'startTime',
+  endtime: 'endTime',
+  createdat: 'createdAt',
+  equipmentid: 'equipmentId',
+  userid: 'userId',
+  durationhours: 'durationHours',
+  seriesid: 'seriesId',
+  equipmentunitid: 'equipmentUnitId',
+  borrowdate: 'borrowDate',
+  returndate: 'returnDate',
+  returncondition: 'returnCondition',
+  returnconditionphotopath: 'returnConditionPhotoPath',
+  returnedat: 'returnedAt',
+  kitid: 'kitId',
+  kitloangroupid: 'kitLoanGroupId',
+  loanid: 'loanId',
+  reportedbyuserid: 'reportedByUserId',
+  photopath: 'photoPath',
+  eventtype: 'eventType',
+  resourcetype: 'resourceType',
+  resourceid: 'resourceId',
+  actoremail: 'actorEmail',
+  borroweremail: 'borrowerEmail',
+  equipmentcode: 'equipmentCode',
+  equipmentname: 'equipmentName',
+  equipmentquantity: 'equipmentQuantity',
+  kitname: 'kitName',
+  owneremail: 'ownerEmail',
+  reportedbyemail: 'reportedByEmail',
+  roomlocation: 'roomLocation',
+  roomname: 'roomName',
+  targetemail: 'targetEmail',
+  totalbookings: 'totalBookings',
+  totalhours: 'totalHours',
+  totalunits: 'totalUnits',
+  uniqueusers: 'uniqueUsers',
+  unitcode: 'unitCode',
+  useremail: 'userEmail'
+};
+
 /**
- * Execute a SELECT query and return the result rows.
+ * Restore a Postgres result row's lowercase-folded keys to their original camelCase form.
+ * @param {object} row Raw row from the pg driver.
+ * @returns {object} Row with camelCase keys.
+ */
+function restoreCamelCaseKeys(row) {
+  if (row == null || typeof row !== 'object') return row;
+  const restored = {};
+  for (const [key, value] of Object.entries(row)) {
+    restored[CAMEL_CASE_COLUMN_MAP[key] || key] = value;
+  }
+  return restored;
+}
+
+/**
+ * Convert `?`-style placeholders to Postgres's `$1, $2, ...` positional syntax,
+ * skipping `?` characters that appear inside single-quoted string literals.
+ * @param {string} sql SQL text using `?` placeholders.
+ * @returns {string} SQL text using `$n` placeholders.
+ */
+function convertPlaceholders(sql) {
+  let result = '';
+  let paramIndex = 0;
+  let inString = false;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (ch === "'") {
+      inString = !inString;
+      result += ch;
+    } else if (ch === '?' && !inString) {
+      paramIndex += 1;
+      result += `$${paramIndex}`;
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+/**
+ * Execute a SELECT query and return the result rows, with camelCase keys restored.
  * @param {string} sql SQL query text with ? placeholders
  * @param {Array<any>} params Parameter values for placeholders
  * @returns {Promise<Array<any>>}
  */
-function query(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+async function query(sql, params = []) {
+  const result = await db.query(convertPlaceholders(sql), params);
+  return result.rows.map(restoreCamelCaseKeys);
 }
 
 /**
- * Execute a statement that modifies data and return the statement context.
+ * Execute a statement that modifies data. INSERT statements automatically get a
+ * `RETURNING id` clause appended (unless they already specify one) so callers can
+ * read `result.lastID`, mirroring the sqlite3 driver's `this.lastID` behaviour.
  * @param {string} sql SQL statement with ? placeholders
  * @param {Array<any>} params Parameter values for placeholders
- * @returns {Promise<import('sqlite3').Statement>}
+ * @returns {Promise<{ lastID: number|undefined, rowCount: number }>}
  */
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
-  });
+async function run(sql, params = []) {
+  const translated = convertPlaceholders(sql);
+  const isPlainInsert = /^\s*insert\s+into/i.test(translated) && !/\breturning\b/i.test(translated);
+  const finalSql = isPlainInsert ? `${translated} RETURNING id` : translated;
+  const result = await db.query(finalSql, params);
+  return { lastID: result.rows[0]?.id, rowCount: result.rowCount };
+}
+
+/**
+ * Look up a table's column names (Postgres equivalent of SQLite's `PRAGMA table_info`),
+ * restoring each column name to its original camelCase spelling.
+ * @param {string} tableName
+ * @returns {Promise<Array<{ name: string }>>}
+ */
+async function getTableColumns(tableName) {
+  const rows = await query(
+    'SELECT column_name FROM information_schema.columns WHERE table_name = ?',
+    [tableName]
+  );
+  return rows.map((row) => ({ name: CAMEL_CASE_COLUMN_MAP[row.column_name] || row.column_name }));
 }
 
 /**
@@ -570,7 +693,7 @@ async function removeUnassignedEquipmentUnits(equipmentId, count) {
      LEFT JOIN loans l
        ON l.equipmentUnitId = eu.id
       AND l.status = 'active'
-      AND l.returnDate >= date("now")
+      AND l.returnDate >= CURRENT_DATE
      WHERE eu.equipmentId = ?
        AND l.id IS NULL
      ORDER BY eu.id DESC
@@ -877,12 +1000,24 @@ async function attachSeriesPositions(bookings) {
 }
 
 /**
- * Ensure the SQLite schema exists and seed default data.
+ * Ensure the Postgres schema exists and seed default data.
  * This uses CREATE TABLE IF NOT EXISTS so it is safe to run every startup.
  */
 async function initDatabase() {
+  // Fail fast on startup if Postgres isn't reachable, rather than on the first request.
+  await db.query('SELECT 1');
+
+  // Note on referential integrity: the original SQLite setup never enabled
+  // `PRAGMA foreign_keys`, so foreign-key relationships below were never actually
+  // enforced -- several admin delete routes only guard against *active* references
+  // (e.g. active loans/bookings), not full history. Declaring real FOREIGN KEY
+  // constraints here would make Postgres enforce what SQLite silently didn't,
+  // and could turn a previously-silent orphaned reference into a hard error on
+  // routes that were never audited for that. Relationships are preserved as plain
+  // (unenforced) INTEGER columns to keep behaviour identical to before; enabling
+  // real FK enforcement is a good follow-up but needs those routes audited first.
   await run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
     passwordHash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
@@ -890,7 +1025,7 @@ async function initDatabase() {
   )`);
 
   // Rename username column to email if it exists
-  const columns = await query("PRAGMA table_info(users)");
+  const columns = await getTableColumns('users');
   const hasUsernameColumn = columns.some(col => col.name === 'username');
   if (hasUsernameColumn) {
     await run(`ALTER TABLE users RENAME COLUMN username TO email`);
@@ -920,14 +1055,14 @@ async function initDatabase() {
   }
 
   await run(`CREATE TABLE IF NOT EXISTS rooms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name TEXT NOT NULL,
     location TEXT NOT NULL
   )`);
 
   // Room policy columns: booking length limits, weekly frequency cap, and
   // whether new bookings need admin approval before becoming active.
-  const roomColumns = await query('PRAGMA table_info(rooms)');
+  const roomColumns = await getTableColumns('rooms');
   const roomPolicyColumns = [
     ['minDurationMinutes', 'INTEGER'],
     ['maxDurationMinutes', 'INTEGER'],
@@ -941,58 +1076,54 @@ async function initDatabase() {
   }
 
   await run(`CREATE TABLE IF NOT EXISTS room_blackouts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     roomId INTEGER NOT NULL,
     date TEXT NOT NULL,
     startTime TEXT NOT NULL,
     endTime TEXT NOT NULL,
     reason TEXT,
-    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(roomId) REFERENCES rooms(id)
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS equipment (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name TEXT NOT NULL,
     quantity INTEGER NOT NULL,
     requiresApproval INTEGER NOT NULL DEFAULT 0
   )`);
 
-  const equipmentColumns = await query('PRAGMA table_info(equipment)');
+  const equipmentColumns = await getTableColumns('equipment');
   const hasEquipmentRequiresApproval = equipmentColumns.some(col => col.name === 'requiresApproval');
   if (!hasEquipmentRequiresApproval) {
     await run(`ALTER TABLE equipment ADD COLUMN requiresApproval INTEGER NOT NULL DEFAULT 0`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS equipment_units (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     equipmentId INTEGER NOT NULL,
     code TEXT NOT NULL UNIQUE,
-    condition TEXT NOT NULL DEFAULT 'working',
-    FOREIGN KEY(equipmentId) REFERENCES equipment(id)
+    condition TEXT NOT NULL DEFAULT 'working'
   )`);
 
-  const equipmentUnitColumns = await query('PRAGMA table_info(equipment_units)');
+  const equipmentUnitColumns = await getTableColumns('equipment_units');
   const hasConditionColumn = equipmentUnitColumns.some(col => col.name === 'condition');
   if (!hasConditionColumn) {
     await run(`ALTER TABLE equipment_units ADD COLUMN condition TEXT NOT NULL DEFAULT 'working'`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS bookings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     userId INTEGER NOT NULL,
     roomId INTEGER NOT NULL,
     date TEXT NOT NULL,
     startTime TEXT NOT NULL,
-    durationHours INTEGER NOT NULL,
+    durationHours REAL NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
-    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(userId) REFERENCES users(id),
-    FOREIGN KEY(roomId) REFERENCES rooms(id)
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
 
   // Check if status column exists, add it if not
-  const bookingColumns = await query("PRAGMA table_info(bookings)");
+  const bookingColumns = await getTableColumns('bookings');
   const hasStatusColumn = bookingColumns.some(col => col.name === 'status');
   if (!hasStatusColumn) {
     await run(`ALTER TABLE bookings ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
@@ -1006,7 +1137,7 @@ async function initDatabase() {
   }
 
   await run(`CREATE TABLE IF NOT EXISTS loans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     userId INTEGER NOT NULL,
     equipmentId INTEGER NOT NULL,
     equipmentUnitId INTEGER,
@@ -1016,14 +1147,11 @@ async function initDatabase() {
     returnCondition TEXT,
     returnConditionPhotoPath TEXT,
     returnedAt TEXT,
-    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(userId) REFERENCES users(id),
-    FOREIGN KEY(equipmentId) REFERENCES equipment(id),
-    FOREIGN KEY(equipmentUnitId) REFERENCES equipment_units(id)
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
 
   // Check if status column exists, add it if not
-  const loanColumns = await query("PRAGMA table_info(loans)");
+  const loanColumns = await getTableColumns('loans');
   const hasLoanStatus = loanColumns.some(col => col.name === 'status');
   if (!hasLoanStatus) {
     await run(`ALTER TABLE loans ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
@@ -1062,42 +1190,36 @@ async function initDatabase() {
   }
 
   await run(`CREATE TABLE IF NOT EXISTS equipment_kits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name TEXT NOT NULL,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS equipment_kit_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     kitId INTEGER NOT NULL,
     equipmentId INTEGER NOT NULL,
-    quantity INTEGER NOT NULL,
-    FOREIGN KEY(kitId) REFERENCES equipment_kits(id),
-    FOREIGN KEY(equipmentId) REFERENCES equipment(id)
+    quantity INTEGER NOT NULL
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS damage_reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     loanId INTEGER NOT NULL,
     equipmentUnitId INTEGER,
     reportedByUserId INTEGER NOT NULL,
     description TEXT NOT NULL,
     photoPath TEXT,
-    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(loanId) REFERENCES loans(id),
-    FOREIGN KEY(equipmentUnitId) REFERENCES equipment_units(id),
-    FOREIGN KEY(reportedByUserId) REFERENCES users(id)
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS activity_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     userId INTEGER NOT NULL,
     eventType TEXT NOT NULL,
     resourceType TEXT NOT NULL,
     resourceId INTEGER NOT NULL,
     description TEXT NOT NULL,
-    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(userId) REFERENCES users(id)
+    timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
 
   const rooms = await query('SELECT id FROM rooms LIMIT 1');
@@ -1190,7 +1312,7 @@ app.post('/api/register', async (req, res) => {
     await run('INSERT INTO users (email, passwordHash) VALUES (?, ?)', [email, passwordHash]);
     res.json({ message: 'Registration successful. You can now log in.' });
   } catch (err) {
-    if (err.message.includes('UNIQUE')) {
+    if (err.code === '23505') { // Postgres unique_violation
       return res.status(400).json({ error: 'Email already exists.' });
     }
     res.status(500).json({ error: 'Could not create account.' });
@@ -3820,25 +3942,31 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     }
   }
 
+  // Checked out directly from the pool (bypassing the shared query()/run() helpers, which
+  // go through the pool and could hand each call a different connection) so every
+  // statement below runs on the same connection and the transaction is actually atomic.
+  const client = await db.connect();
   try {
-    await run('BEGIN TRANSACTION');
-    await run('DELETE FROM bookings WHERE userId = ?', [targetUserId]);
-    await run(
-      'DELETE FROM damage_reports WHERE reportedByUserId = ? OR loanId IN (SELECT id FROM loans WHERE userId = ?)',
+    await client.query('BEGIN');
+    await client.query(convertPlaceholders('DELETE FROM bookings WHERE userId = ?'), [targetUserId]);
+    await client.query(
+      convertPlaceholders('DELETE FROM damage_reports WHERE reportedByUserId = ? OR loanId IN (SELECT id FROM loans WHERE userId = ?)'),
       [targetUserId, targetUserId]
     );
-    await run('DELETE FROM loans WHERE userId = ?', [targetUserId]);
-    await run('DELETE FROM activity_history WHERE userId = ?', [targetUserId]);
-    await run('DELETE FROM users WHERE id = ?', [targetUserId]);
-    await run('COMMIT');
+    await client.query(convertPlaceholders('DELETE FROM loans WHERE userId = ?'), [targetUserId]);
+    await client.query(convertPlaceholders('DELETE FROM activity_history WHERE userId = ?'), [targetUserId]);
+    await client.query(convertPlaceholders('DELETE FROM users WHERE id = ?'), [targetUserId]);
+    await client.query('COMMIT');
   } catch (err) {
     try {
-      await run('ROLLBACK');
+      await client.query('ROLLBACK');
     } catch {
       // Ignore rollback failures after an already failed transaction.
     }
     console.error('Failed to delete user account:', err);
     return res.status(500).json({ error: 'Could not delete user account.' });
+  } finally {
+    client.release();
   }
 
   const actingUserEmail = req.session.email || 'unknown';

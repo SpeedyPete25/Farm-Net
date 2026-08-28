@@ -19,7 +19,8 @@ module.exports = {
       ...process.env,
       PORT: '3201',
       EMAIL_VERIFICATION_ENABLED: 'false',
-      DATA_DIR: path.join(__dirname, '.test-data', 'browser')
+      DATA_DIR: path.join(__dirname, '.test-data', 'browser'),
+      DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgres://farmnet:farmnet@localhost:5432/farmnet_test'
     }
   }
 };
