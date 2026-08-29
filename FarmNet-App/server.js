@@ -784,6 +784,7 @@ async function generateEquipmentDueNotifications(thresholdDays = 3) {
 
     return {
       loanId: r.loanId,
+      userId: r.userId,
       recipientEmail: r.userEmail,
       equipmentId: r.equipmentId,
       equipmentName: r.equipmentName,
@@ -850,6 +851,7 @@ async function generateOverdueEscalationNotifications(levels = [3, 7, 14]) {
 
     return {
       loanId: r.loanId,
+      userId: r.userId,
       recipientEmail: r.userEmail,
       equipmentId: r.equipmentId,
       equipmentName: r.equipmentName,
@@ -4043,6 +4045,7 @@ app.get('/api/notifications/mine', requireLogin, async (req, res) => {
 
       return {
         loanId: r.loanId,
+        userId: r.userId,
         recipientEmail: r.userEmail,
         equipmentId: r.equipmentId,
         equipmentName: r.equipmentName,
