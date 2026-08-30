@@ -279,6 +279,25 @@ button.danger {
   background: var(--panel-surface);
 }
 
+.checklist-items {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.checklist-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--panel-surface);
+  display: grid;
+  gap: 8px;
+}
+
+.checklist-item.checkbox-label {
+  display: flex;
+}
+
 .status-label {
   display: inline-block;
   padding: 2px 8px;

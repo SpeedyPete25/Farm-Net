@@ -1903,6 +1903,188 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(survivingLoan.status, 'active');
   });
 
+  await t.test('supports returning a kit as one verified checklist covering every component', async () => {
+    const adminEmail = uniqueEmail('kit-checklist-admin');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    await loginUser(adminClient, adminEmail, password);
+
+    const suffix = Date.now();
+    const cameraName = `Trail Camera ${suffix}`;
+    const strapName = `Mounting Strap ${suffix}`;
+
+    const addCamera = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cameraName, quantity: 1 })
+    });
+    assert.equal(addCamera.status, 200);
+
+    const addStrap = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: strapName, quantity: 1 })
+    });
+    assert.equal(addStrap.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const cameraEquipment = equipmentList.body.equipment.find((item) => item.name === cameraName);
+    const strapEquipment = equipmentList.body.equipment.find((item) => item.name === strapName);
+
+    const kitName = `Trail Camera Kit ${suffix}`;
+    const createKit = await adminClient.request('/api/admin/kits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: kitName,
+        items: [
+          { equipmentId: cameraEquipment.id, quantity: 1 },
+          { equipmentId: strapEquipment.id, quantity: 1 }
+        ]
+      })
+    });
+    assert.equal(createKit.status, 200);
+
+    const kits = await adminClient.request('/api/admin/kits');
+    const kit = kits.body.kits.find((k) => k.name === kitName);
+    assert.ok(kit);
+
+    const memberEmail = uniqueEmail('kit-checklist-member');
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    const borrow = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 3 })
+    });
+    assert.equal(borrow.status, 200);
+    const kitLoanGroupId = borrow.body.kitLoanGroupId;
+
+    const requestsAfterBorrow = await memberClient.request('/api/my-requests?status=all');
+    const groupLoans = requestsAfterBorrow.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
+    assert.equal(groupLoans.length, 2);
+    const cameraLoan = groupLoans.find((loan) => loan.equipmentName === cameraName);
+    const strapLoan = groupLoans.find((loan) => loan.equipmentName === strapName);
+
+    // A different user cannot return a kit that isn't theirs.
+    const otherClient = new TestClient(baseUrl);
+    const otherEmail = uniqueEmail('kit-checklist-other');
+    await registerUser(otherClient, otherEmail, password);
+    await loginUser(otherClient, otherEmail, password);
+    const foreignReturn = await otherClient.request('/api/return-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitLoanGroupId, items: [{ loanId: cameraLoan.id, condition: 'Fine' }, { loanId: strapLoan.id, condition: 'Fine' }] })
+    });
+    assert.equal(foreignReturn.status, 404);
+
+    // An incomplete checklist (missing a component) is rejected outright.
+    const incompleteReturn = await memberClient.request('/api/return-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitLoanGroupId, items: [{ loanId: cameraLoan.id, condition: 'Fine' }] })
+    });
+    assert.equal(incompleteReturn.status, 400);
+    assert.match(incompleteReturn.body.error, /every active item/);
+
+    // A missing condition note on any item is rejected, and nothing is applied
+    // (both loans remain active) -- the checklist is all-or-nothing.
+    const missingConditionReturn = await memberClient.request('/api/return-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kitLoanGroupId,
+        items: [{ loanId: cameraLoan.id, condition: 'Fine' }, { loanId: strapLoan.id, condition: '  ' }]
+      })
+    });
+    assert.equal(missingConditionReturn.status, 400);
+
+    const requestsAfterRejections = await memberClient.request('/api/my-requests?status=all');
+    const loansAfterRejections = requestsAfterRejections.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
+    assert.ok(loansAfterRejections.every((loan) => loan.status === 'active'));
+
+    // A complete, valid checklist returns every component and records each one's
+    // own condition, flagging just the strap as damaged.
+    const validReturn = await memberClient.request('/api/return-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kitLoanGroupId,
+        items: [
+          { loanId: cameraLoan.id, condition: 'Good working order' },
+          { loanId: strapLoan.id, condition: 'Buckle is cracked', damaged: true }
+        ]
+      })
+    });
+    assert.equal(validReturn.status, 200);
+    assert.equal(validReturn.body.itemsReturned, 2);
+    assert.match(validReturn.body.message, /1 item\(s\) flagged as damaged/);
+
+    const requestsAfterReturn = await memberClient.request('/api/my-requests?status=all');
+    const returnedLoans = requestsAfterReturn.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
+    const returnedCamera = returnedLoans.find((loan) => loan.equipmentName === cameraName);
+    const returnedStrap = returnedLoans.find((loan) => loan.equipmentName === strapName);
+    assert.equal(returnedCamera.status, 'returned');
+    assert.equal(returnedCamera.returnCondition, 'Good working order');
+    assert.equal(returnedStrap.status, 'returned');
+    assert.equal(returnedStrap.returnCondition, 'Buckle is cracked');
+
+    // The damaged component is pulled from service; the undamaged one is untouched.
+    const equipmentAfterReturn = await adminClient.request('/api/admin/equipment');
+    const strapAfter = equipmentAfterReturn.body.equipment.find((item) => item.id === strapEquipment.id);
+    const cameraAfter = equipmentAfterReturn.body.equipment.find((item) => item.id === cameraEquipment.id);
+    assert.ok(strapAfter.codes.some((unit) => unit.condition === 'damaged'));
+    assert.ok(cameraAfter.codes.every((unit) => unit.condition === 'working'));
+
+    // Nothing is left active, so a repeat submission is rejected.
+    const repeatReturn = await memberClient.request('/api/return-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitLoanGroupId, items: [{ loanId: cameraLoan.id, condition: 'Fine' }] })
+    });
+    assert.equal(repeatReturn.status, 400);
+    assert.match(repeatReturn.body.error, /No active items/);
+
+    // Admins can return a kit on behalf of another user via the same checklist endpoint.
+    // The strap's sole unit is now damaged from the previous return, so bump its quantity
+    // to give the kit a fresh working unit to assign for this second borrow.
+    const bumpStrapQuantity = await adminClient.request(`/api/admin/equipment/${strapEquipment.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity: 2 })
+    });
+    assert.equal(bumpStrapQuantity.status, 200);
+
+    const secondBorrow = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 2 })
+    });
+    assert.equal(secondBorrow.status, 200);
+    const secondGroupId = secondBorrow.body.kitLoanGroupId;
+    const secondItems = secondBorrow.body.items;
+
+    const requestsAfterSecondBorrow = await memberClient.request('/api/my-requests?status=all');
+    const secondGroupLoans = requestsAfterSecondBorrow.body.loans.filter((loan) => loan.kitLoanGroupId === secondGroupId);
+
+    const adminReturn = await adminClient.request('/api/return-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kitLoanGroupId: secondGroupId,
+        items: secondGroupLoans.map((loan) => ({ loanId: loan.id, condition: 'Returned via admin checklist' }))
+      })
+    });
+    assert.equal(adminReturn.status, 200);
+    assert.equal(adminReturn.body.itemsReturned, secondItems.length);
+  });
+
   await t.test('enforces configurable room policies and the admin booking approval workflow', async () => {
     const adminEmail = uniqueEmail('policy-admin');
     const password = 'Password123';

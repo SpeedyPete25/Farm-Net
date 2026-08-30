@@ -1625,6 +1625,103 @@ app.post('/api/cancel-kit-loan', requireLogin, async (req, res) => {
   res.json({ message: `Cancelled ${ids.length} item(s) from this kit request.` });
 });
 
+// Return every active item from one kit borrow/reserve request as a single checklist
+// submission, so each individual component's condition is verified and recorded on
+// check-in rather than the kit being returned as one undifferentiated block.
+// Photo attachments aren't supported here -- use /api/return-loan per item if a photo
+// is needed for a specific component.
+app.post('/api/return-kit', requireLogin, async (req, res) => {
+  const kitLoanGroupId = Number(req.body.kitLoanGroupId);
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+  if (!Number.isFinite(kitLoanGroupId) || kitLoanGroupId <= 0) {
+    return res.status(400).json({ error: 'Kit loan group ID is required.' });
+  }
+  if (items.length === 0) {
+    return res.status(400).json({ error: 'At least one checklist item is required.' });
+  }
+
+  // Admins can return any user's kit; everyone else can only return their own.
+  const isAdmin = req.session.role === 'admin';
+  const existing = isAdmin
+    ? await query(
+        `SELECT l.*, u.email AS ownerEmail FROM loans l JOIN users u ON u.id = l.userId WHERE l.kitLoanGroupId = ?`,
+        [kitLoanGroupId]
+      )
+    : await query(
+        `SELECT l.*, u.email AS ownerEmail FROM loans l JOIN users u ON u.id = l.userId WHERE l.kitLoanGroupId = ? AND l.userId = ?`,
+        [kitLoanGroupId, req.session.userId]
+      );
+
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'Kit loan request not found or not owned by user.' });
+  }
+
+  const activeLoans = existing.filter((loan) => loan.status === 'active');
+  if (activeLoans.length === 0) {
+    return res.status(400).json({ error: 'No active items to return for this kit request.' });
+  }
+
+  // The checklist must cover every currently-active item in the kit, all at once --
+  // if you only need to return one component early, use /api/return-loan for that item.
+  const activeLoanIds = new Set(activeLoans.map((loan) => loan.id));
+  const submittedIds = new Set(items.map((item) => Number(item.loanId)));
+  const coversEveryActiveItem = activeLoanIds.size === submittedIds.size
+    && [...activeLoanIds].every((id) => submittedIds.has(id));
+  if (!coversEveryActiveItem) {
+    return res.status(400).json({ error: 'The checklist must include every active item in this kit request.' });
+  }
+
+  // Validate every item's condition text before applying any changes, so the
+  // checklist either fully succeeds or fails outright rather than partially returning.
+  const parsedItems = [];
+  for (const loan of activeLoans) {
+    const submitted = items.find((item) => Number(item.loanId) === loan.id);
+    const conditionText = typeof submitted?.condition === 'string' ? submitted.condition.trim() : '';
+    if (!conditionText) {
+      return res.status(400).json({ error: `Condition description is required for every item (missing for loan #${loan.id}).` });
+    }
+    if (conditionText.length > 1000) {
+      return res.status(400).json({ error: `Condition description is too long for loan #${loan.id} (max 1000 characters).` });
+    }
+    const damaged = ['true', 'on', '1', 'yes'].includes(String(submitted?.damaged || '').trim().toLowerCase());
+    parsedItems.push({ loan, conditionText, damaged });
+  }
+
+  for (const { loan, conditionText, damaged } of parsedItems) {
+    await run(
+      'UPDATE loans SET status = ?, returnCondition = ?, returnedAt = CURRENT_TIMESTAMP WHERE id = ?',
+      ['returned', conditionText, loan.id]
+    );
+
+    const description = loan.userId === req.session.userId
+      ? `Returned kit item (loan ${loan.id}) via kit checklist. Condition: ${conditionText}`
+      : `${req.session.email} returned kit item (loan ${loan.id}) on behalf of ${loan.ownerEmail} via kit checklist. Condition: ${conditionText}`;
+    await logActivity(req.session.userId, 'loan_returned', 'loan', loan.id, description);
+
+    if (damaged && loan.equipmentUnitId) {
+      await run('UPDATE equipment_units SET condition = ? WHERE id = ?', ['damaged', loan.equipmentUnitId]);
+      const unitRows = await query('SELECT code FROM equipment_units WHERE id = ?', [loan.equipmentUnitId]);
+      const unitCode = unitRows[0]?.code || loan.equipmentUnitId;
+      const damageDescription = `${req.session.email} flagged item ${unitCode} as damaged while returning kit loan ${loan.id}`;
+      await logActivity(req.session.userId, 'equipment_condition_updated', 'equipment_unit', loan.equipmentUnitId, damageDescription);
+
+      await run(
+        'INSERT INTO damage_reports (loanId, equipmentUnitId, reportedByUserId, description) VALUES (?, ?, ?, ?)',
+        [loan.id, loan.equipmentUnitId, req.session.userId, conditionText]
+      );
+    }
+  }
+
+  const damagedCount = parsedItems.filter((item) => item.damaged).length;
+  res.json({
+    message: damagedCount > 0
+      ? `Kit returned successfully. ${damagedCount} item(s) flagged as damaged.`
+      : 'Kit returned successfully.',
+    itemsReturned: parsedItems.length
+  });
+});
+
 // Mark an equipment loan as returned and capture return condition notes + optional photo.
 // Accepts multipart/form-data so a photo file can be uploaded directly.
 app.post('/api/return-loan', requireLogin, (req, res, next) => {

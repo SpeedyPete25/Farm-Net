@@ -50,6 +50,7 @@
  *   onCancelBookingSeries: (seriesId: number) => Promise<void>,
  *   onCancelLoan: (loanId: number) => Promise<void>,
  *   onCancelKitLoan: (kitLoanGroupId: number) => Promise<void>,
+ *   onReturnKit: (kitLoanGroupId: number) => Promise<void>,
  *   onReturnLoan: (loanId: number) => Promise<void>,
  *   onEditBooking: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
  *   onEditBookingSeries: (booking: { id: number, date: string, startTime: string, durationHours: number|string }) => Promise<void>,
@@ -68,7 +69,7 @@
  * @param {DashboardPageDeps} deps Dependency bag.
  * @returns {DashboardPageApi} Dashboard page API.
  */
-export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelBookingSeries, onCancelLoan, onCancelKitLoan, onReturnLoan, onEditBooking, onEditBookingSeries, onEditLoan }) {
+export function createDashboardPage({ requestsList, formatDuration, onCancelBooking, onCancelBookingSeries, onCancelLoan, onCancelKitLoan, onReturnKit, onReturnLoan, onEditBooking, onEditBookingSeries, onEditLoan }) {
   requestsList.addEventListener('click', async (event) => {
     const editBookingBtn = event.target.closest('[data-action="edit-booking"]');
     if (editBookingBtn) {
@@ -158,6 +159,15 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
       return;
     }
 
+    const returnKitBtn = event.target.closest('[data-action="return-kit"]');
+    if (returnKitBtn) {
+      const kitLoanGroupId = Number(returnKitBtn.dataset.kitLoanGroupId);
+      if (Number.isFinite(kitLoanGroupId)) {
+        await onReturnKit(kitLoanGroupId);
+      }
+      return;
+    }
+
     const returnLoanBtn = event.target.closest('[data-action="return-loan"]');
     if (returnLoanBtn) {
       const loanId = Number(returnLoanBtn.dataset.loanId);
@@ -226,7 +236,7 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
 
   /**
    * Render every loan created by one kit borrow/reserve request as a single grouped
-   * card, with a bulk cancel action alongside each item's own status/actions.
+   * card, with bulk cancel/return actions alongside each item's own status/actions.
    * @param {number} kitLoanGroupId
    * @param {string} kitName
    * @param {DashboardLoan[]} loansInGroup
@@ -234,6 +244,7 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
    */
   function renderKitLoanGroupCard(kitLoanGroupId, kitName, loansInGroup) {
     const anyCancellable = loansInGroup.some((loan) => ['active', 'pending'].includes(loan.status));
+    const anyReturnable = loansInGroup.some((loan) => loan.status === 'active');
 
     return `
       <div class="request-card kit-request-card">
@@ -241,9 +252,10 @@ export function createDashboardPage({ requestsList, formatDuration, onCancelBook
         <div class="kit-request-items">
           ${loansInGroup.map((loan) => renderLoanCard(loan)).join('')}
         </div>
-        ${anyCancellable ? `
+        ${(anyCancellable || anyReturnable) ? `
           <div class="request-actions">
-            <button class="cancel-button" data-action="cancel-kit-loan" data-kit-loan-group-id="${kitLoanGroupId}">Cancel entire kit request</button>
+            ${anyReturnable ? `<button class="action-button" data-action="return-kit" data-kit-loan-group-id="${kitLoanGroupId}">Return kit (checklist)</button>` : ''}
+            ${anyCancellable ? `<button class="cancel-button" data-action="cancel-kit-loan" data-kit-loan-group-id="${kitLoanGroupId}">Cancel entire kit request</button>` : ''}
           </div>
         ` : ''}
       </div>

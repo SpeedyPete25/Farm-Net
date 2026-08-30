@@ -296,6 +296,37 @@
     </div>
   </div>
 
+  <!-- Kit check-out checklist modal: shown after borrowing/reserving a kit so each
+       component can be verified as received before the modal can be dismissed. -->
+  <div id="kit-checkout-checklist-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="kit-checkout-checklist-title">
+    <div class="modal-dialog card">
+      <h3 id="kit-checkout-checklist-title">Verify Kit Items</h3>
+      <p id="kit-checkout-checklist-intro"></p>
+      <div id="kit-checkout-checklist-items" class="checklist-items"></div>
+      <div class="form-actions">
+        <button type="button" id="kit-checkout-checklist-confirm" disabled>Confirm all items received</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Kit return checklist modal: every active component of a kit loan is verified
+       and its own condition recorded together, in one guided checklist. -->
+  <div id="kit-return-checklist-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="kit-return-checklist-title">
+    <div class="modal-dialog card">
+      <h3 id="kit-return-checklist-title">Return Kit</h3>
+      <p id="kit-return-checklist-intro">Verify and record the condition of each item before returning this kit.</p>
+      <form id="kit-return-checklist-form">
+        <input type="hidden" id="kit-return-checklist-group-id" />
+        <div id="kit-return-checklist-items" class="checklist-items"></div>
+        <div id="kit-return-checklist-error" class="form-error"></div>
+        <div class="form-actions">
+          <button type="submit">Submit Kit Return</button>
+          <button type="button" id="kit-return-checklist-cancel" class="secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>

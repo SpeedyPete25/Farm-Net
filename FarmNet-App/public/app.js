@@ -514,6 +514,39 @@ async function reserveEquipment(equipmentId, equipmentName) {
 }
 
 /**
+ * Open the kit check-out checklist modal so each assigned component can be verified
+ * as received before the confirmation can be dismissed.
+ * @param {string} introMessage Summary message from the borrow/reserve response.
+ * @param {Array<{ equipmentName: string, code: string, status: 'active'|'pending' }>} items
+ */
+function openKitCheckoutChecklist(introMessage, items) {
+  const modal = document.getElementById('kit-checkout-checklist-modal');
+  document.getElementById('kit-checkout-checklist-intro').textContent = introMessage;
+
+  const container = document.getElementById('kit-checkout-checklist-items');
+  container.innerHTML = items.map((item, index) => `
+    <label class="checkbox-label checklist-item">
+      <input type="checkbox" data-checklist-item="${index}" />
+      ${item.equipmentName} (${item.code})${item.status === 'pending' ? ' — pending approval' : ''}
+    </label>
+  `).join('');
+
+  const confirmBtn = document.getElementById('kit-checkout-checklist-confirm');
+
+  function updateConfirmState() {
+    const boxes = container.querySelectorAll('input[type="checkbox"]');
+    confirmBtn.disabled = boxes.length === 0 || ![...boxes].every((box) => box.checked);
+  }
+
+  container.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+    box.addEventListener('change', updateConfirmState);
+  });
+  updateConfirmState();
+
+  modal.classList.remove('hidden');
+}
+
+/**
  * Trigger a kit borrow request for the selected kit.
  * @param {number} kitId Kit identifier.
  * @param {string} kitName Kit display name.
@@ -539,7 +572,7 @@ async function borrowKit(kitId, kitName) {
     return;
   }
 
-  alert(result.message);
+  openKitCheckoutChecklist(result.message, result.items || []);
   await refreshDashboard(bookingFilter.value);
   if (activePage === 'admin') {
     await adminPage.load();
@@ -579,7 +612,7 @@ async function reserveKit(kitId, kitName) {
     return;
   }
 
-  alert(result.message);
+  openKitCheckoutChecklist(result.message, result.items || []);
   await refreshDashboard(bookingFilter.value);
   if (activePage === 'admin') {
     await adminPage.load();
@@ -607,6 +640,55 @@ async function cancelKitLoan(kitLoanGroupId) {
   await refreshDashboard(bookingFilter.value);
 }
 
+/**
+ * Open the kit return checklist modal, populated with every currently-active item
+ * in the kit loan group so each component's condition can be verified and recorded
+ * together as one check-in.
+ * @param {number} kitLoanGroupId
+ */
+function openKitReturnChecklist(kitLoanGroupId, items) {
+  document.getElementById('kit-return-checklist-group-id').value = String(kitLoanGroupId);
+  document.getElementById('kit-return-checklist-error').textContent = '';
+
+  const container = document.getElementById('kit-return-checklist-items');
+  container.innerHTML = items.map((item) => `
+    <div class="checklist-item" data-loan-id="${item.id}">
+      <strong>${item.equipmentName}${item.equipmentCode ? ` (${item.equipmentCode})` : ''}</strong>
+      <label>Condition on return <span style="color:var(--danger)">*</span>
+        <textarea data-field="condition" rows="2" maxlength="1000" required placeholder="Describe the equipment condition…"></textarea>
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" data-field="damaged" />
+        Flag this item as damaged
+      </label>
+    </div>
+  `).join('');
+
+  document.getElementById('kit-return-checklist-modal').classList.remove('hidden');
+}
+
+/**
+ * Fetch the current active items for a kit loan group and open the return checklist.
+ * @param {number} kitLoanGroupId
+ */
+async function returnKitChecklist(kitLoanGroupId) {
+  const requests = await requestJson('/api/my-requests?status=all');
+  if (requests.error) {
+    alert(requests.error);
+    return;
+  }
+
+  const items = (requests.loans || []).filter(
+    (loan) => loan.kitLoanGroupId === kitLoanGroupId && loan.status === 'active'
+  );
+  if (items.length === 0) {
+    alert('No active items to return for this kit.');
+    return;
+  }
+
+  openKitReturnChecklist(kitLoanGroupId, items);
+}
+
 const dashboardPage = createDashboardPage({
   requestsList,
   formatDuration,
@@ -614,6 +696,7 @@ const dashboardPage = createDashboardPage({
   onCancelBookingSeries: cancelBookingSeries,
   onCancelLoan: cancelLoan,
   onCancelKitLoan: cancelKitLoan,
+  onReturnKit: returnKitChecklist,
   onReturnLoan: returnLoan,
   onEditBooking: editBooking,
   onEditBookingSeries: editBookingSeries,
@@ -941,6 +1024,85 @@ returnLoanForm.addEventListener('submit', async (event) => {
   }
 
   returnLoanModal.classList.add('hidden');
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+  if (activePage === 'admin') {
+    await adminPage.load();
+  }
+});
+
+/**
+ * Kit check-out checklist modal controls.
+ * The confirm button is enabled by openKitCheckoutChecklist() once every item is checked.
+ */
+const kitCheckoutChecklistModal = document.getElementById('kit-checkout-checklist-modal');
+const kitCheckoutChecklistConfirmBtn = document.getElementById('kit-checkout-checklist-confirm');
+
+kitCheckoutChecklistConfirmBtn.addEventListener('click', () => {
+  kitCheckoutChecklistModal.classList.add('hidden');
+});
+
+/**
+ * Kit return checklist modal controls.
+ */
+const kitReturnChecklistModal = document.getElementById('kit-return-checklist-modal');
+const kitReturnChecklistForm = document.getElementById('kit-return-checklist-form');
+const kitReturnChecklistCancelBtn = document.getElementById('kit-return-checklist-cancel');
+
+/**
+ * Close the kit return checklist modal via explicit cancel button.
+ */
+kitReturnChecklistCancelBtn.addEventListener('click', () => {
+  kitReturnChecklistModal.classList.add('hidden');
+});
+
+/**
+ * Close the kit return checklist modal when the backdrop is clicked.
+ * @param {MouseEvent} event
+ */
+kitReturnChecklistModal.addEventListener('click', (event) => {
+  if (event.target === kitReturnChecklistModal) {
+    kitReturnChecklistModal.classList.add('hidden');
+  }
+});
+
+/**
+ * Submit the kit return checklist: every item's condition (and optional damaged flag)
+ * is collected and sent together as one check-in.
+ * @param {SubmitEvent} event
+ */
+kitReturnChecklistForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorEl = document.getElementById('kit-return-checklist-error');
+  errorEl.textContent = '';
+
+  const kitLoanGroupId = Number(document.getElementById('kit-return-checklist-group-id').value);
+  const itemRows = document.querySelectorAll('#kit-return-checklist-items .checklist-item');
+
+  const items = [];
+  for (const row of itemRows) {
+    const loanId = Number(row.dataset.loanId);
+    const condition = row.querySelector('[data-field="condition"]').value.trim();
+    const damaged = row.querySelector('[data-field="damaged"]').checked;
+
+    if (!condition) {
+      errorEl.textContent = 'Please describe the condition for every item before submitting.';
+      return;
+    }
+    items.push({ loanId, condition, damaged });
+  }
+
+  const result = await requestJson('/api/return-kit', {
+    method: 'POST',
+    body: JSON.stringify({ kitLoanGroupId, items })
+  });
+
+  if (result.error) {
+    errorEl.textContent = result.error;
+    return;
+  }
+
+  kitReturnChecklistModal.classList.add('hidden');
   alert(result.message);
   await refreshDashboard(bookingFilter.value);
   if (activePage === 'admin') {
