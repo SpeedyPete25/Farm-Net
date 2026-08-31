@@ -57,16 +57,23 @@ npm run test:browser  # reset test data, then run the Playwright smoke suite
 npm run test:reset     # clear automated test artifacts only
 ```
 
-What the suite currently covers (`tests/api.integration.test.js`):
+What the suite currently covers (`tests/api.integration.test.js`, 19 scenarios):
 
 - Frontend shell response and signed-out `/api/profile` state.
 - Register, login, profile, preferences, and logout.
 - Validation and authorization failures (expected 400/401/403/404 status codes).
 - Booking flow: create, edit, cancel.
-- Equipment loan flow: borrow, edit, return.
+- Recurring bookings: daily/weekly/monthly creation, the weekly per-user frequency cap across occurrences, series-wide cancel and reschedule (including atomicity when one occurrence conflicts), admin bulk approve/deny/cancel across a series, and stable occurrence position/total reporting.
+- Equipment loan flow: borrow, edit, return; admin borrowing/returning on behalf of another user with damage flagging.
 - Admin listing and edit flows for bookings and loans.
 - Admin room and equipment management endpoints (add/update/remove, including quantity and unit-code edge cases).
 - Equipment unit damage tagging: marking units damaged/working, resulting availability changes, blocked borrowing when no working units remain, and admin-only access to the condition endpoint.
+- Equipment unit lifecycle status, including overdue detection and the booked-out list.
+- Equipment request/admin approval workflow.
+- Equipment kits: bundling multiple equipment types, atomic borrow/reserve, admin bulk approve/deny/cancel, and returning a kit as one verified checklist (including rejection of an incomplete checklist or a missing condition note, with no partial changes applied).
+- Configurable room policies and the admin room-booking approval workflow.
+
+Not yet covered by the automated suite (verified manually against a live server during development instead): equipment reservation for a future date, notification content generation (`/api/notifications/*`), and the room usage report (`/api/reports/room-usage`).
 
 Browser smoke suite (`tests/browser/smoke.spec.js`, `playwright.config.js`):
 
@@ -86,22 +93,30 @@ npx playwright install chromium
 
 - Register and log in with email-based accounts; registration can optionally verify the mailbox is real (MX + SMTP check).
 - View the weekly availability timetable for rooms.
-- Book a room using a date, start time, and duration, in 15-minute increments.
+- Book a room using a date, start time, and duration, in 15-minute increments — as a one-off or as a **daily/weekly/monthly recurring series** (2–52 occurrences). A whole series can be rescheduled or cancelled in one action, and each occurrence shows its position in the series (e.g. "2 of 6").
 - Cancel and edit personal room bookings (future, active/pending bookings only; conflicts are rejected).
 - Rooms can be configured with booking policies: minimum/maximum booking length, a maximum number of bookings per user per week, blackout windows, and whether new bookings require admin approval before becoming active.
-- Borrow equipment and return it with condition notes and an optional photo; each physical unit gets a unique code (e.g. `lap001`) assigned at borrow time.
+- Borrow or **reserve for a future date** individual equipment items, or a whole **kit** (a named bundle of multiple equipment types) in one request; return it with a required condition note and optional photo. Each physical unit gets a unique code (e.g. `lap001`) assigned at borrow/reserve time, and admins can borrow/return on behalf of another user.
+- Equipment units carry a computed lifecycle state — `available` / `reserved` / `checked-out` / `overdue` / `pending` (awaiting approval) / `in-maintenance` (flagged damaged) — so overdue or damaged units are automatically excluded from what can be borrowed.
+- Return a kit as one **checklist**: every component in the kit is verified and given its own condition note (and optional damage flag) together, rather than being returned as one undifferentiated block.
+- Flagging equipment as damaged on return creates a linked damage report (with photo), and admins can review all damage reports and clear a unit back to working condition.
+- Individual equipment items, like rooms, can be configured to require admin approval before a loan becomes active.
+- View generated notification content (in-app, not emailed) for your own equipment due soon or overdue, and admins can generate the same content for every user plus escalating overdue reminders.
+- Admins can generate a room usage report for a date range (bookings, hours booked, unique users, busiest day per room).
 - Review active and historical bookings, loans, and request status.
 - Change your password and save a light or dark theme preference.
-- Use admin pages to manage users (roles, deletion), bookings, loans, rooms, equipment, and audit history.
+- Use admin pages to manage users (roles, deletion), bookings (including recurring series), loans, rooms, equipment, equipment kits, damage reports, and audit history.
 
 ## Key Screens
 
-- `User Bookings`: dashboard showing the signed-in user's bookings and loans.
-- `Room Bookings`: weekly timetable plus booking form.
-- `Equipment Loans`: current equipment inventory and borrowing actions.
+- `User Bookings`: dashboard showing the signed-in user's bookings and loans, including recurring-series and kit groupings with bulk actions.
+- `Room Bookings`: weekly timetable plus booking form (with recurrence options).
+- `Equipment Loans`: current equipment inventory, kit availability, and borrowing/reserving actions.
+- `Notifications`: the signed-in user's own generated "equipment due soon" and "overdue" notification content.
 - `Settings`: password change and theme preference.
-- `User Management`: role management, user deletion, plus booking, loan, and audit log administration.
-- `Room Management` and `Equipment Management`: admin-only inventory administration, including per-room booking policy (length limits, weekly frequency cap, admin approval toggle) and blackout window management.
+- `User Management`: role management, user deletion, plus booking (including recurring series), loan, kit-loan, damage report, and audit log administration.
+- `Room Management` and `Equipment Management`: admin-only inventory administration, including per-room/per-equipment approval policy, blackout window management, and equipment kit definitions.
+- `Reports`: jumps to the room usage report section on the admin page.
 
 ## Project Structure
 
@@ -110,13 +125,15 @@ npx playwright install chromium
 - `public/app.js`: application bootstrap and page/router wiring.
 - `public/js/api.js`: shared `fetch` wrapper used by all page modules.
 - `public/js/utils.js`: shared formatting/DOM helpers.
-- `public/js/dashboard-page.js`: user dashboard (bookings + loans overview).
-- `public/js/rooms-page.js`: weekly timetable and room booking form.
-- `public/js/equipment-page.js`: equipment inventory, borrowing, and returns.
+- `public/js/dashboard-page.js`: user dashboard (bookings + loans overview, including recurring-series and kit checklist grouping).
+- `public/js/rooms-page.js`: weekly timetable and room booking form, including recurrence options.
+- `public/js/equipment-page.js`: equipment inventory, borrowing/reserving, and returns.
+- `public/js/equipment-kits-page.js`: kit availability, and borrow/reserve actions.
+- `public/js/notifications-page.js`: the signed-in user's own generated notification content.
 - `public/js/settings-page.js`: password change and theme preference.
-- `public/js/admin-page.js`: admin user/booking/loan management and audit log.
+- `public/js/admin-page.js`: admin user/booking/loan/kit-loan/damage-report management, notification generation, room usage reports, and audit log.
 - `public/js/room-management-page.js`: admin room CRUD.
-- `public/js/equipment-management-page.js`: admin equipment CRUD.
+- `public/js/equipment-management-page.js`: admin equipment CRUD and equipment kit definitions.
 - `public/styles.css`: shared styling for the whole app.
 - `docker-compose.yml`: local Postgres server for development and testing.
 - `scripts/init-test-db.sql`: one-time init script that creates the separate `farmnet_test` database inside the Postgres container.
@@ -133,10 +150,13 @@ PostgreSQL tables, created and migrated automatically on startup (`initDatabase(
 - `users`: `id`, `email` (unique), `passwordHash`, `role` (`user`/`admin`, default `user`), `theme` (default `dark`).
 - `rooms`: `id`, `name`, `location`, `minDurationMinutes`, `maxDurationMinutes`, `maxBookingsPerUserPerWeek` (all nullable — unset means no limit), `requiresApproval` (0/1, default 0).
 - `room_blackouts`: `id`, `roomId`, `date`, `startTime`, `endTime`, `reason`, `createdAt` — blocked-out windows during which a room cannot be booked.
-- `equipment`: `id`, `name`, `quantity` (total units).
-- `equipment_units`: `id`, `equipmentId`, `code` (unique short code such as `lap001`) — one row per physical, loanable unit.
-- `bookings`: `id`, `userId`, `roomId`, `date`, `startTime`, `durationHours`, `status` (`active`/`pending`/`denied`/`cancelled`), `createdAt`. A booking is created as `pending` when its room has `requiresApproval` set, otherwise `active`.
-- `loans`: `id`, `userId`, `equipmentId`, `equipmentUnitId`, `borrowDate`, `returnDate`, `status` (`active`/`cancelled`/`returned`), `returnCondition`, `returnConditionPhotoPath`, `returnedAt`, `createdAt`.
+- `equipment`: `id`, `name`, `quantity` (total units), `requiresApproval` (0/1, default 0).
+- `equipment_units`: `id`, `equipmentId`, `code` (unique short code such as `lap001`), `condition` (`working`/`damaged`) — one row per physical, loanable unit. A unit's full lifecycle status (`available`/`reserved`/`checked-out`/`overdue`/`pending`/`in-maintenance`) is computed on the fly from `condition` plus any active/pending loan, not stored directly.
+- `bookings`: `id`, `userId`, `roomId`, `date`, `startTime`, `durationHours`, `status` (`active`/`pending`/`denied`/`cancelled`), `createdAt`, `seriesId` (nullable — the first occurrence's own id, shared by every occurrence in a recurring series). A booking is created as `pending` when its room has `requiresApproval` set, otherwise `active`.
+- `loans`: `id`, `userId`, `equipmentId`, `equipmentUnitId`, `borrowDate`, `returnDate`, `status` (`active`/`pending`/`denied`/`cancelled`/`returned`), `returnCondition`, `returnConditionPhotoPath`, `returnedAt`, `createdAt`, `kitId` (nullable — the kit this loan was created from, if any), `kitLoanGroupId` (nullable — the first loan's own id, shared by every loan created from one kit borrow/reserve request).
+- `equipment_kits`: `id`, `name` (unique), `createdAt` — a named bundle of equipment types.
+- `equipment_kit_items`: `id`, `kitId`, `equipmentId`, `quantity` — the composition of a kit (one row per equipment type in the kit).
+- `damage_reports`: `id`, `loanId`, `equipmentUnitId`, `reportedByUserId`, `description`, `photoPath`, `createdAt` — created whenever a loan (including a kit component) is returned with the damaged flag set.
 - `activity_history`: `id`, `userId` (actor), `eventType`, `resourceType`, `resourceId`, `description`, `timestamp` — the audit log backing `/api/admin/audit-log`.
 
 Three rooms (Chemistry Lab, Computer Lab, Physics Lab) and three equipment types (Laptop, Microscope, Oscilloscope) are seeded on first run if the tables are empty.
@@ -154,41 +174,56 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `POST /change-password` **auth** — change password (requires current password, 8+ char new password).
 
 **Resources & timetable**
-- `GET /resources` **auth** — rooms plus equipment with computed availability.
+- `GET /resources` **auth** — rooms, equipment (with computed availability and per-status counts), and kits (with computed availability) available.
 - `GET /timetable` **auth** — 7-day booking grid for a room (`roomId`, `weekStart`).
 - `GET /rooms/:roomId/schedule` **auth** — bookings for a room on a specific date.
 
 **Bookings (self-service)**
-- `GET /my-requests` **auth** — current user's bookings and loans (`status=active|all`; `active` includes `pending`).
-- `POST /book-room` **auth** — create a booking (future time, 15-minute increments, overlap check, room policy checks). Returns `status: 'pending'` instead of `'active'` when the room requires admin approval.
-- `POST /edit-booking` **auth** — edit own active/pending booking (re-validated against room policy).
+- `GET /my-requests` **auth** — current user's bookings and loans (`status=active|all`; `active` includes `pending`). Bookings include `seriesId`/`seriesPosition`/`seriesTotal` when part of a recurring series; loans include `kitId`/`kitLoanGroupId`/`kitName` when part of a kit.
+- `POST /book-room` **auth** — create a booking (future time, 15-minute increments, overlap check, room policy checks). Returns `status: 'pending'` instead of `'active'` when the room requires admin approval. Accepts an optional `recurrence: { frequency: 'daily'|'weekly'|'monthly', occurrences: 2-52 }` to create a whole series in one atomic request (all occurrences validated before any are created).
+- `POST /edit-booking` **auth** — edit one occurrence's own active/pending booking (re-validated against room policy).
+- `POST /edit-booking-series` **auth** — reschedule every remaining occurrence in a series at once: the edited occurrence's date shift is applied to every other occurrence, preserving the series' spacing; same new time/duration applied to all. All-or-nothing.
 - `POST /cancel-booking` **auth** — cancel own active/pending, future booking.
+- `POST /cancel-booking-series` **auth** — cancel every remaining active/pending occurrence in a series at once.
 
-**Equipment loans (self-service)**
-- `POST /borrow-equipment` **auth** — borrow an available unit for N days; assigns a specific unit code.
+**Equipment & kit loans (self-service)**
+- `POST /borrow-equipment` **auth** — borrow an available unit for N days; assigns a specific unit code. Returns `status: 'pending'` if the equipment requires approval. Accepts an optional `borrowerEmail` (admin only) to borrow on behalf of another user.
+- `POST /reserve-equipment` **auth** — reserve an available unit for a future date range (same approval/on-behalf semantics as borrowing).
+- `POST /borrow-kit` / `POST /reserve-kit` **auth** — borrow/reserve every component of a kit as one atomic request; creates one loan per assigned unit, all sharing a `kitLoanGroupId`. Each component's `active`/`pending` status still follows its own equipment's approval policy, so one request can end up partially pending. Accepts an optional `borrowerEmail` (admin only).
 - `POST /edit-loan` **auth** — change the return date on an active loan.
-- `POST /cancel-loan` **auth** — cancel an active, non-past loan.
-- `POST /return-loan` **auth**, `multipart/form-data` — mark a loan returned with a required condition note and optional photo (image, ≤5 MB).
+- `POST /cancel-loan` **auth** — cancel an active/pending, non-past loan.
+- `POST /cancel-kit-loan` **auth** — cancel every active/pending loan in a kit loan group at once.
+- `POST /return-loan` **auth**, `multipart/form-data` — mark a loan returned with a required condition note, optional photo (image, ≤5 MB), and optional `damaged` flag (creates a linked damage report). Admins can return on behalf of another user.
+- `POST /return-kit` **auth** — return every currently-active loan in a kit loan group as one checklist: the submission must include every active item with its own condition note (and optional `damaged` flag) or it's rejected outright with nothing applied. No photo support here — use `/return-loan` per item if a photo is needed.
 - `GET /loans/:id/photo` **auth** — fetch the return-condition photo for one of your own loans.
+
+**Notifications (self-service, generated content only — nothing is emailed)**
+- `GET /notifications/mine` **auth** — the current user's own "equipment due soon" notification content (`days`, default 3).
+- `GET /notifications/overdue` **auth** — the current user's own overdue-escalation notification content (`levels`, comma-separated day thresholds, default `3,7,14`).
 
 **Admin — users**
 - `GET /admin/users` **admin** — list all users.
 - `PATCH /admin/users/:id/role` **admin** — change a user's role (blocks demoting the last admin).
-- `DELETE /admin/users/:id` **admin** — delete a user and cascade-delete their bookings, loans, and activity history (blocks self-deletion and deleting the last admin).
+- `DELETE /admin/users/:id` **admin** — delete a user and cascade-delete their bookings, loans, damage reports, and activity history (blocks self-deletion and deleting the last admin) inside a single database transaction.
 
 **Admin — bookings**
-- `GET /admin/bookings` **admin** — list all bookings (`status=active|all`).
+- `GET /admin/bookings` **admin** — list all bookings (`status=active|all`), including series position/total.
 - `POST /admin/bookings/:id/cancel` **admin** — cancel any active/pending, future booking.
 - `PATCH /admin/bookings/:id` **admin** — edit any active/pending booking (same validation as user edit, room policy not re-checked).
 - `POST /admin/bookings/:id/approve` **admin** — approve a `pending` booking, moving it to `active`.
 - `POST /admin/bookings/:id/deny` **admin** — deny a `pending` booking, moving it to `denied` (optional `reason` logged to the audit trail).
+- `POST /admin/bookings/series/:seriesId/{cancel,approve,deny}` **admin** — apply the same action to every matching occurrence in a series at once.
 
-**Admin — loans**
-- `GET /admin/loans` **admin** — list all loans (`status=active|all`).
-- `POST /admin/loans/:id/cancel` **admin** — cancel any active, non-past loan.
+**Admin — loans & kit loans**
+- `GET /admin/loans` **admin** — list all loans (`status=active|all`), including kit grouping.
+- `POST /admin/loans/:id/cancel` **admin** — cancel any active/pending, non-past loan.
+- `POST /admin/loans/:id/approve` / `POST /admin/loans/:id/deny` **admin** — approve or deny a `pending` loan.
 - `PATCH /admin/loans/:id` **admin** — edit any active loan's return date.
+- `POST /admin/kit-loans/:groupId/{approve,deny,cancel}` **admin** — apply the same action to every matching loan in a kit loan group at once.
 - `GET /admin/loans/:id/photo` **admin** — fetch the return-condition photo for any loan.
-- `GET /admin/equipment/booked-out` **admin** — active loans with borrower and unit details.
+- `GET /admin/equipment/booked-out` **admin** — active/overdue loans with borrower and unit details.
+- `GET /admin/damage-reports` **admin** — every damage report, joined with the loan, borrower, reporter, and equipment/unit it relates to.
+- `GET /admin/damage-reports/:id/photo` **admin** — fetch the photo attached to a damage report.
 
 **Admin — rooms**
 - `GET /admin/rooms` **admin** — list all rooms, including configured policy fields.
@@ -199,11 +234,22 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `POST /admin/rooms/:roomId/blackouts` **admin** — add a blackout window (`date`, `startTime`, `endTime`, optional `reason`); bookings overlapping a blackout are rejected.
 - `DELETE /admin/rooms/:roomId/blackouts/:blackoutId` **admin** — remove a blackout window.
 
-**Admin — equipment**
-- `GET /admin/equipment` **admin** — list equipment with unit codes.
+**Admin — equipment & kits**
+- `GET /admin/equipment` **admin** — list equipment with unit codes and computed status per unit.
 - `POST /admin/equipment` **admin** — add equipment (creates matching unit codes; rejects duplicate name).
 - `PATCH /admin/equipment/:id` **admin** — change quantity (adds/removes unit codes; blocks reducing below active loan count or below available unassigned units).
+- `PATCH /admin/equipment/:id/policy` **admin** — toggle whether an equipment type requires admin approval to borrow/reserve.
+- `PATCH /admin/equipment/units/:unitId/condition` **admin** — mark a specific unit `working` or `damaged`.
 - `DELETE /admin/equipment/:id` **admin** — remove equipment and its unit codes (blocks if it has active loans).
+- `GET /admin/kits` **admin** — list kits with their component items.
+- `POST /admin/kits` **admin** — create a kit (name + list of `{ equipmentId, quantity }`; rejects duplicate names, duplicate items within a kit, and references to equipment that doesn't exist).
+- `PATCH /admin/kits/:id` **admin** — replace a kit's name and item composition.
+- `DELETE /admin/kits/:id` **admin** — remove a kit definition (loans already created from it are unaffected).
+
+**Admin — notifications & reports**
+- `GET /notifications/equipment-due` **admin** — generated "equipment due soon" content for every user (`days`, default 3).
+- `GET /notifications/overdue-escalations` **admin** — generated overdue-escalation content for every user (`levels`, comma-separated day thresholds, default `3,7,14`).
+- `GET /reports/room-usage` **admin** — per-room usage report for a date range (`start`, `end`, both `YYYY-MM-DD`): total bookings, total hours, unique users, and busiest date.
 
 **Admin — audit**
 - `GET /admin/audit-log` **admin** — most recent 100 audit log entries (actor, event type, resource, description, timestamp).
@@ -259,6 +305,6 @@ Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as vali
 ## Notes
 
 - Room booking uses a weekly timetable rather than a per-day slot picker.
-- The app already supports booking edits, booking archives/history, admin management flows, and configurable per-room booking policies (length limits, weekly frequency cap, blackout windows, admin approval).
-- Remaining roadmap items from the project brief are booking email notifications, email confirmation links, and notification preferences.
+- The app already supports booking edits, recurring booking series, booking archives/history, admin management flows, and configurable per-room/per-equipment approval policies (length limits, weekly frequency cap, blackout windows, admin approval).
+- Notification and reminder **content** is generated on demand via `/api/notifications/*` and shown in-app (the `Notifications` page); nothing is actually emailed yet — no outbox, delivery, or notification-preferences layer exists. That, and email confirmation links for registration, remain the roadmap items from the project brief that aren't built.
 - Only admins can create admins (via role promotion). No default admin account is seeded automatically.
