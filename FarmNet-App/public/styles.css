@@ -575,6 +575,11 @@ button.danger {
   color: var(--muted);
 }
 
+.overdue-days {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .status-summary {
   display: flex;
   flex-wrap: wrap;

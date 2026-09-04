@@ -1414,6 +1414,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const overdueLoanRow = bookedOut.body.loans.find((loan) => loan.equipmentCode === overdueUnit.codes[0].code);
     assert.ok(overdueLoanRow);
     assert.equal(overdueLoanRow.status, 'overdue');
+    assert.equal(overdueLoanRow.daysOverdue, 2);
 
     // A second user must not be able to borrow the same overdue (still checked-out) unit.
     const otherMemberEmail = uniqueEmail('state-other');

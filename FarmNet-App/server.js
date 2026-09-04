@@ -3610,10 +3610,18 @@ app.get('/api/admin/equipment/booked-out', requireAdmin, async (req, res) => {
 
   // Overdue loans stay on this list (rather than disappearing once returnDate passes)
   // since the item is still physically checked out until it's actually returned.
-  const loansWithStatus = loans.map((loan) => ({
-    ...loan,
-    status: loan.returnDate < today ? 'overdue' : 'checked-out'
-  }));
+  const todayMs = new Date(`${today}T00:00:00Z`).getTime();
+  const loansWithStatus = loans.map((loan) => {
+    const isOverdue = loan.returnDate < today;
+    const daysOverdue = isOverdue
+      ? Math.round((todayMs - new Date(`${loan.returnDate}T00:00:00Z`).getTime()) / 86400000)
+      : 0;
+    return {
+      ...loan,
+      status: isOverdue ? 'overdue' : 'checked-out',
+      daysOverdue
+    };
+  });
 
   res.json({ loans: loansWithStatus });
 });

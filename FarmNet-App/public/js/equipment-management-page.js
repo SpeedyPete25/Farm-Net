@@ -18,7 +18,7 @@ import { renderListState } from './utils.js';
  */
 
 /**
- * @typedef {{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string, status: 'checked-out'|'overdue' }} BookedOutLoan
+ * @typedef {{ id: number, equipmentName: string, equipmentCode?: string, borrowerEmail: string, borrowDate: string, returnDate: string, status: 'checked-out'|'overdue', daysOverdue: number }} BookedOutLoan
  */
 
 /**
@@ -202,6 +202,7 @@ export function createEquipmentManagementPage(deps) {
             ${loan.equipmentCode ? `<p>Assigned item: ${loan.equipmentCode}</p>` : ''}
             <p>Borrowed by: ${loan.borrowerEmail}</p>
             <p>Borrowed: ${loan.borrowDate} · Return by: ${loan.returnDate}</p>
+            ${loan.status === 'overdue' ? `<p class="overdue-days">Overdue by ${loan.daysOverdue} day${loan.daysOverdue === 1 ? '' : 's'}</p>` : ''}
           </div>
         </div>
       `;
