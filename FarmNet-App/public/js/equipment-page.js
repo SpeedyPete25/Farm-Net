@@ -3,12 +3,14 @@
  * Renders equipment availability and handles borrow actions.
  */
 
-import { renderListState } from './utils.js';
+import { renderListState, escapeHtml } from './utils.js';
 
 /**
  * @typedef {{
  *   id: number,
  *   name: string,
+ *   description?: string|null,
+ *   partNumber?: string|null,
  *   quantity: number,
  *   available: number,
  *   requiresApproval?: 0|1,
@@ -88,6 +90,8 @@ export function createEquipmentPage({ equipmentList, onBorrow, onReserve }) {
         <div class="item-row">
           <div>
             <strong>${item.name}</strong>
+            ${item.description ? `<p class="equipment-description">${escapeHtml(item.description)}</p>` : ''}
+            ${item.partNumber ? `<p class="equipment-part-number">Part #: ${escapeHtml(item.partNumber)}</p>` : ''}
             <p>Available: ${item.available} / ${item.quantity}</p>
             ${item.requiresApproval ? '<span class="status-label pending">Requires admin approval</span>' : ''}
           </div>

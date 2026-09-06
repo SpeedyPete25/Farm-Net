@@ -122,6 +122,9 @@ const CAMEL_CASE_COLUMN_MAP = {
   endtime: 'endTime',
   createdat: 'createdAt',
   equipmentid: 'equipmentId',
+  partnumber: 'partNumber',
+  serialnumber: 'serialNumber',
+  calibrationdate: 'calibrationDate',
   userid: 'userId',
   durationhours: 'durationHours',
   seriesid: 'seriesId',
@@ -1100,6 +1103,16 @@ async function initDatabase() {
     await run(`ALTER TABLE equipment ADD COLUMN requiresApproval INTEGER NOT NULL DEFAULT 0`);
   }
 
+  const hasEquipmentDescription = equipmentColumns.some(col => col.name === 'description');
+  if (!hasEquipmentDescription) {
+    await run(`ALTER TABLE equipment ADD COLUMN description TEXT`);
+  }
+
+  const hasEquipmentPartNumber = equipmentColumns.some(col => col.name === 'partNumber');
+  if (!hasEquipmentPartNumber) {
+    await run(`ALTER TABLE equipment ADD COLUMN partNumber TEXT`);
+  }
+
   await run(`CREATE TABLE IF NOT EXISTS equipment_units (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     equipmentId INTEGER NOT NULL,
@@ -1111,6 +1124,16 @@ async function initDatabase() {
   const hasConditionColumn = equipmentUnitColumns.some(col => col.name === 'condition');
   if (!hasConditionColumn) {
     await run(`ALTER TABLE equipment_units ADD COLUMN condition TEXT NOT NULL DEFAULT 'working'`);
+  }
+
+  const hasSerialNumber = equipmentUnitColumns.some(col => col.name === 'serialNumber');
+  if (!hasSerialNumber) {
+    await run(`ALTER TABLE equipment_units ADD COLUMN serialNumber TEXT`);
+  }
+
+  const hasCalibrationDate = equipmentUnitColumns.some(col => col.name === 'calibrationDate');
+  if (!hasCalibrationDate) {
+    await run(`ALTER TABLE equipment_units ADD COLUMN calibrationDate TEXT`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS bookings (
@@ -1431,7 +1454,7 @@ app.post('/api/change-password', requireLogin, async (req, res) => {
 app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
   const equipment = await query(
-    `SELECT e.id, e.name, e.quantity, e.requiresApproval,
+    `SELECT e.id, e.name, e.description, e.partNumber, e.quantity, e.requiresApproval,
             COALESCE(unitCounts.totalUnits, 0) AS totalUnits
      FROM equipment e
      LEFT JOIN (
@@ -1465,6 +1488,8 @@ app.get('/api/resources', requireLogin, async (req, res) => {
     return {
       id: item.id,
       name: item.name,
+      description: item.description || null,
+      partNumber: item.partNumber || null,
       quantity: totalQuantity,
       available: counts.available,
       requiresApproval: item.requiresApproval,
@@ -3542,7 +3567,7 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
 // Return all equipment for admin equipment management.
 app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
   const equipmentRows = await query(
-    `SELECT e.id, e.name, e.requiresApproval,
+    `SELECT e.id, e.name, e.description, e.partNumber, e.requiresApproval,
             COALESCE(unitCounts.totalUnits, 0) AS quantity
      FROM equipment e
      LEFT JOIN (
@@ -3557,7 +3582,7 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
   const statusByUnitId = new Map(unitStatuses.map((unit) => [unit.id, unit.status]));
 
   const codeRows = await query(
-    `SELECT id, equipmentId, code, condition
+    `SELECT id, equipmentId, code, condition, serialNumber, calibrationDate
      FROM equipment_units
      ORDER BY code ASC`
   );
@@ -3570,6 +3595,8 @@ app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
       id: row.id,
       code: row.code,
       condition: row.condition,
+      serialNumber: row.serialNumber || null,
+      calibrationDate: row.calibrationDate || null,
       status: statusByUnitId.get(row.id) || 'available'
     });
     return acc;
@@ -3630,6 +3657,8 @@ app.get('/api/admin/equipment/booked-out', requireAdmin, async (req, res) => {
 app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const quantity = Number(req.body?.quantity);
+  const equipmentDescription = String(req.body?.description || '').trim() || null;
+  const partNumber = String(req.body?.partNumber || '').trim() || null;
 
   if (!name || !Number.isInteger(quantity) || quantity <= 0) {
     return res.status(400).json({ error: 'Equipment name and a quantity greater than 0 are required.' });
@@ -3643,12 +3672,45 @@ app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Equipment with this name already exists.' });
   }
 
-  const result = await run('INSERT INTO equipment (name, quantity) VALUES (?, ?)', [name, quantity]);
+  const result = await run(
+    'INSERT INTO equipment (name, quantity, description, partNumber) VALUES (?, ?, ?, ?)',
+    [name, quantity, equipmentDescription, partNumber]
+  );
   await addEquipmentUnits(result.lastID, name, quantity);
   const description = `${req.session.email} added equipment ${name} (quantity: ${quantity})`;
   await logActivity(req.session.userId, 'equipment_added', 'equipment', result.lastID, description);
 
   res.json({ message: 'Equipment added successfully.' });
+});
+
+// Update an equipment item's descriptive metadata (description, part number). Admin only.
+app.patch('/api/admin/equipment/:id/details', requireAdmin, async (req, res) => {
+  const equipmentId = Number(req.params.id);
+  if (!Number.isFinite(equipmentId) || equipmentId <= 0) {
+    return res.status(400).json({ error: 'Invalid equipment ID.' });
+  }
+
+  const equipmentRows = await query('SELECT id, name FROM equipment WHERE id = ?', [equipmentId]);
+  if (equipmentRows.length === 0) {
+    return res.status(404).json({ error: 'Equipment not found.' });
+  }
+
+  const equipmentDescription = String(req.body?.description || '').trim() || null;
+  const partNumber = String(req.body?.partNumber || '').trim() || null;
+
+  await run('UPDATE equipment SET description = ?, partNumber = ? WHERE id = ?', [
+    equipmentDescription,
+    partNumber,
+    equipmentId
+  ]);
+
+  const logDescription = `${req.session.email} updated details for equipment ${equipmentRows[0].name}`;
+  await logActivity(req.session.userId, 'equipment_updated', 'equipment', equipmentId, logDescription);
+
+  res.json({
+    message: 'Equipment details updated successfully.',
+    equipment: { id: equipmentId, description: equipmentDescription, partNumber }
+  });
 });
 
 // Update equipment quantity. Admin only.
@@ -3786,6 +3848,47 @@ app.patch('/api/admin/equipment/units/:unitId/condition', requireAdmin, async (r
   await logActivity(req.session.userId, 'equipment_condition_updated', 'equipment_unit', unitId, description);
 
   res.json({ message: 'Equipment condition updated successfully.', unit: { id: unit.id, code: unit.code, condition } });
+});
+
+// Update an equipment unit's serial number and calibration date. Admin only.
+app.patch('/api/admin/equipment/units/:unitId/details', requireAdmin, async (req, res) => {
+  const unitId = Number(req.params.unitId);
+  if (!Number.isFinite(unitId) || unitId <= 0) {
+    return res.status(400).json({ error: 'Invalid equipment unit ID.' });
+  }
+
+  const serialNumber = String(req.body?.serialNumber || '').trim() || null;
+  const calibrationDate = String(req.body?.calibrationDate || '').trim() || null;
+
+  if (calibrationDate && !/^\d{4}-\d{2}-\d{2}$/.test(calibrationDate)) {
+    return res.status(400).json({ error: 'Calibration date must be in YYYY-MM-DD format.' });
+  }
+
+  const unitRows = await query(
+    `SELECT eu.id, eu.code, e.name AS equipmentName
+     FROM equipment_units eu
+     JOIN equipment e ON e.id = eu.equipmentId
+     WHERE eu.id = ?`,
+    [unitId]
+  );
+  if (unitRows.length === 0) {
+    return res.status(404).json({ error: 'Equipment unit not found.' });
+  }
+
+  const unit = unitRows[0];
+  await run('UPDATE equipment_units SET serialNumber = ?, calibrationDate = ? WHERE id = ?', [
+    serialNumber,
+    calibrationDate,
+    unitId
+  ]);
+
+  const description = `${req.session.email} updated details for ${unit.equipmentName} item ${unit.code}`;
+  await logActivity(req.session.userId, 'equipment_unit_updated', 'equipment_unit', unitId, description);
+
+  res.json({
+    message: 'Equipment unit details updated successfully.',
+    unit: { id: unit.id, code: unit.code, serialNumber, calibrationDate }
+  });
 });
 
 // Remove an equipment item. Admin only.

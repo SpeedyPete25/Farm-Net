@@ -80,6 +80,8 @@ const equipmentManagementList = document.getElementById('equipment-management-li
 const bookedOutEquipmentList = document.getElementById('booked-out-equipment-list');
 const equipmentManagementForm = document.getElementById('equipment-management-form');
 const equipmentNameInput = document.getElementById('equipment-name');
+const equipmentDescriptionInput = document.getElementById('equipment-description');
+const equipmentPartNumberInput = document.getElementById('equipment-part-number');
 const equipmentQuantityInput = document.getElementById('equipment-quantity');
 const equipmentManagementError = document.getElementById('equipment-management-error');
 
@@ -785,6 +787,8 @@ const equipmentManagementPage = createEquipmentManagementPage({
   bookedOutEquipmentList,
   equipmentManagementForm,
   equipmentNameInput,
+  equipmentDescriptionInput,
+  equipmentPartNumberInput,
   equipmentQuantityInput,
   equipmentManagementError,
   kitManagementList,

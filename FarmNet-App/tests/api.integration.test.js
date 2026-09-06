@@ -1217,7 +1217,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const addEquipment = await adminClient.request('/api/admin/equipment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: equipmentName, quantity: 2 })
+      body: JSON.stringify({ name: equipmentName, description: 'Automation test device', partNumber: 'PN-1000', quantity: 2 })
     });
     assert.equal(addEquipment.status, 200);
     assert.equal(addEquipment.body.message, 'Equipment added successfully.');
@@ -1227,6 +1227,48 @@ test('automated integration coverage for critical flows', async (t) => {
     const addedEquipment = equipmentAfterAdd.body.equipment.find((item) => item.name === equipmentName);
     assert.ok(addedEquipment);
     assert.equal(Number(addedEquipment.quantity), 2);
+    assert.equal(addedEquipment.description, 'Automation test device');
+    assert.equal(addedEquipment.partNumber, 'PN-1000');
+    assert.equal(addedEquipment.codes.length, 2);
+
+    const updateEquipmentDetails = await adminClient.request(`/api/admin/equipment/${addedEquipment.id}/details`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: 'Updated automation test device', partNumber: 'PN-2000' })
+    });
+    assert.equal(updateEquipmentDetails.status, 200);
+    assert.equal(updateEquipmentDetails.body.equipment.description, 'Updated automation test device');
+    assert.equal(updateEquipmentDetails.body.equipment.partNumber, 'PN-2000');
+
+    const firstUnitId = addedEquipment.codes[0].id;
+    const updateUnitDetails = await adminClient.request(`/api/admin/equipment/units/${firstUnitId}/details`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serialNumber: 'SN-12345', calibrationDate: '2026-01-15' })
+    });
+    assert.equal(updateUnitDetails.status, 200);
+    assert.equal(updateUnitDetails.body.unit.serialNumber, 'SN-12345');
+    assert.equal(updateUnitDetails.body.unit.calibrationDate, '2026-01-15');
+
+    const badCalibrationDate = await adminClient.request(`/api/admin/equipment/units/${firstUnitId}/details`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serialNumber: 'SN-12345', calibrationDate: 'not-a-date' })
+    });
+    assert.equal(badCalibrationDate.status, 400);
+
+    const equipmentAfterDetailsUpdate = await adminClient.request('/api/admin/equipment');
+    const equipmentWithUpdatedUnit = equipmentAfterDetailsUpdate.body.equipment.find((item) => item.id === addedEquipment.id);
+    const updatedUnit = equipmentWithUpdatedUnit.codes.find((unit) => unit.id === firstUnitId);
+    assert.equal(updatedUnit.serialNumber, 'SN-12345');
+    assert.equal(updatedUnit.calibrationDate, '2026-01-15');
+    assert.equal(equipmentWithUpdatedUnit.description, 'Updated automation test device');
+    assert.equal(equipmentWithUpdatedUnit.partNumber, 'PN-2000');
+
+    const resourcesAfterDetailsUpdate = await getResources(adminClient);
+    const borrowerFacingEquipment = resourcesAfterDetailsUpdate.equipment.find((item) => item.id === addedEquipment.id);
+    assert.equal(borrowerFacingEquipment.description, 'Updated automation test device');
+    assert.equal(borrowerFacingEquipment.partNumber, 'PN-2000');
 
     const updateEquipment = await adminClient.request(`/api/admin/equipment/${addedEquipment.id}`, {
       method: 'PATCH',

@@ -16,6 +16,20 @@ export function showError(element, message) {
 }
 
 /**
+ * Escape a string for safe interpolation into innerHTML markup or an HTML attribute.
+ * @param {string|null|undefined} value
+ * @returns {string}
+ */
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Render a standard list state block (loading/empty/error).
  * @param {HTMLElement} container List container element.
  * @param {{ kind: ListStateKind, message: string }} state State payload.

@@ -3,10 +3,10 @@
  * Renders equipment list and supports add/remove/update operations.
  */
 
-import { renderListState } from './utils.js';
+import { renderListState, escapeHtml } from './utils.js';
 
 /**
- * @typedef {{ id: number, code: string, condition: 'working' | 'damaged', status: 'available'|'pending'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }} EquipmentUnit
+ * @typedef {{ id: number, code: string, condition: 'working' | 'damaged', serialNumber?: string|null, calibrationDate?: string|null, status: 'available'|'pending'|'reserved'|'checked-out'|'overdue'|'in-maintenance' }} EquipmentUnit
  */
 
 /**
@@ -14,7 +14,7 @@ import { renderListState } from './utils.js';
  */
 
 /**
- * @typedef {{ id: number, name: string, quantity: number, requiresApproval?: 0|1, codes?: EquipmentUnit[], statusCounts?: StatusCounts }} EquipmentItem
+ * @typedef {{ id: number, name: string, description?: string|null, partNumber?: string|null, quantity: number, requiresApproval?: 0|1, codes?: EquipmentUnit[], statusCounts?: StatusCounts }} EquipmentItem
  */
 
 /**
@@ -56,6 +56,8 @@ const STATUS_LABELS = {
  *   bookedOutEquipmentList: HTMLElement,
  *   equipmentManagementForm: HTMLFormElement,
  *   equipmentNameInput: HTMLInputElement,
+ *   equipmentDescriptionInput: HTMLInputElement,
+ *   equipmentPartNumberInput: HTMLInputElement,
  *   equipmentQuantityInput: HTMLInputElement,
  *   equipmentManagementError: HTMLElement,
  *   kitManagementList: HTMLElement,
@@ -89,6 +91,8 @@ export function createEquipmentManagementPage(deps) {
     bookedOutEquipmentList,
     equipmentManagementForm,
     equipmentNameInput,
+    equipmentDescriptionInput,
+    equipmentPartNumberInput,
     equipmentQuantityInput,
     equipmentManagementError,
     kitManagementList,
@@ -137,7 +141,7 @@ export function createEquipmentManagementPage(deps) {
       return `
         <div class="item-row">
           <div>
-            <strong>${item.name}</strong>
+            <strong>${escapeHtml(item.name)}</strong>
             <p>
               Quantity:
               <input
@@ -158,6 +162,15 @@ export function createEquipmentManagementPage(deps) {
               </label>
               <button type="button" data-action="save-equipment-policy" data-equipment-id="${item.id}">Save policy</button>
             </p>
+            <p class="equipment-details-editor">
+              <label>Description
+                <input type="text" data-detail-field="description" data-equipment-id="${item.id}" value="${escapeHtml(item.description || '')}" />
+              </label>
+              <label>Part Number
+                <input type="text" data-detail-field="partNumber" data-equipment-id="${item.id}" value="${escapeHtml(item.partNumber || '')}" />
+              </label>
+              <button type="button" data-action="save-equipment-details" data-equipment-id="${item.id}">Save details</button>
+            </p>
             <details class="equipment-codes-panel">
               <summary>Item codes (${Array.isArray(item.codes) ? item.codes.length : 0})</summary>
               <div class="equipment-codes-list">
@@ -171,6 +184,13 @@ export function createEquipmentManagementPage(deps) {
                           data-unit-id="${unit.id}"
                           data-current-condition="${unit.condition}"
                         >Mark as ${unit.condition === 'damaged' ? 'working' : 'damaged'}</button>
+                        <label>Serial #
+                          <input type="text" data-unit-field="serialNumber" data-unit-id="${unit.id}" value="${escapeHtml(unit.serialNumber || '')}" style="width: 110px;" />
+                        </label>
+                        <label>Calibration date
+                          <input type="date" data-unit-field="calibrationDate" data-unit-id="${unit.id}" value="${escapeHtml(unit.calibrationDate || '')}" />
+                        </label>
+                        <button type="button" data-action="save-unit-details" data-unit-id="${unit.id}">Save</button>
                       </span>
                     `).join('')
                   : '<span class="equipment-code-empty">No item codes found.</span>'}
@@ -340,6 +360,8 @@ export function createEquipmentManagementPage(deps) {
     equipmentManagementError.textContent = '';
 
     const name = equipmentNameInput.value.trim();
+    const description = equipmentDescriptionInput.value.trim();
+    const partNumber = equipmentPartNumberInput.value.trim();
     const quantity = Number(equipmentQuantityInput.value);
 
     if (!name || !Number.isInteger(quantity) || quantity <= 0) {
@@ -349,7 +371,7 @@ export function createEquipmentManagementPage(deps) {
 
     const result = await requestJson('/api/admin/equipment', {
       method: 'POST',
-      body: JSON.stringify({ name, quantity })
+      body: JSON.stringify({ name, description, partNumber, quantity })
     });
 
     if (result.error) {
@@ -358,6 +380,8 @@ export function createEquipmentManagementPage(deps) {
     }
 
     equipmentNameInput.value = '';
+    equipmentDescriptionInput.value = '';
+    equipmentPartNumberInput.value = '';
     equipmentQuantityInput.value = '';
     await load();
     await onEquipmentChanged();
@@ -408,6 +432,60 @@ export function createEquipmentManagementPage(deps) {
       const result = await requestJson(`/api/admin/equipment/${equipmentId}/policy`, {
         method: 'PATCH',
         body: JSON.stringify({ requiresApproval: Boolean(checkbox?.checked) })
+      });
+
+      if (result.error) {
+        equipmentManagementError.textContent = result.error;
+        return;
+      }
+
+      equipmentManagementError.textContent = '';
+      await load();
+      await onEquipmentChanged();
+      return;
+    }
+
+    const detailsButton = target.closest('[data-action="save-equipment-details"]');
+    if (detailsButton) {
+      const equipmentId = Number(detailsButton.dataset.equipmentId);
+      if (!Number.isFinite(equipmentId)) return;
+
+      const descriptionInput = equipmentManagementList.querySelector(`[data-detail-field="description"][data-equipment-id="${equipmentId}"]`);
+      const partNumberInput = equipmentManagementList.querySelector(`[data-detail-field="partNumber"][data-equipment-id="${equipmentId}"]`);
+
+      const result = await requestJson(`/api/admin/equipment/${equipmentId}/details`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          description: descriptionInput?.value || '',
+          partNumber: partNumberInput?.value || ''
+        })
+      });
+
+      if (result.error) {
+        equipmentManagementError.textContent = result.error;
+        return;
+      }
+
+      equipmentManagementError.textContent = '';
+      await load();
+      await onEquipmentChanged();
+      return;
+    }
+
+    const unitDetailsButton = target.closest('[data-action="save-unit-details"]');
+    if (unitDetailsButton) {
+      const unitId = Number(unitDetailsButton.dataset.unitId);
+      if (!Number.isFinite(unitId)) return;
+
+      const serialNumberInput = equipmentManagementList.querySelector(`[data-unit-field="serialNumber"][data-unit-id="${unitId}"]`);
+      const calibrationDateInput = equipmentManagementList.querySelector(`[data-unit-field="calibrationDate"][data-unit-id="${unitId}"]`);
+
+      const result = await requestJson(`/api/admin/equipment/units/${unitId}/details`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          serialNumber: serialNumberInput?.value || '',
+          calibrationDate: calibrationDateInput?.value || ''
+        })
       });
 
       if (result.error) {
