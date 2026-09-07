@@ -73,6 +73,7 @@ const roomManagementList = document.getElementById('room-management-list');
 const roomManagementForm = document.getElementById('room-management-form');
 const roomNameInput = document.getElementById('room-name');
 const roomLocationInput = document.getElementById('room-location');
+const roomManagerInput = document.getElementById('room-manager');
 const roomManagementError = document.getElementById('room-management-error');
 
 // Equipment management controls.
@@ -82,6 +83,7 @@ const equipmentManagementForm = document.getElementById('equipment-management-fo
 const equipmentNameInput = document.getElementById('equipment-name');
 const equipmentDescriptionInput = document.getElementById('equipment-description');
 const equipmentPartNumberInput = document.getElementById('equipment-part-number');
+const equipmentManagerInput = document.getElementById('equipment-manager');
 const equipmentQuantityInput = document.getElementById('equipment-quantity');
 const equipmentManagementError = document.getElementById('equipment-management-error');
 
@@ -777,6 +779,7 @@ const roomManagementPage = createRoomManagementPage({
   roomManagementForm,
   roomNameInput,
   roomLocationInput,
+  roomManagerInput,
   roomManagementError,
   requestJson,
   onRoomsChanged: async () => refreshDashboard(bookingFilter.value)
@@ -789,6 +792,7 @@ const equipmentManagementPage = createEquipmentManagementPage({
   equipmentNameInput,
   equipmentDescriptionInput,
   equipmentPartNumberInput,
+  equipmentManagerInput,
   equipmentQuantityInput,
   equipmentManagementError,
   kitManagementList,

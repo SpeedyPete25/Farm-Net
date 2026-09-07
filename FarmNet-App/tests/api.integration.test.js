@@ -1190,7 +1190,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const addRoom = await adminClient.request('/api/admin/rooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: roomName, location: roomLocation })
+      body: JSON.stringify({ name: roomName, location: roomLocation, manager: 'Alex Manager' })
     });
     assert.equal(addRoom.status, 200);
     assert.equal(addRoom.body.message, 'Room added successfully.');
@@ -1200,6 +1200,23 @@ test('automated integration coverage for critical flows', async (t) => {
     const addedRoom = roomsAfterAdd.body.rooms.find((room) => room.location === roomLocation);
     assert.ok(addedRoom);
     assert.equal(addedRoom.name, roomName);
+    assert.equal(addedRoom.manager, 'Alex Manager');
+
+    const updateRoomManager = await adminClient.request(`/api/admin/rooms/${addedRoom.id}/manager`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manager: 'Jordan Manager' })
+    });
+    assert.equal(updateRoomManager.status, 200);
+    assert.equal(updateRoomManager.body.room.manager, 'Jordan Manager');
+
+    const roomsAfterManagerUpdate = await adminClient.request('/api/admin/rooms');
+    const roomWithUpdatedManager = roomsAfterManagerUpdate.body.rooms.find((room) => room.id === addedRoom.id);
+    assert.equal(roomWithUpdatedManager.manager, 'Jordan Manager');
+
+    const resourcesWithRoomManager = await getResources(adminClient);
+    const borrowerFacingRoom = resourcesWithRoomManager.rooms.find((room) => room.id === addedRoom.id);
+    assert.equal(borrowerFacingRoom.manager, 'Jordan Manager');
 
     const removeRoom = await adminClient.request(`/api/admin/rooms/${addedRoom.id}`, {
       method: 'DELETE'
@@ -1217,7 +1234,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const addEquipment = await adminClient.request('/api/admin/equipment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: equipmentName, description: 'Automation test device', partNumber: 'PN-1000', quantity: 2 })
+      body: JSON.stringify({ name: equipmentName, description: 'Automation test device', partNumber: 'PN-1000', manager: 'Alex Manager', quantity: 2 })
     });
     assert.equal(addEquipment.status, 200);
     assert.equal(addEquipment.body.message, 'Equipment added successfully.');
@@ -1229,16 +1246,18 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(Number(addedEquipment.quantity), 2);
     assert.equal(addedEquipment.description, 'Automation test device');
     assert.equal(addedEquipment.partNumber, 'PN-1000');
+    assert.equal(addedEquipment.manager, 'Alex Manager');
     assert.equal(addedEquipment.codes.length, 2);
 
     const updateEquipmentDetails = await adminClient.request(`/api/admin/equipment/${addedEquipment.id}/details`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description: 'Updated automation test device', partNumber: 'PN-2000' })
+      body: JSON.stringify({ description: 'Updated automation test device', partNumber: 'PN-2000', manager: 'Jordan Manager' })
     });
     assert.equal(updateEquipmentDetails.status, 200);
     assert.equal(updateEquipmentDetails.body.equipment.description, 'Updated automation test device');
     assert.equal(updateEquipmentDetails.body.equipment.partNumber, 'PN-2000');
+    assert.equal(updateEquipmentDetails.body.equipment.manager, 'Jordan Manager');
 
     const firstUnitId = addedEquipment.codes[0].id;
     const updateUnitDetails = await adminClient.request(`/api/admin/equipment/units/${firstUnitId}/details`, {
@@ -1264,11 +1283,13 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(updatedUnit.calibrationDate, '2026-01-15');
     assert.equal(equipmentWithUpdatedUnit.description, 'Updated automation test device');
     assert.equal(equipmentWithUpdatedUnit.partNumber, 'PN-2000');
+    assert.equal(equipmentWithUpdatedUnit.manager, 'Jordan Manager');
 
     const resourcesAfterDetailsUpdate = await getResources(adminClient);
     const borrowerFacingEquipment = resourcesAfterDetailsUpdate.equipment.find((item) => item.id === addedEquipment.id);
     assert.equal(borrowerFacingEquipment.description, 'Updated automation test device');
     assert.equal(borrowerFacingEquipment.partNumber, 'PN-2000');
+    assert.equal(borrowerFacingEquipment.manager, 'Jordan Manager');
 
     const updateEquipment = await adminClient.request(`/api/admin/equipment/${addedEquipment.id}`, {
       method: 'PATCH',

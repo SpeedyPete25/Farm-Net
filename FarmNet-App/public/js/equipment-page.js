@@ -11,6 +11,7 @@ import { renderListState, escapeHtml } from './utils.js';
  *   name: string,
  *   description?: string|null,
  *   partNumber?: string|null,
+ *   manager?: string|null,
  *   quantity: number,
  *   available: number,
  *   requiresApproval?: 0|1,
@@ -92,6 +93,7 @@ export function createEquipmentPage({ equipmentList, onBorrow, onReserve }) {
             <strong>${item.name}</strong>
             ${item.description ? `<p class="equipment-description">${escapeHtml(item.description)}</p>` : ''}
             ${item.partNumber ? `<p class="equipment-part-number">Part #: ${escapeHtml(item.partNumber)}</p>` : ''}
+            ${item.manager ? `<p class="equipment-manager">Manager: ${escapeHtml(item.manager)}</p>` : ''}
             <p>Available: ${item.available} / ${item.quantity}</p>
             ${item.requiresApproval ? '<span class="status-label pending">Requires admin approval</span>' : ''}
           </div>

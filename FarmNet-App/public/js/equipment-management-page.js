@@ -14,7 +14,7 @@ import { renderListState, escapeHtml } from './utils.js';
  */
 
 /**
- * @typedef {{ id: number, name: string, description?: string|null, partNumber?: string|null, quantity: number, requiresApproval?: 0|1, codes?: EquipmentUnit[], statusCounts?: StatusCounts }} EquipmentItem
+ * @typedef {{ id: number, name: string, description?: string|null, partNumber?: string|null, manager?: string|null, quantity: number, requiresApproval?: 0|1, codes?: EquipmentUnit[], statusCounts?: StatusCounts }} EquipmentItem
  */
 
 /**
@@ -58,6 +58,7 @@ const STATUS_LABELS = {
  *   equipmentNameInput: HTMLInputElement,
  *   equipmentDescriptionInput: HTMLInputElement,
  *   equipmentPartNumberInput: HTMLInputElement,
+ *   equipmentManagerInput: HTMLInputElement,
  *   equipmentQuantityInput: HTMLInputElement,
  *   equipmentManagementError: HTMLElement,
  *   kitManagementList: HTMLElement,
@@ -93,6 +94,7 @@ export function createEquipmentManagementPage(deps) {
     equipmentNameInput,
     equipmentDescriptionInput,
     equipmentPartNumberInput,
+    equipmentManagerInput,
     equipmentQuantityInput,
     equipmentManagementError,
     kitManagementList,
@@ -168,6 +170,9 @@ export function createEquipmentManagementPage(deps) {
               </label>
               <label>Part Number
                 <input type="text" data-detail-field="partNumber" data-equipment-id="${item.id}" value="${escapeHtml(item.partNumber || '')}" />
+              </label>
+              <label>Manager
+                <input type="text" data-detail-field="manager" data-equipment-id="${item.id}" value="${escapeHtml(item.manager || '')}" />
               </label>
               <button type="button" data-action="save-equipment-details" data-equipment-id="${item.id}">Save details</button>
             </p>
@@ -362,6 +367,7 @@ export function createEquipmentManagementPage(deps) {
     const name = equipmentNameInput.value.trim();
     const description = equipmentDescriptionInput.value.trim();
     const partNumber = equipmentPartNumberInput.value.trim();
+    const manager = equipmentManagerInput.value.trim();
     const quantity = Number(equipmentQuantityInput.value);
 
     if (!name || !Number.isInteger(quantity) || quantity <= 0) {
@@ -371,7 +377,7 @@ export function createEquipmentManagementPage(deps) {
 
     const result = await requestJson('/api/admin/equipment', {
       method: 'POST',
-      body: JSON.stringify({ name, description, partNumber, quantity })
+      body: JSON.stringify({ name, description, partNumber, manager, quantity })
     });
 
     if (result.error) {
@@ -382,6 +388,7 @@ export function createEquipmentManagementPage(deps) {
     equipmentNameInput.value = '';
     equipmentDescriptionInput.value = '';
     equipmentPartNumberInput.value = '';
+    equipmentManagerInput.value = '';
     equipmentQuantityInput.value = '';
     await load();
     await onEquipmentChanged();
@@ -452,12 +459,14 @@ export function createEquipmentManagementPage(deps) {
 
       const descriptionInput = equipmentManagementList.querySelector(`[data-detail-field="description"][data-equipment-id="${equipmentId}"]`);
       const partNumberInput = equipmentManagementList.querySelector(`[data-detail-field="partNumber"][data-equipment-id="${equipmentId}"]`);
+      const managerInput = equipmentManagementList.querySelector(`[data-detail-field="manager"][data-equipment-id="${equipmentId}"]`);
 
       const result = await requestJson(`/api/admin/equipment/${equipmentId}/details`, {
         method: 'PATCH',
         body: JSON.stringify({
           description: descriptionInput?.value || '',
-          partNumber: partNumberInput?.value || ''
+          partNumber: partNumberInput?.value || '',
+          manager: managerInput?.value || ''
         })
       });
 

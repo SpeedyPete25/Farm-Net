@@ -5,7 +5,7 @@
  * and blackout window management.
  */
 
-import { renderListState } from './utils.js';
+import { renderListState, escapeHtml } from './utils.js';
 
 /**
  * @typedef {{
@@ -15,7 +15,8 @@ import { renderListState } from './utils.js';
  *   minDurationMinutes: number|null,
  *   maxDurationMinutes: number|null,
  *   maxBookingsPerUserPerWeek: number|null,
- *   requiresApproval: 0|1
+ *   requiresApproval: 0|1,
+ *   manager?: string|null
  * }} ManagedRoom
  */
 
@@ -29,6 +30,7 @@ import { renderListState } from './utils.js';
  *   roomManagementForm: HTMLFormElement,
  *   roomNameInput: HTMLInputElement,
  *   roomLocationInput: HTMLInputElement,
+ *   roomManagerInput: HTMLInputElement,
  *   roomManagementError: HTMLElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onRoomsChanged: () => Promise<void>
@@ -52,6 +54,7 @@ export function createRoomManagementPage(deps) {
     roomManagementForm,
     roomNameInput,
     roomLocationInput,
+    roomManagerInput,
     roomManagementError,
     requestJson,
     onRoomsChanged
@@ -91,6 +94,12 @@ export function createRoomManagementPage(deps) {
             <strong>${room.name}</strong>
             <p>${room.location}</p>
             <p class="room-policy-summary">${describePolicy(room)}</p>
+            <p class="room-manager-editor">
+              <label>Manager
+                <input type="text" data-room-manager-id="${room.id}" value="${escapeHtml(room.manager || '')}" />
+              </label>
+              <button type="button" data-action="save-room-manager" data-room-id="${room.id}">Save manager</button>
+            </p>
             <details class="room-policy-panel" data-room-id="${room.id}">
               <summary>Booking policy &amp; blackout windows</summary>
               <div class="room-policy-form">
@@ -195,6 +204,7 @@ export function createRoomManagementPage(deps) {
 
     const name = roomNameInput.value.trim();
     const location = roomLocationInput.value.trim();
+    const manager = roomManagerInput.value.trim();
 
     if (!name || !location) {
       roomManagementError.textContent = 'Room name and location are required.';
@@ -203,7 +213,7 @@ export function createRoomManagementPage(deps) {
 
     const result = await requestJson('/api/admin/rooms', {
       method: 'POST',
-      body: JSON.stringify({ name, location })
+      body: JSON.stringify({ name, location, manager })
     });
 
     if (result.error) {
@@ -213,6 +223,7 @@ export function createRoomManagementPage(deps) {
 
     roomNameInput.value = '';
     roomLocationInput.value = '';
+    roomManagerInput.value = '';
     await load();
     await onRoomsChanged();
   }
@@ -289,6 +300,29 @@ export function createRoomManagementPage(deps) {
       if (Number.isFinite(roomId)) {
         await saveRoomPolicy(roomId);
       }
+      return;
+    }
+
+    const saveManagerButton = target.closest('[data-action="save-room-manager"]');
+    if (saveManagerButton) {
+      const roomId = Number(saveManagerButton.dataset.roomId);
+      if (!Number.isFinite(roomId)) return;
+
+      const managerInput = roomManagementList.querySelector(`[data-room-manager-id="${roomId}"]`);
+
+      const result = await requestJson(`/api/admin/rooms/${roomId}/manager`, {
+        method: 'PATCH',
+        body: JSON.stringify({ manager: managerInput?.value || '' })
+      });
+
+      if (result.error) {
+        roomManagementError.textContent = result.error;
+        return;
+      }
+
+      roomManagementError.textContent = '';
+      await load();
+      await onRoomsChanged();
       return;
     }
 

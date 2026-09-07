@@ -3,13 +3,14 @@
  * Handles room list rendering, booking form state, timetable rendering, and booking submission.
  */
 
-import { renderListState } from './utils.js';
+import { renderListState, escapeHtml } from './utils.js';
 
 /**
  * @typedef {{
  *   id: number,
  *   name: string,
  *   location: string,
+ *   manager?: string|null,
  *   minDurationMinutes?: number|null,
  *   maxDurationMinutes?: number|null,
  *   maxBookingsPerUserPerWeek?: number|null,
@@ -492,6 +493,7 @@ export function createRoomsPage({
           <div>
             <strong>${room.name}</strong>
             <p>${room.location}</p>
+            ${room.manager ? `<p class="room-manager">Manager: ${escapeHtml(room.manager)}</p>` : ''}
           </div>
         </div>
       `;

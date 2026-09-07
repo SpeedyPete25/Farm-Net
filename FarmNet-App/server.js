@@ -1072,7 +1072,8 @@ async function initDatabase() {
     ['minDurationMinutes', 'INTEGER'],
     ['maxDurationMinutes', 'INTEGER'],
     ['maxBookingsPerUserPerWeek', 'INTEGER'],
-    ['requiresApproval', 'INTEGER NOT NULL DEFAULT 0']
+    ['requiresApproval', 'INTEGER NOT NULL DEFAULT 0'],
+    ['manager', 'TEXT']
   ];
   for (const [columnName, columnType] of roomPolicyColumns) {
     if (!roomColumns.some((col) => col.name === columnName)) {
@@ -1111,6 +1112,11 @@ async function initDatabase() {
   const hasEquipmentPartNumber = equipmentColumns.some(col => col.name === 'partNumber');
   if (!hasEquipmentPartNumber) {
     await run(`ALTER TABLE equipment ADD COLUMN partNumber TEXT`);
+  }
+
+  const hasEquipmentManager = equipmentColumns.some(col => col.name === 'manager');
+  if (!hasEquipmentManager) {
+    await run(`ALTER TABLE equipment ADD COLUMN manager TEXT`);
   }
 
   await run(`CREATE TABLE IF NOT EXISTS equipment_units (
@@ -1454,7 +1460,7 @@ app.post('/api/change-password', requireLogin, async (req, res) => {
 app.get('/api/resources', requireLogin, async (req, res) => {
   const rooms = await query('SELECT * FROM rooms');
   const equipment = await query(
-    `SELECT e.id, e.name, e.description, e.partNumber, e.quantity, e.requiresApproval,
+    `SELECT e.id, e.name, e.description, e.partNumber, e.manager, e.quantity, e.requiresApproval,
             COALESCE(unitCounts.totalUnits, 0) AS totalUnits
      FROM equipment e
      LEFT JOIN (
@@ -1490,6 +1496,7 @@ app.get('/api/resources', requireLogin, async (req, res) => {
       name: item.name,
       description: item.description || null,
       partNumber: item.partNumber || null,
+      manager: item.manager || null,
       quantity: totalQuantity,
       available: counts.available,
       requiresApproval: item.requiresApproval,
@@ -3353,7 +3360,7 @@ app.patch('/api/admin/loans/:id', requireAdmin, async (req, res) => {
 app.get('/api/admin/rooms', requireAdmin, async (req, res) => {
   const rooms = await query(
     `SELECT id, name, location, minDurationMinutes, maxDurationMinutes,
-            maxBookingsPerUserPerWeek, requiresApproval
+            maxBookingsPerUserPerWeek, requiresApproval, manager
      FROM rooms ORDER BY name ASC`
   );
   res.json({ rooms });
@@ -3409,15 +3416,39 @@ app.post('/api/admin/rooms', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: policy.error });
   }
 
+  const manager = String(req.body?.manager || '').trim() || null;
+
   const result = await run(
-    `INSERT INTO rooms (name, location, minDurationMinutes, maxDurationMinutes, maxBookingsPerUserPerWeek, requiresApproval)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [name, location, policy.minDurationMinutes, policy.maxDurationMinutes, policy.maxBookingsPerUserPerWeek, policy.requiresApproval]
+    `INSERT INTO rooms (name, location, minDurationMinutes, maxDurationMinutes, maxBookingsPerUserPerWeek, requiresApproval, manager)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [name, location, policy.minDurationMinutes, policy.maxDurationMinutes, policy.maxBookingsPerUserPerWeek, policy.requiresApproval, manager]
   );
   const description = `${req.session.email} added room ${name} (${location})`;
   await logActivity(req.session.userId, 'room_added', 'room', result.lastID, description);
 
   res.json({ message: 'Room added successfully.' });
+});
+
+// Update a room's responsible manager. Admin only.
+app.patch('/api/admin/rooms/:id/manager', requireAdmin, async (req, res) => {
+  const roomId = Number(req.params.id);
+  if (!Number.isFinite(roomId) || roomId <= 0) {
+    return res.status(400).json({ error: 'Invalid room ID.' });
+  }
+
+  const roomRows = await query('SELECT id, name FROM rooms WHERE id = ?', [roomId]);
+  if (roomRows.length === 0) {
+    return res.status(404).json({ error: 'Room not found.' });
+  }
+
+  const manager = String(req.body?.manager || '').trim() || null;
+
+  await run('UPDATE rooms SET manager = ? WHERE id = ?', [manager, roomId]);
+
+  const description = `${req.session.email} set the responsible manager for room ${roomRows[0].name}`;
+  await logActivity(req.session.userId, 'room_updated', 'room', roomId, description);
+
+  res.json({ message: 'Room manager updated successfully.', room: { id: roomId, manager } });
 });
 
 // Update a room's booking policy (length limits, weekly frequency cap, admin approval). Admin only.
@@ -3567,7 +3598,7 @@ app.delete('/api/admin/rooms/:id', requireAdmin, async (req, res) => {
 // Return all equipment for admin equipment management.
 app.get('/api/admin/equipment', requireAdmin, async (req, res) => {
   const equipmentRows = await query(
-    `SELECT e.id, e.name, e.description, e.partNumber, e.requiresApproval,
+    `SELECT e.id, e.name, e.description, e.partNumber, e.manager, e.requiresApproval,
             COALESCE(unitCounts.totalUnits, 0) AS quantity
      FROM equipment e
      LEFT JOIN (
@@ -3659,6 +3690,7 @@ app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
   const quantity = Number(req.body?.quantity);
   const equipmentDescription = String(req.body?.description || '').trim() || null;
   const partNumber = String(req.body?.partNumber || '').trim() || null;
+  const manager = String(req.body?.manager || '').trim() || null;
 
   if (!name || !Number.isInteger(quantity) || quantity <= 0) {
     return res.status(400).json({ error: 'Equipment name and a quantity greater than 0 are required.' });
@@ -3673,8 +3705,8 @@ app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
   }
 
   const result = await run(
-    'INSERT INTO equipment (name, quantity, description, partNumber) VALUES (?, ?, ?, ?)',
-    [name, quantity, equipmentDescription, partNumber]
+    'INSERT INTO equipment (name, quantity, description, partNumber, manager) VALUES (?, ?, ?, ?, ?)',
+    [name, quantity, equipmentDescription, partNumber, manager]
   );
   await addEquipmentUnits(result.lastID, name, quantity);
   const description = `${req.session.email} added equipment ${name} (quantity: ${quantity})`;
@@ -3683,7 +3715,7 @@ app.post('/api/admin/equipment', requireAdmin, async (req, res) => {
   res.json({ message: 'Equipment added successfully.' });
 });
 
-// Update an equipment item's descriptive metadata (description, part number). Admin only.
+// Update an equipment item's descriptive metadata (description, part number, manager). Admin only.
 app.patch('/api/admin/equipment/:id/details', requireAdmin, async (req, res) => {
   const equipmentId = Number(req.params.id);
   if (!Number.isFinite(equipmentId) || equipmentId <= 0) {
@@ -3697,10 +3729,12 @@ app.patch('/api/admin/equipment/:id/details', requireAdmin, async (req, res) => 
 
   const equipmentDescription = String(req.body?.description || '').trim() || null;
   const partNumber = String(req.body?.partNumber || '').trim() || null;
+  const manager = String(req.body?.manager || '').trim() || null;
 
-  await run('UPDATE equipment SET description = ?, partNumber = ? WHERE id = ?', [
+  await run('UPDATE equipment SET description = ?, partNumber = ?, manager = ? WHERE id = ?', [
     equipmentDescription,
     partNumber,
+    manager,
     equipmentId
   ]);
 
@@ -3709,7 +3743,7 @@ app.patch('/api/admin/equipment/:id/details', requireAdmin, async (req, res) => 
 
   res.json({
     message: 'Equipment details updated successfully.',
-    equipment: { id: equipmentId, description: equipmentDescription, partNumber }
+    equipment: { id: equipmentId, description: equipmentDescription, partNumber, manager }
   });
 });
 
