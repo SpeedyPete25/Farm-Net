@@ -80,6 +80,8 @@ import { renderListState } from './utils.js';
  *   damageReportsList: HTMLElement,
  *   auditLogList: HTMLElement,
  *   adminNotificationsList: HTMLElement,
+ *   adminOutboxList: HTMLElement,
+ *   adminOutboxRefresh: HTMLElement,
  *   adminNotificationsDays: HTMLInputElement,
  *   adminNotificationsRefresh: HTMLElement,
  *   adminNotificationsEscalation: HTMLInputElement,
@@ -101,7 +103,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsEscalation, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsEscalation, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -734,6 +736,70 @@ export function createAdminPage(deps) {
     }
   }
 
+  function renderOutboxEntries(entries) {
+    if (!adminOutboxList) return;
+    if (!entries || entries.length === 0) {
+      renderListState(adminOutboxList, { kind: 'empty', message: 'No queued notifications.' });
+      return;
+    }
+
+    adminOutboxList.innerHTML = '';
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Recipient</th>
+          <th>Status</th>
+          <th>Attempts</th>
+          <th>Created</th>
+          <th>Subject</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    entries.forEach((entry) => {
+      const row = document.createElement('tr');
+      const id = document.createElement('td'); id.textContent = String(entry.id ?? '-');
+      const type = document.createElement('td'); type.textContent = entry.notificationType || entry.type || '-';
+      const recipient = document.createElement('td'); recipient.textContent = entry.recipientEmail || entry.userId || '-';
+      const status = document.createElement('td'); status.textContent = entry.status || 'queued';
+      const attempts = document.createElement('td'); attempts.textContent = String(entry.attempts ?? 0);
+      const created = document.createElement('td'); created.textContent = entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '-';
+      const subject = document.createElement('td'); subject.textContent = entry.subject || '-';
+
+      row.appendChild(id);
+      row.appendChild(type);
+      row.appendChild(recipient);
+      row.appendChild(status);
+      row.appendChild(attempts);
+      row.appendChild(created);
+      row.appendChild(subject);
+      tbody.appendChild(row);
+    });
+
+    adminOutboxList.appendChild(table);
+  }
+
+  async function loadOutbox() {
+    if (!adminOutboxList) return;
+    renderListState(adminOutboxList, { kind: 'loading', message: 'Loading outbox...' });
+    try {
+      const result = await requestJson('/api/admin/notifications/outbox');
+      if (result?.error) {
+        renderListState(adminOutboxList, { kind: 'error', message: result.error });
+      } else {
+        renderOutboxEntries(result.entries || []);
+      }
+    } catch (err) {
+      renderListState(adminOutboxList, { kind: 'error', message: 'Unable to load notification outbox.' });
+    }
+  }
+
   // Room usage report state
   let lastRoomReport = null;
 
@@ -1268,8 +1334,9 @@ export function createAdminPage(deps) {
 
     renderAuditLog(auditResult.entries || []);
 
-    // Load notifications preview last (independent of other sections)
+    // Load notifications preview and outbox last (independent of other sections)
     loadNotifications();
+    loadOutbox();
   }
 
   // Wire up refresh control for notifications preview
@@ -1277,6 +1344,13 @@ export function createAdminPage(deps) {
     adminNotificationsRefresh.addEventListener('click', (e) => {
       e.preventDefault();
       loadNotifications();
+    });
+  }
+
+  if (adminOutboxRefresh) {
+    adminOutboxRefresh.addEventListener('click', (e) => {
+      e.preventDefault();
+      loadOutbox();
     });
   }
 

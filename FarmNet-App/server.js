@@ -158,7 +158,18 @@ const CAMEL_CASE_COLUMN_MAP = {
   totalunits: 'totalUnits',
   uniqueusers: 'uniqueUsers',
   unitcode: 'unitCode',
-  useremail: 'userEmail'
+  useremail: 'userEmail',
+  notificationtype: 'notificationType',
+  recipientemail: 'recipientEmail',
+  sentat: 'sentAt',
+  failedat: 'failedAt',
+  createdat: 'createdAt',
+  status: 'status',
+  attempts: 'attempts',
+  metadata: 'metadata',
+  resourceid: 'resourceId',
+  resourcetype: 'resourceType',
+  error: 'error'
 };
 
 /**
@@ -758,6 +769,68 @@ function addDaysToDateString(dateStr, days) {
 }
 
 /**
+ * Persist generated notification content into the outbox so a future CSU
+ * delivery worker can process it without altering the current in-app preview flow.
+ * @param {string} notificationType
+ * @param {Array<Object>} notifications
+ * @returns {Promise<Array<Object>>}
+ */
+async function persistNotificationOutboxEntries(notificationType, notifications) {
+  if (!Array.isArray(notifications) || notifications.length === 0) {
+    return [];
+  }
+
+  const rows = [];
+  for (const notification of notifications) {
+    if (!notification || typeof notification !== 'object') continue;
+    const metadata = JSON.stringify({
+      loanId: notification.loanId ?? null,
+      equipmentId: notification.equipmentId ?? null,
+      unitCode: notification.unitCode ?? null,
+      borrowDate: notification.borrowDate ?? null,
+      returnDate: notification.returnDate ?? null,
+      daysRemaining: notification.daysRemaining ?? null,
+      daysOverdue: notification.daysOverdue ?? null,
+      escalationIndex: notification.escalationIndex ?? null,
+      escalationLabel: notification.escalationLabel ?? null
+    });
+
+    const result = await run(
+      `INSERT INTO notification_outbox (
+        notificationType, userId, recipientEmail, subject, body, metadata, resourceType, resourceId
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        notificationType,
+        notification.userId ?? null,
+        notification.recipientEmail ?? null,
+        notification.subject ?? '',
+        notification.body ?? '',
+        metadata,
+        notification.loanId ? 'loan' : null,
+        notification.loanId ?? null
+      ]
+    );
+
+    rows.push({
+      id: result.lastID,
+      notificationType,
+      userId: notification.userId ?? null,
+      recipientEmail: notification.recipientEmail ?? null,
+      subject: notification.subject ?? '',
+      body: notification.body ?? '',
+      status: 'queued',
+      metadata,
+      resourceType: notification.loanId ? 'loan' : null,
+      resourceId: notification.loanId ?? null,
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  return rows;
+}
+
+/**
  * Generate notification content for equipment that is due within the next
  * `thresholdDays` days (inclusive). This only generates the content — it does
  * not send emails.
@@ -779,7 +852,7 @@ async function generateEquipmentDueNotifications(thresholdDays = 3) {
     [today, endDate]
   );
 
-  return (rows || []).map((r) => {
+  const notifications = (rows || []).map((r) => {
     const daysRemaining = Math.ceil((new Date(r.returnDate) - new Date(today)) / (1000 * 60 * 60 * 24));
     const equipmentLabel = (r.equipmentName || 'equipment') + (r.unitCode ? ` (${r.unitCode})` : '');
     const subject = `Equipment due soon: ${equipmentLabel} due in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}`;
@@ -799,6 +872,9 @@ async function generateEquipmentDueNotifications(thresholdDays = 3) {
       body
     };
   });
+
+  await persistNotificationOutboxEntries('equipment_due_soon', notifications);
+  return notifications;
 }
 
 /**
@@ -828,7 +904,7 @@ async function generateOverdueEscalationNotifications(levels = [3, 7, 14]) {
     [today]
   );
 
-  return (rows || []).map((r) => {
+  const notifications = (rows || []).map((r) => {
     const daysOverdue = Math.ceil((new Date(today) - new Date(r.returnDate)) / (1000 * 60 * 60 * 24));
     // find highest level index where daysOverdue >= level
     let idx = -1;
@@ -868,6 +944,9 @@ async function generateOverdueEscalationNotifications(levels = [3, 7, 14]) {
       body
     };
   }).filter(Boolean);
+
+  await persistNotificationOutboxEntries('overdue_escalation', notifications);
+  return notifications;
 }
 
 /**
@@ -1252,6 +1331,46 @@ async function initDatabase() {
     description TEXT NOT NULL,
     timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS notification_outbox (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    notificationType TEXT NOT NULL,
+    userId INTEGER,
+    recipientEmail TEXT,
+    subject TEXT,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    metadata TEXT,
+    resourceType TEXT,
+    resourceId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sentAt TEXT,
+    error TEXT
+  )`);
+
+  const notificationOutboxColumns = await getTableColumns('notification_outbox');
+  const notificationOutboxColumnNames = notificationOutboxColumns.map((col) => col.name);
+  const notificationOutboxColumnsToAdd = [
+    ['notificationType', 'TEXT'],
+    ['userId', 'INTEGER'],
+    ['recipientEmail', 'TEXT'],
+    ['subject', 'TEXT'],
+    ['body', 'TEXT'],
+    ['status', "TEXT NOT NULL DEFAULT 'queued'"],
+    ['attempts', 'INTEGER NOT NULL DEFAULT 0'],
+    ['metadata', 'TEXT'],
+    ['resourceType', 'TEXT'],
+    ['resourceId', 'INTEGER'],
+    ['createdAt', "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"],
+    ['sentAt', 'TEXT'],
+    ['error', 'TEXT']
+  ];
+  for (const [columnName, columnType] of notificationOutboxColumnsToAdd) {
+    if (!notificationOutboxColumnNames.includes(columnName)) {
+      await run(`ALTER TABLE notification_outbox ADD COLUMN ${columnName} ${columnType}`);
+    }
+  }
 
   const rooms = await query('SELECT id FROM rooms LIMIT 1');
   if (rooms.length === 0) {
@@ -4242,6 +4361,71 @@ app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
   res.json({ entries });
 });
 
+// List queued notification records in the outbox for future delivery workers.
+app.get('/api/admin/notifications/outbox', requireAdmin, async (req, res) => {
+  const status = String(req.query.status || 'queued').trim().toLowerCase();
+  try {
+    const entries = await query(
+      `SELECT
+         id,
+         notificationType,
+         userId,
+         recipientEmail,
+         subject,
+         body,
+         status,
+         attempts,
+         metadata,
+         resourceType,
+         resourceId,
+         createdAt,
+         sentAt,
+         error
+       FROM notification_outbox
+       ${status && status !== 'all' ? 'WHERE status = ?' : ''}
+       ORDER BY createdAt DESC, id DESC
+       LIMIT 200`,
+      status && status !== 'all' ? [status] : []
+    );
+
+    res.json({ count: entries.length, entries });
+  } catch (err) {
+    console.error('Failed to read notification outbox:', err);
+    res.status(500).json({ error: 'Failed to read notification outbox' });
+  }
+});
+
+app.patch('/api/admin/notifications/outbox/:id', requireAdmin, async (req, res) => {
+  const notificationId = Number(req.params.id);
+  const { status, error } = req.body || {};
+  if (!Number.isFinite(notificationId)) {
+    return res.status(400).json({ error: 'Notification id must be a valid integer.' });
+  }
+  const allowedStatuses = ['queued', 'sent', 'failed'];
+  const nextStatus = String(status || '').trim().toLowerCase();
+  if (!allowedStatuses.includes(nextStatus)) {
+    return res.status(400).json({ error: 'Status must be one of queued, sent, or failed.' });
+  }
+
+  try {
+    const result = await run(
+      `UPDATE notification_outbox
+       SET status = ?, attempts = attempts + 1, sentAt = ?, error = ?
+       WHERE id = ?`,
+      [nextStatus, nextStatus === 'sent' ? new Date().toISOString() : null, nextStatus === 'failed' ? String(error || '') : null, notificationId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Notification outbox entry not found.' });
+    }
+
+    res.json({ message: 'Notification outbox entry updated.', status: nextStatus });
+  } catch (err) {
+    console.error('Failed to update notification outbox entry:', err);
+    res.status(500).json({ error: 'Failed to update notification outbox entry' });
+  }
+});
+
 // Generate notification content for equipment due soon (admin only).
 app.get('/api/notifications/equipment-due', requireAdmin, async (req, res) => {
   const daysParam = Number(req.query.days);
@@ -4300,6 +4484,7 @@ app.get('/api/notifications/mine', requireLogin, async (req, res) => {
       };
     });
 
+    await persistNotificationOutboxEntries('equipment_due_soon', notifications);
     res.json({ count: notifications.length, notifications });
   } catch (err) {
     console.error('Failed to generate user equipment notifications:', err);

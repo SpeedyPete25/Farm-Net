@@ -32,6 +32,7 @@ const pageRooms = document.getElementById('page-rooms');
 const pageEquipment = document.getElementById('page-equipment');
 const pageSettings = document.getElementById('page-settings');
 const pageAdmin = document.getElementById('page-admin');
+const pageOutbox = document.getElementById('page-outbox');
 const pageNotifications = document.getElementById('page-notifications');
 const pageRoomManagement = document.getElementById('page-room-management');
 const pageEquipmentManagement = document.getElementById('page-equipment-management');
@@ -42,6 +43,7 @@ const navRooms = document.getElementById('nav-rooms');
 const navEquipment = document.getElementById('nav-equipment');
 const navSettings = document.getElementById('nav-settings');
 const navAdmin = document.getElementById('nav-admin');
+const navOutbox = document.getElementById('nav-outbox');
 const navNotifications = document.getElementById('nav-notifications');
 const navRoomManagement = document.getElementById('nav-room-management');
 const navEquipmentManagement = document.getElementById('nav-equipment-management');
@@ -58,6 +60,8 @@ const damageReportsList = document.getElementById('damage-reports-list');
 const auditLogList = document.getElementById('audit-log-list');
 const notificationsList = document.getElementById('notifications-list');
 const adminNotificationsList = document.getElementById('admin-notifications-list');
+const adminOutboxList = document.getElementById('admin-outbox-list');
+const adminOutboxRefresh = document.getElementById('admin-outbox-refresh');
 const adminNotificationsDays = document.getElementById('admin-notifications-days');
 const adminNotificationsRefresh = document.getElementById('admin-notifications-refresh');
 const adminNotificationsEscalation = document.getElementById('admin-notifications-escalation');
@@ -141,9 +145,9 @@ const themeSettingsSuccess = document.getElementById('theme-settings-success');
 
 /**
  * Allowed route fragments used for hash routing and page switching.
- * @type {Array<'dashboard'|'rooms'|'equipment'|'settings'|'admin'|'room-management'|'equipment-management'>}
+ * @type {Array<'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'outbox'|'room-management'|'equipment-management'>}
  */
-const allPages = ['dashboard', 'rooms', 'equipment', 'notifications', 'settings', 'admin', 'room-management', 'equipment-management'];
+const allPages = ['dashboard', 'rooms', 'equipment', 'notifications', 'settings', 'admin', 'outbox', 'room-management', 'equipment-management'];
 
 /**
  * True when the authenticated profile has admin role.
@@ -166,7 +170,7 @@ applyTheme('dark');
 
 /**
  * Resolve the active page from URL hash.
- * @returns {'dashboard'|'rooms'|'equipment'|'settings'|'admin'|'room-management'|'equipment-management'}
+ * @returns {'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'outbox'|'room-management'|'equipment-management'}
  */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
@@ -202,13 +206,13 @@ function resetErrors() {
 
 /**
  * Switch the visible dashboard sub-page and optionally sync URL hash.
- * @param {'dashboard'|'rooms'|'equipment'|'settings'|'admin'|'room-management'|'equipment-management'} page Target page.
+ * @param {'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'outbox'|'room-management'|'equipment-management'} page Target page.
  * @param {{ updateHash?: boolean }} [options={}] Options for hash behavior.
  */
 function setActivePage(page, options = {}) {
   const updateHash = options.updateHash !== false;
   const requestedPage = allPages.includes(page) ? page : 'dashboard';
-  const adminOnlyPages = ['admin', 'room-management', 'equipment-management'];
+  const adminOnlyPages = ['admin', 'outbox', 'room-management', 'equipment-management'];
   const nextPage = adminOnlyPages.includes(requestedPage) && !isAdminUser ? 'dashboard' : requestedPage;
   activePage = nextPage;
 
@@ -217,6 +221,7 @@ function setActivePage(page, options = {}) {
   pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
   pageSettings.classList.toggle('hidden', nextPage !== 'settings');
   pageAdmin.classList.toggle('hidden', nextPage !== 'admin');
+  pageOutbox.classList.toggle('hidden', nextPage !== 'outbox');
   pageNotifications.classList.toggle('hidden', nextPage !== 'notifications');
   pageRoomManagement.classList.toggle('hidden', nextPage !== 'room-management');
   pageEquipmentManagement.classList.toggle('hidden', nextPage !== 'equipment-management');
@@ -226,6 +231,7 @@ function setActivePage(page, options = {}) {
   navEquipment.classList.toggle('active', nextPage === 'equipment');
   navSettings.classList.toggle('active', nextPage === 'settings');
   navAdmin.classList.toggle('active', nextPage === 'admin');
+  navOutbox.classList.toggle('active', nextPage === 'outbox');
   navNotifications.classList.toggle('active', nextPage === 'notifications');
   navRoomManagement.classList.toggle('active', nextPage === 'room-management');
   navEquipmentManagement.classList.toggle('active', nextPage === 'equipment-management');
@@ -239,6 +245,10 @@ function setActivePage(page, options = {}) {
   }
 
   if (nextPage === 'admin' && isAdminUser) {
+    adminPage.load();
+  }
+
+  if (nextPage === 'outbox' && isAdminUser) {
     adminPage.load();
   }
 
@@ -756,6 +766,8 @@ const adminPage = createAdminPage({
   damageReportsList,
   auditLogList,
   adminNotificationsList,
+  adminOutboxList,
+  adminOutboxRefresh,
   adminNotificationsDays,
   adminNotificationsRefresh,
   adminNotificationsEscalation,
@@ -832,6 +844,7 @@ async function refreshDashboard(statusFilter = 'active') {
     applyTheme('dark');
     isAdminUser = false;
     navAdmin.classList.add('hidden');
+    navOutbox.classList.add('hidden');
     if (navReports) navReports.classList.add('hidden');
     navRoomManagement.classList.add('hidden');
     navEquipmentManagement.classList.add('hidden');
@@ -847,6 +860,7 @@ async function refreshDashboard(statusFilter = 'active') {
   settingsPage.setTheme(profile.theme || 'dark');
   isAdminUser = profile.role === 'admin';
   navAdmin.classList.toggle('hidden', !isAdminUser);
+  navOutbox.classList.toggle('hidden', !isAdminUser);
   if (navReports) navReports.classList.toggle('hidden', !isAdminUser);
   navRoomManagement.classList.toggle('hidden', !isAdminUser);
   navEquipmentManagement.classList.toggle('hidden', !isAdminUser);
@@ -1127,6 +1141,7 @@ logoutButton.addEventListener('click', async () => {
   settingsPage.clearMessages();
   changePasswordForm.reset();
   navAdmin.classList.add('hidden');
+  navOutbox.classList.add('hidden');
   if (navReports) navReports.classList.add('hidden');
   navRoomManagement.classList.add('hidden');
   navEquipmentManagement.classList.add('hidden');
@@ -1177,6 +1192,17 @@ navAdmin.addEventListener('click', () => {
     return;
   }
   setActivePage('admin');
+});
+
+/**
+ * Navigate to outbox page if user is authorized.
+ */
+navOutbox.addEventListener('click', () => {
+  if (!isAdminUser) {
+    setActivePage('dashboard');
+    return;
+  }
+  setActivePage('outbox');
 });
 
 // Navigate to Reports (open Admin and scroll to reports section)
