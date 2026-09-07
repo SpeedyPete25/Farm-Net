@@ -49,6 +49,7 @@
             <button id="nav-notifications" class="secondary">Notifications</button>
             <button id="nav-settings" class="secondary">Settings</button>
             <button id="nav-admin" class="secondary hidden">User Management</button>
+            <button id="nav-outbox" class="secondary hidden">Notification Outbox</button>
             <button id="nav-reports" class="secondary hidden">Reports</button>
             <button id="nav-room-management" class="secondary hidden">Room Management</button>
             <button id="nav-equipment-management" class="secondary hidden">Equipment Management</button>
@@ -214,6 +215,13 @@
             <button id="room-usage-export" class="secondary">Export CSV</button>
           </label>
           <div id="room-usage-list"></div>
+        </article>
+
+        <article id="page-outbox" class="card page-panel hidden">
+          <h2>Notification Outbox</h2>
+          <p>Queued notification payloads for future CSU delivery work.</p>
+          <button id="admin-outbox-refresh" class="secondary" style="margin-bottom: 12px;">Refresh outbox</button>
+          <div id="admin-outbox-list"></div>
         </article>
 
         <article id="page-room-management" class="card page-panel hidden">

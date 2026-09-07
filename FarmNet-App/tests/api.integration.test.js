@@ -282,6 +282,45 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.deepEqual(loggedOutProfile.body, { authenticated: false });
   });
 
+  await t.test('stores generated notifications in an outbox queue for future delivery', async () => {
+    const userClient = new TestClient(baseUrl);
+    const userEmail = uniqueEmail('outbox-user');
+    const userPassword = 'Password123';
+    await registerUser(userClient, userEmail, userPassword);
+    await loginUser(userClient, userEmail, userPassword);
+
+    const resources = await getResources(userClient);
+    const equipmentId = resources.equipment[0].id;
+    const borrowResponse = await userClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId, days: 3 })
+    });
+    assert.equal(borrowResponse.status, 200);
+    assert.equal(borrowResponse.body.status, 'active');
+
+    const notificationResponse = await userClient.request('/api/notifications/equipment-due?days=3');
+    assert.equal(notificationResponse.status, 200);
+    assert.ok(Array.isArray(notificationResponse.body.notifications));
+    assert.ok(notificationResponse.body.notifications.length >= 1);
+
+    const adminEmail = uniqueEmail('outbox-admin');
+    const adminClient = new TestClient(baseUrl);
+    await registerUser(adminClient, adminEmail, 'Password123');
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+    await adminClient.request('/api/logout', { method: 'POST' });
+    await loginUser(adminClient, adminEmail, 'Password123');
+
+    const outboxResponse = await adminClient.request('/api/admin/notifications/outbox');
+    assert.equal(outboxResponse.status, 200);
+    assert.ok(Array.isArray(outboxResponse.body.entries));
+    assert.ok(outboxResponse.body.entries.some((entry) => (
+      entry.type === 'equipment_due_soon' &&
+      Number(entry.userId) > 0 &&
+      entry.status === 'queued'
+    )));
+  });
+
   await t.test('handles validation and authorization failures with expected status codes', async () => {
     const guestClient = new TestClient(baseUrl);
 
