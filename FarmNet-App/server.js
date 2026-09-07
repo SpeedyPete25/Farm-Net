@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { Pool, types: pgTypes } = require('pg');
 const fs = require('fs');
 const dns = require('dns').promises;
@@ -164,6 +165,7 @@ const CAMEL_CASE_COLUMN_MAP = {
   sentat: 'sentAt',
   failedat: 'failedAt',
   createdat: 'createdAt',
+  dedupekey: 'dedupeKey',
   status: 'status',
   attempts: 'attempts',
   metadata: 'metadata',
@@ -794,11 +796,22 @@ async function persistNotificationOutboxEntries(notificationType, notifications)
       escalationIndex: notification.escalationIndex ?? null,
       escalationLabel: notification.escalationLabel ?? null
     });
+    const dedupeKey = crypto.createHash('md5').update(JSON.stringify({
+      notificationType,
+      userId: notification.userId ?? null,
+      recipientEmail: notification.recipientEmail ?? null,
+      resourceType: notification.loanId ? 'loan' : null,
+      resourceId: notification.loanId ?? null,
+      subject: notification.subject ?? '',
+      body: notification.body ?? '',
+      metadata
+    })).digest('hex');
 
     const result = await run(
       `INSERT INTO notification_outbox (
-        notificationType, userId, recipientEmail, subject, body, metadata, resourceType, resourceId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        notificationType, userId, recipientEmail, subject, body, metadata, resourceType, resourceId, dedupeKey
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (dedupeKey) DO NOTHING
       `,
       [
         notificationType,
@@ -808,9 +821,12 @@ async function persistNotificationOutboxEntries(notificationType, notifications)
         notification.body ?? '',
         metadata,
         notification.loanId ? 'loan' : null,
-        notification.loanId ?? null
+        notification.loanId ?? null,
+        dedupeKey
       ]
     );
+
+    if (!result.lastID) continue;
 
     rows.push({
       id: result.lastID,
@@ -1362,6 +1378,7 @@ async function initDatabase() {
     ['metadata', 'TEXT'],
     ['resourceType', 'TEXT'],
     ['resourceId', 'INTEGER'],
+    ['dedupeKey', 'TEXT'],
     ['createdAt', "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"],
     ['sentAt', 'TEXT'],
     ['error', 'TEXT']
@@ -1371,6 +1388,31 @@ async function initDatabase() {
       await run(`ALTER TABLE notification_outbox ADD COLUMN ${columnName} ${columnType}`);
     }
   }
+
+  await run(`
+    UPDATE notification_outbox
+    SET dedupeKey = md5(
+      COALESCE(notificationType, '') || '|' ||
+      COALESCE(CAST(userId AS TEXT), '') || '|' ||
+      COALESCE(recipientEmail, '') || '|' ||
+      COALESCE(resourceType, '') || '|' ||
+      COALESCE(CAST(resourceId AS TEXT), '') || '|' ||
+      COALESCE(subject, '') || '|' ||
+      COALESCE(body, '') || '|' ||
+      COALESCE(metadata, '')
+    )
+    WHERE dedupeKey IS NULL
+  `);
+
+  await run(`
+    DELETE FROM notification_outbox a
+    USING notification_outbox b
+    WHERE a.dedupeKey = b.dedupeKey
+      AND a.id < b.id
+  `);
+
+  await run(`ALTER TABLE notification_outbox ALTER COLUMN dedupeKey SET NOT NULL`);
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_key_idx ON notification_outbox (dedupeKey)`);
 
   const rooms = await query('SELECT id FROM rooms LIMIT 1');
   if (rooms.length === 0) {
