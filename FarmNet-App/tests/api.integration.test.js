@@ -299,7 +299,7 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(borrowResponse.status, 200);
     assert.equal(borrowResponse.body.status, 'active');
 
-    const notificationResponse = await userClient.request('/api/notifications/equipment-due?days=3');
+    const notificationResponse = await userClient.request('/api/notifications/mine?days=3');
     assert.equal(notificationResponse.status, 200);
     assert.ok(Array.isArray(notificationResponse.body.notifications));
     assert.ok(notificationResponse.body.notifications.length >= 1);
@@ -315,8 +315,62 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(outboxResponse.status, 200);
     assert.ok(Array.isArray(outboxResponse.body.entries));
     assert.ok(outboxResponse.body.entries.some((entry) => (
-      entry.type === 'equipment_due_soon' &&
+      entry.notificationType === 'equipment_due_soon' &&
       Number(entry.userId) > 0 &&
+      entry.status === 'queued'
+    )));
+  });
+
+  await t.test('generates notification content for upcoming room bookings', async () => {
+    const userClient = new TestClient(baseUrl);
+    const userEmail = uniqueEmail('upcoming-booking-user');
+    const userPassword = 'Password123';
+    await registerUser(userClient, userEmail, userPassword);
+    await loginUser(userClient, userEmail, userPassword);
+
+    const resources = await getResources(userClient);
+    const roomId = resources.rooms[0].id;
+    const bookingDate = formatDateFromToday(1);
+
+    const createdBooking = await userClient.request('/api/book-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, date: bookingDate, startTime: '10:00', durationHours: 1 })
+    });
+    assert.equal(createdBooking.status, 200);
+
+    const mineResponse = await userClient.request('/api/notifications/upcoming-bookings/mine?days=2');
+    assert.equal(mineResponse.status, 200);
+    assert.ok(Array.isArray(mineResponse.body.notifications));
+    const mine = mineResponse.body.notifications.find((n) => n.roomId === roomId && n.date === bookingDate);
+    assert.ok(mine);
+    assert.equal(mine.startTime, '10:00');
+    assert.ok(mine.subject.includes('Upcoming booking'));
+
+    const notTodayResponse = await userClient.request('/api/notifications/upcoming-bookings/mine?days=0');
+    assert.equal(notTodayResponse.status, 200);
+    assert.equal(notTodayResponse.body.notifications.some((n) => n.roomId === roomId && n.date === bookingDate), false);
+
+    const adminEmail = uniqueEmail('upcoming-booking-admin');
+    const adminClient = new TestClient(baseUrl);
+    await registerUser(adminClient, adminEmail, 'Password123');
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+    await adminClient.request('/api/logout', { method: 'POST' });
+    await loginUser(adminClient, adminEmail, 'Password123');
+
+    const forbidden = await userClient.request('/api/notifications/upcoming-bookings?days=2');
+    assert.equal(forbidden.status, 403);
+
+    const adminResponse = await adminClient.request('/api/notifications/upcoming-bookings?days=2');
+    assert.equal(adminResponse.status, 200);
+    assert.ok(adminResponse.body.notifications.some((n) => n.roomId === roomId && n.date === bookingDate && n.recipientEmail === userEmail));
+
+    const outboxResponse = await adminClient.request('/api/admin/notifications/outbox');
+    assert.equal(outboxResponse.status, 200);
+    assert.ok(outboxResponse.body.entries.some((entry) => (
+      entry.notificationType === 'upcoming_booking' &&
+      entry.resourceType === 'booking' &&
+      entry.recipientEmail === userEmail &&
       entry.status === 'queued'
     )));
   });

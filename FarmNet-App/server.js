@@ -119,6 +119,7 @@ const CAMEL_CASE_COLUMN_MAP = {
   maxbookingsperuserperweek: 'maxBookingsPerUserPerWeek',
   requiresapproval: 'requiresApproval',
   roomid: 'roomId',
+  bookingid: 'bookingId',
   starttime: 'startTime',
   endtime: 'endTime',
   createdat: 'createdAt',
