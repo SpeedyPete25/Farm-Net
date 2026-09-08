@@ -794,14 +794,22 @@ async function persistNotificationOutboxEntries(notificationType, notifications)
       daysRemaining: notification.daysRemaining ?? null,
       daysOverdue: notification.daysOverdue ?? null,
       escalationIndex: notification.escalationIndex ?? null,
-      escalationLabel: notification.escalationLabel ?? null
+      escalationLabel: notification.escalationLabel ?? null,
+      bookingId: notification.bookingId ?? null,
+      roomId: notification.roomId ?? null,
+      date: notification.date ?? null,
+      startTime: notification.startTime ?? null,
+      daysUntil: notification.daysUntil ?? null
     });
+    const resourceType = notification.loanId ? 'loan' : (notification.bookingId ? 'booking' : null);
+    const resourceId = notification.loanId ?? notification.bookingId ?? null;
+
     const dedupeKey = crypto.createHash('md5').update(JSON.stringify({
       notificationType,
       userId: notification.userId ?? null,
       recipientEmail: notification.recipientEmail ?? null,
-      resourceType: notification.loanId ? 'loan' : null,
-      resourceId: notification.loanId ?? null,
+      resourceType,
+      resourceId,
       subject: notification.subject ?? '',
       body: notification.body ?? '',
       metadata
@@ -820,8 +828,8 @@ async function persistNotificationOutboxEntries(notificationType, notifications)
         notification.subject ?? '',
         notification.body ?? '',
         metadata,
-        notification.loanId ? 'loan' : null,
-        notification.loanId ?? null,
+        resourceType,
+        resourceId,
         dedupeKey
       ]
     );
@@ -837,8 +845,8 @@ async function persistNotificationOutboxEntries(notificationType, notifications)
       body: notification.body ?? '',
       status: 'queued',
       metadata,
-      resourceType: notification.loanId ? 'loan' : null,
-      resourceId: notification.loanId ?? null,
+      resourceType,
+      resourceId,
       createdAt: new Date().toISOString()
     });
   }
@@ -890,6 +898,57 @@ async function generateEquipmentDueNotifications(thresholdDays = 3) {
   });
 
   await persistNotificationOutboxEntries('equipment_due_soon', notifications);
+  return notifications;
+}
+
+/**
+ * Generate notification content for room bookings starting within the next
+ * `thresholdDays` days (inclusive), from now onward. This only generates the
+ * content -- it does not send emails.
+ * @param {number} thresholdDays
+ * @returns {Promise<Array<Object>>} notifications
+ */
+async function generateUpcomingBookingNotifications(thresholdDays = 1) {
+  const today = new Date().toISOString().slice(0, 10);
+  const nowTime = new Date().toTimeString().slice(0, 5);
+  const endDate = addDaysToDateString(today, Number(thresholdDays || 0));
+
+  const rows = await query(
+    `SELECT b.id AS bookingId, b.userId, b.roomId, b.date, b.startTime, b.durationHours,
+            u.email AS userEmail, r.name AS roomName, r.location AS roomLocation
+     FROM bookings b
+     JOIN users u ON u.id = b.userId
+     LEFT JOIN rooms r ON r.id = b.roomId
+     WHERE b.status = 'active'
+       AND ((b.date = ? AND b.startTime > ?) OR (b.date > ? AND b.date <= ?))
+     ORDER BY b.date ASC, b.startTime ASC`,
+    [today, nowTime, today, endDate]
+  );
+
+  const notifications = (rows || []).map((r) => {
+    const daysUntil = Math.max(0, Math.ceil((new Date(r.date) - new Date(today)) / (1000 * 60 * 60 * 24)));
+    const whenLabel = daysUntil === 0 ? 'today' : `in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
+    const roomLabel = r.roomName ? `${r.roomName}${r.roomLocation ? ` (${r.roomLocation})` : ''}` : 'your booked room';
+    const subject = `Upcoming booking: ${roomLabel} on ${r.date} at ${r.startTime}`;
+    const body = `Hello ${r.userEmail},\n\nThis is a reminder that you have ${roomLabel} booked ${whenLabel} on ${r.date} at ${r.startTime} for ${r.durationHours} hour${Number(r.durationHours) === 1 ? '' : 's'}.\n\nIf you no longer need this booking, please cancel it so others can use the room.\n\nBooking #${r.bookingId}`;
+
+    return {
+      bookingId: r.bookingId,
+      userId: r.userId,
+      recipientEmail: r.userEmail,
+      roomId: r.roomId,
+      roomName: r.roomName,
+      roomLocation: r.roomLocation,
+      date: r.date,
+      startTime: r.startTime,
+      durationHours: r.durationHours,
+      daysUntil,
+      subject,
+      body
+    };
+  });
+
+  await persistNotificationOutboxEntries('upcoming_booking', notifications);
   return notifications;
 }
 
@@ -4479,6 +4538,38 @@ app.get('/api/notifications/equipment-due', requireAdmin, async (req, res) => {
     res.json({ count: notifications.length, notifications });
   } catch (err) {
     console.error('Failed to generate equipment due notifications:', err);
+    res.status(500).json({ error: 'Failed to generate notifications' });
+  }
+});
+
+// Generate notification content for upcoming room bookings, across all users (admin only).
+app.get('/api/notifications/upcoming-bookings', requireAdmin, async (req, res) => {
+  const daysParam = Number(req.query.days);
+  const days = Number.isFinite(daysParam) && daysParam >= 0 ? Math.floor(daysParam) : 1;
+  if (days > 365) return res.status(400).json({ error: 'days parameter too large' });
+
+  try {
+    const notifications = await generateUpcomingBookingNotifications(days);
+    res.json({ count: notifications.length, notifications });
+  } catch (err) {
+    console.error('Failed to generate upcoming booking notifications:', err);
+    res.status(500).json({ error: 'Failed to generate notifications' });
+  }
+});
+
+// Return generated upcoming-booking notification content for the current user (transient preview).
+app.get('/api/notifications/upcoming-bookings/mine', requireLogin, async (req, res) => {
+  const userId = req.session.userId;
+  const daysParam = Number(req.query.days);
+  const days = Number.isFinite(daysParam) && daysParam >= 0 ? Math.floor(daysParam) : 1;
+  if (days > 365) return res.status(400).json({ error: 'days parameter too large' });
+
+  try {
+    const all = await generateUpcomingBookingNotifications(days);
+    const mine = (all || []).filter((n) => Number(n.userId) === Number(userId));
+    res.json({ count: mine.length, notifications: mine });
+  } catch (err) {
+    console.error('Failed to generate user upcoming booking notifications:', err);
     res.status(500).json({ error: 'Failed to generate notifications' });
   }
 });

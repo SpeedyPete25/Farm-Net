@@ -64,7 +64,7 @@ const adminOutboxList = document.getElementById('admin-outbox-list');
 const adminOutboxRefresh = document.getElementById('admin-outbox-refresh');
 const adminNotificationsDays = document.getElementById('admin-notifications-days');
 const adminNotificationsRefresh = document.getElementById('admin-notifications-refresh');
-const adminNotificationsEscalation = document.getElementById('admin-notifications-escalation');
+const adminNotificationsType = document.getElementById('admin-notifications-type');
 const adminNotificationsLevels = document.getElementById('admin-notifications-levels');
 const roomUsageStart = document.getElementById('room-usage-start');
 const roomUsageEnd = document.getElementById('room-usage-end');
@@ -770,7 +770,7 @@ const adminPage = createAdminPage({
   adminOutboxRefresh,
   adminNotificationsDays,
   adminNotificationsRefresh,
-  adminNotificationsEscalation,
+  adminNotificationsType,
   adminNotificationsLevels,
   roomUsageStart,
   roomUsageEnd,

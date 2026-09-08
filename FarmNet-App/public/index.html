@@ -186,18 +186,21 @@
           <div id="damage-reports-list"></div>
 
           <h3 style="margin-top: 24px;">Notifications Preview</h3>
-          <p>Preview generated notification content for equipment due soon.</p>
+          <p>Preview generated notification content.</p>
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            Type:
+            <select id="admin-notifications-type">
+              <option value="equipment-due">Equipment due soon</option>
+              <option value="overdue-escalations">Overdue escalations</option>
+              <option value="upcoming-bookings">Upcoming bookings</option>
+            </select>
             Days ahead:
             <input id="admin-notifications-days" type="number" min="0" value="3" style="width:72px;" />
             <button id="admin-notifications-refresh" class="secondary">Refresh</button>
           </label>
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <input id="admin-notifications-escalation" type="checkbox" />
-            <span>Preview overdue escalations instead</span>
-            <label style="margin-left:12px;font-size:90%;">Levels (days, comma-separated):
-              <input id="admin-notifications-levels" type="text" value="3,7,14" style="width:120px; margin-left:6px;" />
-            </label>
+            <span style="font-size:90%;">Escalation levels (days, comma-separated, used when type is Overdue escalations):</span>
+            <input id="admin-notifications-levels" type="text" value="3,7,14" style="width:120px;" />
           </label>
           <div id="admin-notifications-list"></div>
 

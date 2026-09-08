@@ -84,7 +84,7 @@ import { renderListState } from './utils.js';
  *   adminOutboxRefresh: HTMLElement,
  *   adminNotificationsDays: HTMLInputElement,
  *   adminNotificationsRefresh: HTMLElement,
- *   adminNotificationsEscalation: HTMLInputElement,
+ *   adminNotificationsType: HTMLSelectElement,
  *   adminNotificationsLevels: HTMLInputElement,
  *   requestJson: (url: string, options?: RequestInit) => Promise<any>,
  *   onReturnLoan: (loanId: number) => void
@@ -103,7 +103,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsEscalation, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -676,9 +676,9 @@ export function createAdminPage(deps) {
       <thead>
         <tr>
           <th>Recipient</th>
-          <th>Equipment</th>
-          <th>Return Date</th>
-          <th>Days Left</th>
+          <th>Resource</th>
+          <th>When</th>
+          <th>Days</th>
           <th>Subject</th>
           <th>Body</th>
         </tr>
@@ -690,16 +690,27 @@ export function createAdminPage(deps) {
     notifications.forEach((n) => {
       const row = document.createElement('tr');
       const recipient = document.createElement('td'); recipient.textContent = n.recipientEmail || '-';
-      const equipment = document.createElement('td'); equipment.textContent = n.unitCode ? `${n.equipmentName} (${n.unitCode})` : (n.equipmentName || '-');
-      const returnDate = document.createElement('td'); returnDate.textContent = n.returnDate || '-';
-      const daysLeft = document.createElement('td'); daysLeft.textContent = String(n.daysRemaining ?? '-');
+
+      const resource = document.createElement('td');
+      if (n.bookingId) {
+        resource.textContent = n.roomLocation ? `${n.roomName} (${n.roomLocation})` : (n.roomName || '-');
+      } else {
+        resource.textContent = n.unitCode ? `${n.equipmentName} (${n.unitCode})` : (n.equipmentName || '-');
+      }
+
+      const when = document.createElement('td');
+      when.textContent = n.bookingId ? `${n.date || '-'} ${n.startTime || ''}`.trim() : (n.returnDate || '-');
+
+      const days = document.createElement('td');
+      days.textContent = String(n.daysUntil ?? n.daysRemaining ?? n.daysOverdue ?? '-');
+
       const subject = document.createElement('td'); subject.textContent = n.subject || '-';
       const body = document.createElement('td'); body.textContent = n.body || '-';
 
       row.appendChild(recipient);
-      row.appendChild(equipment);
-      row.appendChild(returnDate);
-      row.appendChild(daysLeft);
+      row.appendChild(resource);
+      row.appendChild(when);
+      row.appendChild(days);
       row.appendChild(subject);
       row.appendChild(body);
       tbody.appendChild(row);
@@ -712,10 +723,23 @@ export function createAdminPage(deps) {
     if (!adminNotificationsList) return;
     renderListState(adminNotificationsList, { kind: 'loading', message: 'Loading notifications...' });
     try {
-      if (adminNotificationsEscalation && adminNotificationsEscalation.checked) {
+      const type = adminNotificationsType?.value || 'equipment-due';
+
+      if (type === 'overdue-escalations') {
         const levelsRaw = String(adminNotificationsLevels?.value || '3,7,14');
         const levels = levelsRaw.split(',').map((s) => s.trim()).filter(Boolean).join(',');
         const result = await requestJson(`/api/notifications/overdue-escalations?levels=${encodeURIComponent(levels)}`);
+        if (result?.error) {
+          renderListState(adminNotificationsList, { kind: 'error', message: result.error });
+        } else {
+          renderNotifications(result.notifications || result);
+        }
+        return;
+      }
+
+      if (type === 'upcoming-bookings') {
+        const days = Number(adminNotificationsDays?.value) || 1;
+        const result = await requestJson(`/api/notifications/upcoming-bookings?days=${encodeURIComponent(days)}`);
         if (result?.error) {
           renderListState(adminNotificationsList, { kind: 'error', message: result.error });
         } else {
@@ -1343,6 +1367,12 @@ export function createAdminPage(deps) {
   if (adminNotificationsRefresh) {
     adminNotificationsRefresh.addEventListener('click', (e) => {
       e.preventDefault();
+      loadNotifications();
+    });
+  }
+
+  if (adminNotificationsType) {
+    adminNotificationsType.addEventListener('change', () => {
       loadNotifications();
     });
   }
