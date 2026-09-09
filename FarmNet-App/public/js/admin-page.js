@@ -75,6 +75,11 @@ import { renderListState } from './utils.js';
 /**
  * @typedef {{
  *   usersList: HTMLElement,
+ *   adminCreateUserForm: HTMLFormElement,
+ *   adminCreateUserEmail: HTMLInputElement,
+ *   adminCreateUserPassword: HTMLInputElement,
+ *   adminCreateUserRole: HTMLSelectElement,
+ *   adminCreateUserError: HTMLElement,
  *   adminBookingsList: HTMLElement,
  *   adminLoansList: HTMLElement,
  *   damageReportsList: HTMLElement,
@@ -103,7 +108,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -125,6 +130,46 @@ export function createAdminPage(deps) {
     }
 
     select.dataset.currentRole = role;
+  }
+
+  /**
+   * Handle new-account submissions from the admin user creation form.
+   * Lets an admin register a new admin or borrower account directly.
+   * @param {SubmitEvent} event
+   * @returns {Promise<void>}
+   */
+  async function handleCreateUserFormSubmit(event) {
+    event.preventDefault();
+    if (!adminCreateUserError) return;
+    adminCreateUserError.textContent = '';
+
+    const email = adminCreateUserEmail.value.trim();
+    const password = adminCreateUserPassword.value;
+    const role = adminCreateUserRole.value;
+
+    if (!email || !password) {
+      adminCreateUserError.textContent = 'Email and password are required.';
+      return;
+    }
+
+    const result = await requestJson('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, role })
+    });
+
+    if (result.error) {
+      adminCreateUserError.textContent = result.error;
+      return;
+    }
+
+    adminCreateUserEmail.value = '';
+    adminCreateUserPassword.value = '';
+    adminCreateUserRole.value = 'user';
+    await load();
+  }
+
+  if (adminCreateUserForm) {
+    adminCreateUserForm.addEventListener('submit', handleCreateUserFormSubmit);
   }
 
   /**

@@ -54,6 +54,11 @@ const userStatus = document.getElementById('user-status');
 const roomsList = document.getElementById('rooms-list');
 const equipmentList = document.getElementById('equipment-list');
 const usersList = document.getElementById('users-list');
+const adminCreateUserForm = document.getElementById('admin-create-user-form');
+const adminCreateUserEmail = document.getElementById('admin-create-user-email');
+const adminCreateUserPassword = document.getElementById('admin-create-user-password');
+const adminCreateUserRole = document.getElementById('admin-create-user-role');
+const adminCreateUserError = document.getElementById('admin-create-user-error');
 const adminBookingsList = document.getElementById('admin-bookings-list');
 const adminLoansList = document.getElementById('admin-loans-list');
 const damageReportsList = document.getElementById('damage-reports-list');
@@ -761,6 +766,11 @@ const equipmentKitsPage = createEquipmentKitsPage({
 
 const adminPage = createAdminPage({
   usersList,
+  adminCreateUserForm,
+  adminCreateUserEmail,
+  adminCreateUserPassword,
+  adminCreateUserRole,
+  adminCreateUserError,
   adminBookingsList,
   adminLoansList,
   damageReportsList,

@@ -1265,6 +1265,64 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(editedLoan.returnDate, editedLoanDate);
   });
 
+  await t.test('allows an admin to directly register a new admin or borrower account', async () => {
+    const adminEmail = uniqueEmail('user-creator-admin');
+    const password = 'Password123';
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    await loginUser(adminClient, adminEmail, password);
+
+    const newBorrowerEmail = uniqueEmail('created-borrower');
+    const createBorrower = await adminClient.request('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: newBorrowerEmail, password: 'Password123', role: 'user' })
+    });
+    assert.equal(createBorrower.status, 200);
+    assert.equal(createBorrower.body.user.role, 'user');
+
+    const newAdminEmail = uniqueEmail('created-admin');
+    const createAdmin = await adminClient.request('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: newAdminEmail, password: 'Password123', role: 'admin' })
+    });
+    assert.equal(createAdmin.status, 200);
+    assert.equal(createAdmin.body.user.role, 'admin');
+
+    // Both new accounts can log in directly with the role they were created with.
+    const borrowerLogin = await loginUser(new TestClient(baseUrl), newBorrowerEmail, 'Password123');
+    assert.equal(borrowerLogin.role, 'user');
+
+    const newAdminClient = new TestClient(baseUrl);
+    const newAdminLogin = await loginUser(newAdminClient, newAdminEmail, 'Password123');
+    assert.equal(newAdminLogin.role, 'admin');
+
+    // The newly created admin can immediately use admin-only endpoints.
+    const newAdminUsersList = await newAdminClient.request('/api/admin/users');
+    assert.equal(newAdminUsersList.status, 200);
+
+    const duplicateEmail = await adminClient.request('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: newBorrowerEmail, password: 'Password123', role: 'user' })
+    });
+    assert.equal(duplicateEmail.status, 400);
+    assert.equal(duplicateEmail.body.error, 'Email already exists.');
+
+    // A non-admin cannot register accounts on behalf of others.
+    const borrowerClient = new TestClient(baseUrl);
+    await loginUser(borrowerClient, newBorrowerEmail, 'Password123');
+    const nonAdminAttempt = await borrowerClient.request('/api/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: uniqueEmail('should-not-be-created'), password: 'Password123', role: 'user' })
+    });
+    assert.equal(nonAdminAttempt.status, 403);
+  });
+
   await t.test('supports admin room and equipment management endpoints', async () => {
     const adminEmail = uniqueEmail('admin-mgmt');
     const password = 'Password123';

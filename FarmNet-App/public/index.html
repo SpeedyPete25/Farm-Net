@@ -171,6 +171,20 @@
         <article id="page-admin" class="card page-panel hidden">
           <h2>User Management</h2>
           <p>View all users and change their role.</p>
+
+          <form id="admin-create-user-form" class="room-management-form">
+            <label>Email<input type="email" id="admin-create-user-email" required /></label>
+            <label>Password<input type="password" id="admin-create-user-password" required /></label>
+            <label>Role
+              <select id="admin-create-user-role">
+                <option value="user">Borrower</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <button type="submit">Create account</button>
+            <div id="admin-create-user-error" class="form-error"></div>
+          </form>
+
           <div id="users-list"></div>
 
           <h3 style="margin-top: 24px;">Booking Management</h3>

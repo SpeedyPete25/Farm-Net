@@ -2959,6 +2959,51 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
   res.json({ users });
 });
 
+// Register a new user account directly with a chosen role. Admin only.
+// This lets an admin provision a new admin or borrower account in one step,
+// as an alternative to a borrower self-registering via /api/register and
+// then being promoted via PATCH /api/admin/users/:id/role.
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
+  const email = String(req.body?.email || '').trim();
+  const password = String(req.body?.password || '');
+  const role = String(req.body?.role || 'user').trim().toLowerCase();
+  const allowedRoles = ['user', 'admin'];
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  if (!allowedRoles.includes(role)) {
+    return res.status(400).json({ error: 'Invalid role. Allowed roles are user and admin.' });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  try {
+    const result = await run(
+      'INSERT INTO users (email, passwordHash, role) VALUES (?, ?, ?)',
+      [email, passwordHash, role]
+    );
+
+    const description = `${req.session.email} registered a new ${role} account for ${email}`;
+    await logActivity(req.session.userId, 'user_registered_by_admin', 'user', result.lastID, description);
+
+    res.json({
+      message: `${role === 'admin' ? 'Admin' : 'Borrower'} account created successfully.`,
+      user: { id: result.lastID, email, role }
+    });
+  } catch (err) {
+    if (err.code === '23505') { // Postgres unique_violation
+      return res.status(400).json({ error: 'Email already exists.' });
+    }
+    res.status(500).json({ error: 'Could not create account.' });
+  }
+});
+
 // Return bookings for admin management.
 app.get('/api/admin/bookings', requireAdmin, async (req, res) => {
   const statusFilter = req.query.status || 'active'; // 'active' or 'all'
