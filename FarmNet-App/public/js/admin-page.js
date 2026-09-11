@@ -87,6 +87,8 @@ import { renderListState } from './utils.js';
  *   adminNotificationsList: HTMLElement,
  *   adminOutboxList: HTMLElement,
  *   adminOutboxRefresh: HTMLElement,
+ *   adminSentLogList: HTMLElement,
+ *   adminSentLogRefresh: HTMLElement,
  *   adminNotificationsDays: HTMLInputElement,
  *   adminNotificationsRefresh: HTMLElement,
  *   adminNotificationsType: HTMLSelectElement,
@@ -108,7 +110,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -854,6 +856,55 @@ export function createAdminPage(deps) {
     adminOutboxList.appendChild(table);
   }
 
+  function renderSentLog(entries) {
+    if (!adminSentLogList) return;
+    if (!entries || entries.length === 0) {
+      renderListState(adminSentLogList, { kind: 'empty', message: 'No sent notification records yet.' });
+      return;
+    }
+
+    adminSentLogList.innerHTML = '';
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Outbox ID</th>
+          <th>Type</th>
+          <th>Recipient</th>
+          <th>Sent</th>
+          <th>Recorded By</th>
+          <th>Recorded</th>
+          <th>Subject</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    entries.forEach((entry) => {
+      const row = document.createElement('tr');
+      const outboxId = document.createElement('td'); outboxId.textContent = String(entry.outboxId ?? '-');
+      const type = document.createElement('td'); type.textContent = entry.notificationType || '-';
+      const recipient = document.createElement('td'); recipient.textContent = entry.recipientEmail || entry.userId || '-';
+      const sentAt = document.createElement('td'); sentAt.textContent = entry.sentAt ? new Date(entry.sentAt).toLocaleString() : '-';
+      const recordedBy = document.createElement('td'); recordedBy.textContent = entry.recordedByEmail || entry.recordedByUserId || '-';
+      const recordedAt = document.createElement('td'); recordedAt.textContent = entry.recordedAt ? new Date(entry.recordedAt).toLocaleString() : '-';
+      const subject = document.createElement('td'); subject.textContent = entry.subject || '-';
+
+      row.appendChild(outboxId);
+      row.appendChild(type);
+      row.appendChild(recipient);
+      row.appendChild(sentAt);
+      row.appendChild(recordedBy);
+      row.appendChild(recordedAt);
+      row.appendChild(subject);
+      tbody.appendChild(row);
+    });
+
+    adminSentLogList.appendChild(table);
+  }
+
   async function loadOutbox() {
     if (!adminOutboxList) return;
     renderListState(adminOutboxList, { kind: 'loading', message: 'Loading outbox...' });
@@ -866,6 +917,21 @@ export function createAdminPage(deps) {
       }
     } catch (err) {
       renderListState(adminOutboxList, { kind: 'error', message: 'Unable to load notification outbox.' });
+    }
+  }
+
+  async function loadSentLog() {
+    if (!adminSentLogList) return;
+    renderListState(adminSentLogList, { kind: 'loading', message: 'Loading sent notification log...' });
+    try {
+      const result = await requestJson('/api/admin/notifications/sent-log');
+      if (result?.error) {
+        renderListState(adminSentLogList, { kind: 'error', message: result.error });
+      } else {
+        renderSentLog(result.entries || []);
+      }
+    } catch (err) {
+      renderListState(adminSentLogList, { kind: 'error', message: 'Unable to load sent notification log.' });
     }
   }
 
@@ -1406,6 +1472,7 @@ export function createAdminPage(deps) {
     // Load notifications preview and outbox last (independent of other sections)
     loadNotifications();
     loadOutbox();
+    loadSentLog();
   }
 
   // Wire up refresh control for notifications preview
@@ -1426,6 +1493,13 @@ export function createAdminPage(deps) {
     adminOutboxRefresh.addEventListener('click', (e) => {
       e.preventDefault();
       loadOutbox();
+    });
+  }
+
+  if (adminSentLogRefresh) {
+    adminSentLogRefresh.addEventListener('click', (e) => {
+      e.preventDefault();
+      loadSentLog();
     });
   }
 

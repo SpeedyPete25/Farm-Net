@@ -167,6 +167,10 @@ const CAMEL_CASE_COLUMN_MAP = {
   failedat: 'failedAt',
   createdat: 'createdAt',
   dedupekey: 'dedupeKey',
+  outboxid: 'outboxId',
+  recordedat: 'recordedAt',
+  recordedbyuserid: 'recordedByUserId',
+  recordedbyemail: 'recordedByEmail',
   status: 'status',
   attempts: 'attempts',
   metadata: 'metadata',
@@ -856,6 +860,74 @@ async function persistNotificationOutboxEntries(notificationType, notifications)
 }
 
 /**
+ * Persist a sent-notification audit record so the actual delivery event is retained.
+ * @param {Object} outboxEntry
+ * @param {{ userId?: number|null, email?: string|null }} [recordedBy={}] Audit actor information.
+ * @returns {Promise<Object|null>}
+ */
+async function persistSentNotificationAuditEntry(outboxEntry, recordedBy = {}) {
+  if (!outboxEntry || typeof outboxEntry !== 'object' || !outboxEntry.id) {
+    return null;
+  }
+
+  const recordedAt = new Date().toISOString();
+  const result = await run(
+    `INSERT INTO notification_sent_log (
+      outboxId, notificationType, userId, recipientEmail, subject, body, metadata, resourceType, resourceId, attempts, sentAt, recordedByUserId, recordedByEmail, recordedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (outboxId) DO UPDATE SET
+      notificationType = excluded.notificationType,
+      userId = excluded.userId,
+      recipientEmail = excluded.recipientEmail,
+      subject = excluded.subject,
+      body = excluded.body,
+      metadata = excluded.metadata,
+      resourceType = excluded.resourceType,
+      resourceId = excluded.resourceId,
+      attempts = excluded.attempts,
+      sentAt = excluded.sentAt,
+      recordedByUserId = excluded.recordedByUserId,
+      recordedByEmail = excluded.recordedByEmail,
+      recordedAt = excluded.recordedAt
+    `,
+    [
+      outboxEntry.id,
+      outboxEntry.notificationType ?? null,
+      outboxEntry.userId ?? null,
+      outboxEntry.recipientEmail ?? null,
+      outboxEntry.subject ?? '',
+      outboxEntry.body ?? '',
+      outboxEntry.metadata ?? null,
+      outboxEntry.resourceType ?? null,
+      outboxEntry.resourceId ?? null,
+      outboxEntry.attempts ?? 0,
+      outboxEntry.sentAt ?? recordedAt,
+      recordedBy.userId ?? null,
+      recordedBy.email ?? null,
+      recordedAt
+    ]
+  );
+
+  return {
+    id: result.lastID,
+    outboxId: outboxEntry.id,
+    notificationType: outboxEntry.notificationType ?? null,
+    userId: outboxEntry.userId ?? null,
+    recipientEmail: outboxEntry.recipientEmail ?? null,
+    subject: outboxEntry.subject ?? '',
+    body: outboxEntry.body ?? '',
+    metadata: outboxEntry.metadata ?? null,
+    resourceType: outboxEntry.resourceType ?? null,
+    resourceId: outboxEntry.resourceId ?? null,
+    attempts: outboxEntry.attempts ?? 0,
+    sentAt: outboxEntry.sentAt ?? recordedAt,
+    recordedByUserId: recordedBy.userId ?? null,
+    recordedByEmail: recordedBy.email ?? null,
+    recordedAt
+  };
+}
+
+/**
  * Generate notification content for equipment that is due within the next
  * `thresholdDays` days (inclusive). This only generates the content — it does
  * not send emails.
@@ -1425,6 +1497,24 @@ async function initDatabase() {
     error TEXT
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS notification_sent_log (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    outboxId INTEGER NOT NULL UNIQUE,
+    notificationType TEXT NOT NULL,
+    userId INTEGER,
+    recipientEmail TEXT,
+    subject TEXT,
+    body TEXT NOT NULL,
+    metadata TEXT,
+    resourceType TEXT,
+    resourceId INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    sentAt TEXT NOT NULL,
+    recordedByUserId INTEGER,
+    recordedByEmail TEXT,
+    recordedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   const notificationOutboxColumns = await getTableColumns('notification_outbox');
   const notificationOutboxColumnNames = notificationOutboxColumns.map((col) => col.name);
   const notificationOutboxColumnsToAdd = [
@@ -1473,6 +1563,31 @@ async function initDatabase() {
 
   await run(`ALTER TABLE notification_outbox ALTER COLUMN dedupeKey SET NOT NULL`);
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS notification_outbox_dedupe_key_idx ON notification_outbox (dedupeKey)`);
+
+  const notificationSentLogColumns = await getTableColumns('notification_sent_log');
+  const notificationSentLogColumnNames = notificationSentLogColumns.map((col) => col.name);
+  const notificationSentLogColumnsToAdd = [
+    ['outboxId', 'INTEGER'],
+    ['notificationType', 'TEXT'],
+    ['userId', 'INTEGER'],
+    ['recipientEmail', 'TEXT'],
+    ['subject', 'TEXT'],
+    ['body', 'TEXT'],
+    ['metadata', 'TEXT'],
+    ['resourceType', 'TEXT'],
+    ['resourceId', 'INTEGER'],
+    ['attempts', 'INTEGER NOT NULL DEFAULT 0'],
+    ['sentAt', 'TEXT'],
+    ['recordedByUserId', 'INTEGER'],
+    ['recordedByEmail', 'TEXT'],
+    ['recordedAt', "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"]
+  ];
+  for (const [columnName, columnType] of notificationSentLogColumnsToAdd) {
+    if (!notificationSentLogColumnNames.includes(columnName)) {
+      await run(`ALTER TABLE notification_sent_log ADD COLUMN ${columnName} ${columnType}`);
+    }
+  }
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS notification_sent_log_outbox_id_idx ON notification_sent_log (outboxId)`);
 
   const rooms = await query('SELECT id FROM rooms LIMIT 1');
   if (rooms.length === 0) {
@@ -4566,10 +4681,55 @@ app.patch('/api/admin/notifications/outbox/:id', requireAdmin, async (req, res) 
       return res.status(404).json({ error: 'Notification outbox entry not found.' });
     }
 
+    if (nextStatus === 'sent') {
+      const outboxRows = await query(
+        `SELECT id, notificationType, userId, recipientEmail, subject, body, status, attempts, metadata, resourceType, resourceId, createdAt, sentAt, error
+         FROM notification_outbox
+         WHERE id = ?`,
+        [notificationId]
+      );
+      await persistSentNotificationAuditEntry(outboxRows[0], {
+        userId: req.session.userId,
+        email: req.session.email
+      });
+    }
+
     res.json({ message: 'Notification outbox entry updated.', status: nextStatus });
   } catch (err) {
     console.error('Failed to update notification outbox entry:', err);
     res.status(500).json({ error: 'Failed to update notification outbox entry' });
+  }
+});
+
+// List sent notification audit records.
+app.get('/api/admin/notifications/sent-log', requireAdmin, async (_req, res) => {
+  try {
+    const entries = await query(
+      `SELECT
+         id,
+         outboxId,
+         notificationType,
+         userId,
+         recipientEmail,
+         subject,
+         body,
+         metadata,
+         resourceType,
+         resourceId,
+         attempts,
+         sentAt,
+         recordedByUserId,
+         recordedByEmail,
+         recordedAt
+       FROM notification_sent_log
+       ORDER BY recordedAt DESC, id DESC
+       LIMIT 200`
+    );
+
+    res.json({ count: entries.length, entries });
+  } catch (err) {
+    console.error('Failed to read sent notification log:', err);
+    res.status(500).json({ error: 'Failed to read sent notification log' });
   }
 });
 

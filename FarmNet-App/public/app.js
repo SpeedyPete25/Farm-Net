@@ -67,6 +67,8 @@ const notificationsList = document.getElementById('notifications-list');
 const adminNotificationsList = document.getElementById('admin-notifications-list');
 const adminOutboxList = document.getElementById('admin-outbox-list');
 const adminOutboxRefresh = document.getElementById('admin-outbox-refresh');
+const adminSentLogList = document.getElementById('admin-sent-log-list');
+const adminSentLogRefresh = document.getElementById('admin-sent-log-refresh');
 const adminNotificationsDays = document.getElementById('admin-notifications-days');
 const adminNotificationsRefresh = document.getElementById('admin-notifications-refresh');
 const adminNotificationsType = document.getElementById('admin-notifications-type');
@@ -778,6 +780,8 @@ const adminPage = createAdminPage({
   adminNotificationsList,
   adminOutboxList,
   adminOutboxRefresh,
+  adminSentLogList,
+  adminSentLogRefresh,
   adminNotificationsDays,
   adminNotificationsRefresh,
   adminNotificationsType,

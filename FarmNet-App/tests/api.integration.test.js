@@ -314,10 +314,28 @@ test('automated integration coverage for critical flows', async (t) => {
     const outboxResponse = await adminClient.request('/api/admin/notifications/outbox');
     assert.equal(outboxResponse.status, 200);
     assert.ok(Array.isArray(outboxResponse.body.entries));
-    assert.ok(outboxResponse.body.entries.some((entry) => (
+    const queuedEntry = outboxResponse.body.entries.find((entry) => (
       entry.notificationType === 'equipment_due_soon' &&
       Number(entry.userId) > 0 &&
       entry.status === 'queued'
+    ));
+    assert.ok(queuedEntry);
+
+    const sentUpdate = await adminClient.request(`/api/admin/notifications/outbox/${queuedEntry.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'sent' })
+    });
+    assert.equal(sentUpdate.status, 200);
+
+    const sentLogResponse = await adminClient.request('/api/admin/notifications/sent-log');
+    assert.equal(sentLogResponse.status, 200);
+    assert.ok(Array.isArray(sentLogResponse.body.entries));
+    assert.ok(sentLogResponse.body.entries.some((entry) => (
+      entry.outboxId === queuedEntry.id &&
+      entry.notificationType === 'equipment_due_soon' &&
+      entry.sentAt &&
+      entry.recordedByEmail === adminEmail
     )));
   });
 
