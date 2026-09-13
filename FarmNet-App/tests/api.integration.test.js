@@ -100,6 +100,10 @@ function formatDateFromToday(daysAhead) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function kitChecklistFor(kit) {
+  return kit.items.map((item) => ({ equipmentId: item.equipmentId, note: 'Verified present and in good condition.' }));
+}
+
 function uniqueEmail(label) {
   return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 }
@@ -1962,11 +1966,28 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.equal(kitResource.available, 1);
     assert.equal(kitResource.requiresApproval, 0);
 
+    // A check-out checklist is required before a kit can be borrowed -- missing
+    // it, or leaving one item's note blank, is rejected outright.
+    const missingChecklist = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 3 })
+    });
+    assert.equal(missingChecklist.status, 400);
+
+    const incompleteChecklist = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 3, checklist: [{ equipmentId: testerEquipment.id, note: 'Looks fine' }] })
+    });
+    assert.equal(incompleteChecklist.status, 400);
+    assert.match(incompleteChecklist.body.error, /checklist/i);
+
     // Borrowing the kit creates one loan per unit (1 + 2 = 3), all sharing a kitLoanGroupId.
     const borrowKit = await memberClient.request('/api/borrow-kit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kitId: kit.id, days: 3 })
+      body: JSON.stringify({ kitId: kit.id, days: 3, checklist: kitChecklistFor(kit) })
     });
     assert.equal(borrowKit.status, 200);
     assert.equal(borrowKit.body.items.length, 3);
@@ -1978,6 +1999,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const groupLoans = memberRequestsAfterBorrow.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
     assert.equal(groupLoans.length, 3);
     assert.ok(groupLoans.every((loan) => loan.kitId === kit.id && loan.kitName === kitName && loan.status === 'active'));
+    assert.ok(groupLoans.every((loan) => loan.borrowCondition === 'Verified present and in good condition.'));
 
     // With the tester's only unit now checked out, the kit is fully unavailable.
     const resourcesAfterBorrow = await getResources(memberClient);
@@ -1989,7 +2011,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const shortageBorrow = await memberClient.request('/api/borrow-kit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kitId: kit.id, days: 1 })
+      body: JSON.stringify({ kitId: kit.id, days: 1, checklist: kitChecklistFor(kit) })
     });
     assert.equal(shortageBorrow.status, 400);
     assert.match(shortageBorrow.body.error, /Fence Tester/);
@@ -2024,7 +2046,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const mixedBorrow = await memberClient.request('/api/borrow-kit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kitId: kit.id, days: 2 })
+      body: JSON.stringify({ kitId: kit.id, days: 2, checklist: kitChecklistFor(kit) })
     });
     assert.equal(mixedBorrow.status, 200);
     const mixedGroupId = mixedBorrow.body.kitLoanGroupId;
@@ -2058,7 +2080,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const secondMixedBorrow = await memberClient.request('/api/borrow-kit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kitId: kit.id, days: 2 })
+      body: JSON.stringify({ kitId: kit.id, days: 2, checklist: kitChecklistFor(kit) })
     });
     assert.equal(secondMixedBorrow.status, 200);
     const secondMixedGroupId = secondMixedBorrow.body.kitLoanGroupId;
@@ -2176,7 +2198,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const borrow = await memberClient.request('/api/borrow-kit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kitId: kit.id, days: 3 })
+      body: JSON.stringify({ kitId: kit.id, days: 3, checklist: kitChecklistFor(kit) })
     });
     assert.equal(borrow.status, 200);
     const kitLoanGroupId = borrow.body.kitLoanGroupId;
@@ -2279,7 +2301,7 @@ test('automated integration coverage for critical flows', async (t) => {
     const secondBorrow = await memberClient.request('/api/borrow-kit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kitId: kit.id, days: 2 })
+      body: JSON.stringify({ kitId: kit.id, days: 2, checklist: kitChecklistFor(kit) })
     });
     assert.equal(secondBorrow.status, 200);
     const secondGroupId = secondBorrow.body.kitLoanGroupId;
@@ -2298,6 +2320,107 @@ test('automated integration coverage for critical flows', async (t) => {
     });
     assert.equal(adminReturn.status, 200);
     assert.equal(adminReturn.body.itemsReturned, secondItems.length);
+  });
+
+  await t.test('supports uploading a photo per item when returning a kit via the checklist', async () => {
+    const adminEmail = uniqueEmail('kit-photo-admin');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    await loginUser(adminClient, adminEmail, password);
+
+    const suffix = Date.now();
+    const lensName = `Spotting Scope ${suffix}`;
+    const tripodName = `Tripod ${suffix}`;
+
+    const addLens = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: lensName, quantity: 1 })
+    });
+    assert.equal(addLens.status, 200);
+
+    const addTripod = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: tripodName, quantity: 1 })
+    });
+    assert.equal(addTripod.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const lensEquipment = equipmentList.body.equipment.find((item) => item.name === lensName);
+    const tripodEquipment = equipmentList.body.equipment.find((item) => item.name === tripodName);
+
+    const kitName = `Spotting Kit ${suffix}`;
+    const createKit = await adminClient.request('/api/admin/kits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: kitName,
+        items: [
+          { equipmentId: lensEquipment.id, quantity: 1 },
+          { equipmentId: tripodEquipment.id, quantity: 1 }
+        ]
+      })
+    });
+    assert.equal(createKit.status, 200);
+
+    const kits = await adminClient.request('/api/admin/kits');
+    const kit = kits.body.kits.find((k) => k.name === kitName);
+
+    const memberEmail = uniqueEmail('kit-photo-member');
+    const memberClient = new TestClient(baseUrl);
+    await registerUser(memberClient, memberEmail, password);
+    await loginUser(memberClient, memberEmail, password);
+
+    const borrow = await memberClient.request('/api/borrow-kit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kitId: kit.id, days: 3, checklist: kitChecklistFor(kit) })
+    });
+    assert.equal(borrow.status, 200);
+    const kitLoanGroupId = borrow.body.kitLoanGroupId;
+
+    const requestsAfterBorrow = await memberClient.request('/api/my-requests?status=all');
+    const groupLoans = requestsAfterBorrow.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
+    const lensLoan = groupLoans.find((loan) => loan.equipmentName === lensName);
+    const tripodLoan = groupLoans.find((loan) => loan.equipmentName === tripodName);
+
+    // Attach a photo only to the damaged item; the other item is returned with no photo.
+    const returnForm = new FormData();
+    returnForm.append('kitLoanGroupId', String(kitLoanGroupId));
+    returnForm.append('items', JSON.stringify([
+      { loanId: lensLoan.id, condition: 'Lens is cracked', damaged: true },
+      { loanId: tripodLoan.id, condition: 'Good condition' }
+    ]));
+    const photoBlob = new Blob([Buffer.from('fake-image-bytes')], { type: 'image/png' });
+    returnForm.append(`photo_${lensLoan.id}`, photoBlob, 'crack.png');
+
+    const returned = await memberClient.request('/api/return-kit', {
+      method: 'POST',
+      body: returnForm
+    });
+    assert.equal(returned.status, 200);
+    assert.match(returned.body.message, /1 item\(s\) flagged as damaged/);
+
+    const requestsAfterReturn = await memberClient.request('/api/my-requests?status=all');
+    const returnedLoans = requestsAfterReturn.body.loans.filter((loan) => loan.kitLoanGroupId === kitLoanGroupId);
+    const returnedLens = returnedLoans.find((loan) => loan.equipmentName === lensName);
+    const returnedTripod = returnedLoans.find((loan) => loan.equipmentName === tripodName);
+    assert.ok(returnedLens.returnConditionPhotoPath);
+    assert.equal(returnedTripod.returnConditionPhotoPath, null);
+
+    // The photo is retrievable for the damaged item, and the damage report links to it.
+    const photoResponse = await memberClient.request(`/api/loans/${lensLoan.id}/photo`);
+    assert.equal(photoResponse.status, 200);
+
+    const damageReports = await adminClient.request('/api/admin/damage-reports');
+    const lensReport = damageReports.body.reports.find((entry) => entry.loanId === lensLoan.id);
+    assert.ok(lensReport);
+    assert.ok(lensReport.photoPath);
   });
 
   await t.test('enforces configurable room policies and the admin booking approval workflow', async () => {

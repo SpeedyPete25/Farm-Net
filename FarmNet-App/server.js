@@ -135,6 +135,7 @@ const CAMEL_CASE_COLUMN_MAP = {
   returndate: 'returnDate',
   returncondition: 'returnCondition',
   returnconditionphotopath: 'returnConditionPhotoPath',
+  borrowcondition: 'borrowCondition',
   returnedat: 'returnedAt',
   kitid: 'kitId',
   kitloangroupid: 'kitLoanGroupId',
@@ -666,23 +667,63 @@ async function getKitsWithAvailability(statusCountsByEquipmentId, equipmentRows)
 }
 
 /**
+ * Validate a check-out checklist against a kit's configured component types.
+ * The checklist must include exactly one verification note per distinct
+ * equipment type in the kit (not per physical unit, since units aren't
+ * assigned until after the checklist passes), each with a non-empty note
+ * confirming the component was checked before it leaves the building.
+ * @param {Array<{ equipmentId: number|string, note?: string }>} checklist
+ * @param {Array<{ equipmentId: number, equipmentName: string }>} kitItemRows
+ * @returns {{ error: string }|{ notesByEquipmentId: Map<number, string> }}
+ */
+function validateKitCheckoutChecklist(checklist, kitItemRows) {
+  if (!Array.isArray(checklist) || checklist.length === 0) {
+    return { error: 'A checklist entry is required for every item in this kit.' };
+  }
+
+  const submittedByEquipmentId = new Map();
+  for (const entry of checklist) {
+    const equipmentId = Number(entry?.equipmentId);
+    if (Number.isFinite(equipmentId)) {
+      submittedByEquipmentId.set(equipmentId, entry);
+    }
+  }
+
+  const notesByEquipmentId = new Map();
+  for (const item of kitItemRows) {
+    const submitted = submittedByEquipmentId.get(item.equipmentId);
+    const note = typeof submitted?.note === 'string' ? submitted.note.trim() : '';
+    if (!note) {
+      return { error: `A checklist note is required confirming ${item.equipmentName} before checkout.` };
+    }
+    if (note.length > 1000) {
+      return { error: `Checklist note for ${item.equipmentName} is too long (max 1000 characters).` };
+    }
+    notesByEquipmentId.set(item.equipmentId, note);
+  }
+
+  return { notesByEquipmentId };
+}
+
+/**
  * Create one loan row per assigned unit for a kit borrow/reserve request. All rows
  * share a kitLoanGroupId (the first row's own id) so they can be tracked, approved,
  * denied, and cancelled together, while each row's status is still governed
  * independently by its own equipment's approval policy.
- * @param {{ targetUserId: number, kitId: number, assignments: Array<{ equipmentId: number, equipmentName: string, requiresApproval: number, assignedUnits: Array<{ id: number, code: string }> }>, borrowDate: string, returnDate: string }} params
+ * @param {{ targetUserId: number, kitId: number, assignments: Array<{ equipmentId: number, equipmentName: string, requiresApproval: number, assignedUnits: Array<{ id: number, code: string }> }>, borrowDate: string, returnDate: string, notesByEquipmentId?: Map<number, string> }} params
  * @returns {Promise<{ kitLoanGroupId: number, createdLoans: Array<{ equipmentName: string, code: string, status: 'active'|'pending' }> }>}
  */
-async function createKitLoanRows({ targetUserId, kitId, assignments, borrowDate, returnDate }) {
+async function createKitLoanRows({ targetUserId, kitId, assignments, borrowDate, returnDate, notesByEquipmentId }) {
   let kitLoanGroupId = null;
   const createdLoans = [];
 
   for (const item of assignments) {
     const status = item.requiresApproval ? 'pending' : 'active';
+    const borrowCondition = notesByEquipmentId?.get(item.equipmentId) ?? null;
     for (const unit of item.assignedUnits) {
       const result = await run(
-        'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate, status, kitId, kitLoanGroupId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [targetUserId, item.equipmentId, unit.id, borrowDate, returnDate, status, kitId, kitLoanGroupId]
+        'INSERT INTO loans (userId, equipmentId, equipmentUnitId, borrowDate, returnDate, status, kitId, kitLoanGroupId, borrowCondition) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [targetUserId, item.equipmentId, unit.id, borrowDate, returnDate, status, kitId, kitLoanGroupId, borrowCondition]
       );
       if (kitLoanGroupId === null) {
         kitLoanGroupId = result.lastID;
@@ -1358,6 +1399,11 @@ async function initDatabase() {
     await run(`ALTER TABLE loans ADD COLUMN returnConditionPhotoPath TEXT`);
   }
 
+  const hasBorrowCondition = loanColumns.some(col => col.name === 'borrowCondition');
+  if (!hasBorrowCondition) {
+    await run(`ALTER TABLE loans ADD COLUMN borrowCondition TEXT`);
+  }
+
   const hasReturnedAt = loanColumns.some(col => col.name === 'returnedAt');
   if (!hasReturnedAt) {
     await run(`ALTER TABLE loans ADD COLUMN returnedAt TEXT`);
@@ -1765,7 +1811,7 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
   if (statusFilter === 'all') {
     loans = await query(
       `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate,
-              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt,
+              l.status, l.borrowCondition, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt,
               l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
@@ -1779,7 +1825,7 @@ app.get('/api/my-requests', requireLogin, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     loans = await query(
       `SELECT l.id, e.name AS equipmentName, eu.code AS equipmentCode, l.borrowDate, l.returnDate,
-              l.status, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt,
+              l.status, l.borrowCondition, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt,
               l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN equipment e ON e.id = l.equipmentId
@@ -1881,16 +1927,39 @@ app.post('/api/cancel-kit-loan', requireLogin, async (req, res) => {
 // Return every active item from one kit borrow/reserve request as a single checklist
 // submission, so each individual component's condition is verified and recorded on
 // check-in rather than the kit being returned as one undifferentiated block.
-// Photo attachments aren't supported here -- use /api/return-loan per item if a photo
-// is needed for a specific component.
-app.post('/api/return-kit', requireLogin, async (req, res) => {
+// Accepts multipart/form-data with an optional photo per item, named `photo_<loanId>`.
+app.post('/api/return-kit', requireLogin, (req, res, next) => {
+  uploadPhoto.any()(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ error: `Upload error: ${err.message}` });
+    }
+    if (err) {
+      return res.status(400).json({ error: err.message || 'File upload failed.' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+  const cleanupUploads = () => {
+    for (const file of uploadedFiles) fs.unlink(file.path, () => {});
+  };
+
   const kitLoanGroupId = Number(req.body.kitLoanGroupId);
-  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  let items;
+  try {
+    items = typeof req.body.items === 'string' ? JSON.parse(req.body.items) : req.body.items;
+  } catch {
+    cleanupUploads();
+    return res.status(400).json({ error: 'Checklist items must be valid JSON.' });
+  }
+  items = Array.isArray(items) ? items : [];
 
   if (!Number.isFinite(kitLoanGroupId) || kitLoanGroupId <= 0) {
+    cleanupUploads();
     return res.status(400).json({ error: 'Kit loan group ID is required.' });
   }
   if (items.length === 0) {
+    cleanupUploads();
     return res.status(400).json({ error: 'At least one checklist item is required.' });
   }
 
@@ -1907,11 +1976,13 @@ app.post('/api/return-kit', requireLogin, async (req, res) => {
       );
 
   if (existing.length === 0) {
+    cleanupUploads();
     return res.status(404).json({ error: 'Kit loan request not found or not owned by user.' });
   }
 
   const activeLoans = existing.filter((loan) => loan.status === 'active');
   if (activeLoans.length === 0) {
+    cleanupUploads();
     return res.status(400).json({ error: 'No active items to return for this kit request.' });
   }
 
@@ -1922,7 +1993,15 @@ app.post('/api/return-kit', requireLogin, async (req, res) => {
   const coversEveryActiveItem = activeLoanIds.size === submittedIds.size
     && [...activeLoanIds].every((id) => submittedIds.has(id));
   if (!coversEveryActiveItem) {
+    cleanupUploads();
     return res.status(400).json({ error: 'The checklist must include every active item in this kit request.' });
+  }
+
+  // Each item's photo, if any, is uploaded under a field named `photo_<loanId>`.
+  const photoByLoanId = new Map();
+  for (const file of uploadedFiles) {
+    const match = /^photo_(\d+)$/.exec(file.fieldname);
+    if (match) photoByLoanId.set(Number(match[1]), file);
   }
 
   // Validate every item's condition text before applying any changes, so the
@@ -1932,19 +2011,28 @@ app.post('/api/return-kit', requireLogin, async (req, res) => {
     const submitted = items.find((item) => Number(item.loanId) === loan.id);
     const conditionText = typeof submitted?.condition === 'string' ? submitted.condition.trim() : '';
     if (!conditionText) {
+      cleanupUploads();
       return res.status(400).json({ error: `Condition description is required for every item (missing for loan #${loan.id}).` });
     }
     if (conditionText.length > 1000) {
+      cleanupUploads();
       return res.status(400).json({ error: `Condition description is too long for loan #${loan.id} (max 1000 characters).` });
     }
     const damaged = ['true', 'on', '1', 'yes'].includes(String(submitted?.damaged || '').trim().toLowerCase());
-    parsedItems.push({ loan, conditionText, damaged });
+    const photoFile = photoByLoanId.get(loan.id) || null;
+    parsedItems.push({ loan, conditionText, damaged, photoFilename: photoFile ? photoFile.filename : null });
   }
 
-  for (const { loan, conditionText, damaged } of parsedItems) {
+  // Any uploaded photo not matched to a submitted checklist item is unused; discard it.
+  const matchedFilenames = new Set(parsedItems.map((item) => item.photoFilename).filter(Boolean));
+  for (const file of uploadedFiles) {
+    if (!matchedFilenames.has(file.filename)) fs.unlink(file.path, () => {});
+  }
+
+  for (const { loan, conditionText, damaged, photoFilename } of parsedItems) {
     await run(
-      'UPDATE loans SET status = ?, returnCondition = ?, returnedAt = CURRENT_TIMESTAMP WHERE id = ?',
-      ['returned', conditionText, loan.id]
+      'UPDATE loans SET status = ?, returnCondition = ?, returnConditionPhotoPath = ?, returnedAt = CURRENT_TIMESTAMP WHERE id = ?',
+      ['returned', conditionText, photoFilename, loan.id]
     );
 
     const description = loan.userId === req.session.userId
@@ -1960,8 +2048,8 @@ app.post('/api/return-kit', requireLogin, async (req, res) => {
       await logActivity(req.session.userId, 'equipment_condition_updated', 'equipment_unit', loan.equipmentUnitId, damageDescription);
 
       await run(
-        'INSERT INTO damage_reports (loanId, equipmentUnitId, reportedByUserId, description) VALUES (?, ?, ?, ?)',
-        [loan.id, loan.equipmentUnitId, req.session.userId, conditionText]
+        'INSERT INTO damage_reports (loanId, equipmentUnitId, reportedByUserId, description, photoPath) VALUES (?, ?, ?, ?, ?)',
+        [loan.id, loan.equipmentUnitId, req.session.userId, conditionText, photoFilename]
       );
     }
   }
@@ -2731,7 +2819,7 @@ function describeKitOutcome({ kitName, createdLoans, summary, onBehalfEmail, ver
 // item is assigned immediately (status 'active') or, per component, held pending
 // approval if that equipment requires it — mirroring single-item borrow/reserve.
 app.post('/api/borrow-kit', requireLogin, async (req, res) => {
-  const { kitId, days, borrowerEmail } = req.body;
+  const { kitId, days, borrowerEmail, checklist } = req.body;
   if (!kitId || !days) {
     return res.status(400).json({ error: 'Kit and borrow duration are required.' });
   }
@@ -2763,6 +2851,15 @@ app.post('/api/borrow-kit', requireLogin, async (req, res) => {
   if (kitItemRows.length === 0) {
     return res.status(400).json({ error: 'This kit has no items configured.' });
   }
+
+  // A check-out checklist confirming every component is present and in good
+  // condition is required before any units are assigned, mirroring the
+  // all-or-nothing checklist already required when returning a kit.
+  const checklistResult = validateKitCheckoutChecklist(checklist, kitItemRows);
+  if (checklistResult.error) {
+    return res.status(400).json({ error: checklistResult.error });
+  }
+  const { notesByEquipmentId } = checklistResult;
 
   // Keep each component's unit pool in sync with its configured quantity before checking availability.
   for (const item of kitItemRows) {
@@ -2796,7 +2893,7 @@ app.post('/api/borrow-kit', requireLogin, async (req, res) => {
   }
 
   const { kitLoanGroupId, createdLoans } = await createKitLoanRows({
-    targetUserId, kitId: kit.id, assignments, borrowDate, returnDate
+    targetUserId, kitId: kit.id, assignments, borrowDate, returnDate, notesByEquipmentId
   });
 
   const summary = createdLoans.map((loan) => `${loan.equipmentName} (${loan.code})`).join(', ');
@@ -3047,7 +3144,7 @@ app.get('/api/admin/loans', requireAdmin, async (req, res) => {
     loans = await query(
       `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
               eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status,
-              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt,
+              l.borrowCondition, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt,
               l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN users u ON u.id = l.userId
@@ -3062,7 +3159,7 @@ app.get('/api/admin/loans', requireAdmin, async (req, res) => {
     loans = await query(
       `SELECT l.id, l.userId, u.email AS userEmail, e.name AS equipmentName,
               eu.code AS equipmentCode, l.borrowDate, l.returnDate, l.status,
-              l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt,
+              l.borrowCondition, l.returnCondition, l.returnConditionPhotoPath, l.returnedAt, l.createdAt,
               l.kitId, l.kitLoanGroupId, k.name AS kitName
        FROM loans l
        JOIN users u ON u.id = l.userId

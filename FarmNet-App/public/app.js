@@ -162,6 +162,13 @@ const allPages = ['dashboard', 'rooms', 'equipment', 'notifications', 'settings'
 let isAdminUser = false;
 
 /**
+ * The most recently loaded kit availability list, keyed for lookup by borrowKit()
+ * to build the check-out checklist (which needs each kit's component types).
+ * @type {Array<{ id: number, name: string, items: Array<{ equipmentId: number, equipmentName: string, quantity: number }> }>}
+ */
+let latestKits = [];
+
+/**
  * Apply visual theme to the document.
  * @param {'dark'|'light'|string} theme
  */
@@ -533,32 +540,47 @@ async function reserveEquipment(equipmentId, equipmentName) {
 }
 
 /**
- * Open the kit check-out checklist modal so each assigned component can be verified
- * as received before the confirmation can be dismissed.
- * @param {string} introMessage Summary message from the borrow/reserve response.
- * @param {Array<{ equipmentName: string, code: string, status: 'active'|'pending' }>} items
+ * Pending borrow-kit request awaiting checklist confirmation, or null when the
+ * check-out checklist modal is closed. Set by openKitCheckoutChecklist() and
+ * consumed by the modal's confirm button handler.
+ * @type {{ kitId: number, days: number, borrowerEmail: string }|null}
  */
-function openKitCheckoutChecklist(introMessage, items) {
+let pendingKitCheckout = null;
+
+/**
+ * Open the kit check-out checklist modal so each component can be verified as
+ * present and in good condition before the kit is actually checked out. The
+ * borrow request is only submitted once every item's note is filled in and
+ * the confirm button is pressed.
+ * @param {{ kitId: number, kitName: string, days: number, borrowerEmail: string, items: Array<{ equipmentId: number, equipmentName: string, quantity: number }> }} params
+ */
+function openKitCheckoutChecklist({ kitId, kitName, days, borrowerEmail, items }) {
+  pendingKitCheckout = { kitId, days, borrowerEmail };
+
   const modal = document.getElementById('kit-checkout-checklist-modal');
-  document.getElementById('kit-checkout-checklist-intro').textContent = introMessage;
+  document.getElementById('kit-checkout-checklist-intro').textContent =
+    `Confirm each component of the ${kitName} kit is present and in good condition before checking out.`;
+  document.getElementById('kit-checkout-checklist-error').textContent = '';
 
   const container = document.getElementById('kit-checkout-checklist-items');
-  container.innerHTML = items.map((item, index) => `
-    <label class="checkbox-label checklist-item">
-      <input type="checkbox" data-checklist-item="${index}" />
-      ${item.equipmentName} (${item.code})${item.status === 'pending' ? ' — pending approval' : ''}
-    </label>
+  container.innerHTML = items.map((item) => `
+    <div class="checklist-item" data-equipment-id="${item.equipmentId}">
+      <strong>${item.equipmentName} × ${item.quantity}</strong>
+      <label>Condition on checkout <span style="color:var(--danger)">*</span>
+        <textarea data-field="note" rows="2" maxlength="1000" required placeholder="Confirm present and in good condition…"></textarea>
+      </label>
+    </div>
   `).join('');
 
   const confirmBtn = document.getElementById('kit-checkout-checklist-confirm');
 
   function updateConfirmState() {
-    const boxes = container.querySelectorAll('input[type="checkbox"]');
-    confirmBtn.disabled = boxes.length === 0 || ![...boxes].every((box) => box.checked);
+    const notes = container.querySelectorAll('textarea[data-field="note"]');
+    confirmBtn.disabled = notes.length === 0 || ![...notes].every((note) => note.value.trim());
   }
 
-  container.querySelectorAll('input[type="checkbox"]').forEach((box) => {
-    box.addEventListener('change', updateConfirmState);
+  container.querySelectorAll('textarea[data-field="note"]').forEach((note) => {
+    note.addEventListener('input', updateConfirmState);
   });
   updateConfirmState();
 
@@ -566,7 +588,10 @@ function openKitCheckoutChecklist(introMessage, items) {
 }
 
 /**
- * Trigger a kit borrow request for the selected kit.
+ * Trigger a kit borrow request for the selected kit. Prompts for the borrow
+ * duration and (for admins) who to borrow on behalf of, then opens the
+ * check-out checklist -- the kit isn't actually borrowed until that checklist
+ * is confirmed.
  * @param {number} kitId Kit identifier.
  * @param {string} kitName Kit display name.
  */
@@ -581,25 +606,19 @@ async function borrowKit(kitId, kitName) {
     borrowerEmail = input.trim();
   }
 
-  const result = await requestJson('/api/borrow-kit', {
-    method: 'POST',
-    body: JSON.stringify({ kitId, days: Number(days), borrowerEmail })
-  });
-
-  if (result.error) {
-    alert(result.error);
+  const kit = latestKits.find((entry) => entry.id === kitId);
+  if (!kit || !Array.isArray(kit.items) || kit.items.length === 0) {
+    alert('Unable to load this kit\'s components. Please refresh and try again.');
     return;
   }
 
-  openKitCheckoutChecklist(result.message, result.items || []);
-  await refreshDashboard(bookingFilter.value);
-  if (activePage === 'admin') {
-    await adminPage.load();
-  }
+  openKitCheckoutChecklist({ kitId, kitName, days: Number(days), borrowerEmail, items: kit.items });
 }
 
 /**
- * Reserve a kit for a future start date.
+ * Reserve a kit for a future start date. Reservations are a future-dated hold
+ * rather than a physical checkout, so no check-out checklist applies here --
+ * that happens when the kit is actually borrowed.
  * @param {number} kitId
  * @param {string} kitName
  */
@@ -631,7 +650,7 @@ async function reserveKit(kitId, kitName) {
     return;
   }
 
-  openKitCheckoutChecklist(result.message, result.items || []);
+  alert(result.message);
   await refreshDashboard(bookingFilter.value);
   if (activePage === 'admin') {
     await adminPage.load();
@@ -679,6 +698,9 @@ function openKitReturnChecklist(kitLoanGroupId, items) {
       <label class="checkbox-label">
         <input type="checkbox" data-field="damaged" />
         Flag this item as damaged
+      </label>
+      <label>Photo (optional)
+        <input type="file" data-field="photo" accept="image/*" />
       </label>
     </div>
   `).join('');
@@ -912,7 +934,8 @@ async function refreshDashboard(statusFilter = 'active') {
   } else {
     roomsPage.render(resources.rooms || []);
     equipmentPage.render(resources.equipment || []);
-    equipmentKitsPage.render(resources.kits || []);
+    latestKits = resources.kits || [];
+    equipmentKitsPage.render(latestKits);
   }
 
   if (requests.error) {
@@ -1065,13 +1088,55 @@ returnLoanForm.addEventListener('submit', async (event) => {
 
 /**
  * Kit check-out checklist modal controls.
- * The confirm button is enabled by openKitCheckoutChecklist() once every item is checked.
+ * The confirm button is enabled by openKitCheckoutChecklist() once every item's
+ * condition note is filled in, and submits the borrow request with that checklist.
  */
 const kitCheckoutChecklistModal = document.getElementById('kit-checkout-checklist-modal');
 const kitCheckoutChecklistConfirmBtn = document.getElementById('kit-checkout-checklist-confirm');
+const kitCheckoutChecklistCancelBtn = document.getElementById('kit-checkout-checklist-cancel');
 
-kitCheckoutChecklistConfirmBtn.addEventListener('click', () => {
+kitCheckoutChecklistCancelBtn.addEventListener('click', () => {
+  pendingKitCheckout = null;
   kitCheckoutChecklistModal.classList.add('hidden');
+});
+
+kitCheckoutChecklistModal.addEventListener('click', (event) => {
+  if (event.target === kitCheckoutChecklistModal) {
+    pendingKitCheckout = null;
+    kitCheckoutChecklistModal.classList.add('hidden');
+  }
+});
+
+kitCheckoutChecklistConfirmBtn.addEventListener('click', async () => {
+  if (!pendingKitCheckout) return;
+  const errorEl = document.getElementById('kit-checkout-checklist-error');
+  errorEl.textContent = '';
+
+  const itemRows = document.querySelectorAll('#kit-checkout-checklist-items .checklist-item');
+  const checklist = [...itemRows].map((row) => ({
+    equipmentId: Number(row.dataset.equipmentId),
+    note: row.querySelector('[data-field="note"]').value.trim()
+  }));
+
+  kitCheckoutChecklistConfirmBtn.disabled = true;
+  const result = await requestJson('/api/borrow-kit', {
+    method: 'POST',
+    body: JSON.stringify({ ...pendingKitCheckout, checklist })
+  });
+  kitCheckoutChecklistConfirmBtn.disabled = false;
+
+  if (result.error) {
+    errorEl.textContent = result.error;
+    return;
+  }
+
+  pendingKitCheckout = null;
+  kitCheckoutChecklistModal.classList.add('hidden');
+  alert(result.message);
+  await refreshDashboard(bookingFilter.value);
+  if (activePage === 'admin') {
+    await adminPage.load();
+  }
 });
 
 /**
@@ -1112,22 +1177,38 @@ kitReturnChecklistForm.addEventListener('submit', async (event) => {
   const itemRows = document.querySelectorAll('#kit-return-checklist-items .checklist-item');
 
   const items = [];
+  const photoFiles = [];
   for (const row of itemRows) {
     const loanId = Number(row.dataset.loanId);
     const condition = row.querySelector('[data-field="condition"]').value.trim();
     const damaged = row.querySelector('[data-field="damaged"]').checked;
+    const photoFile = row.querySelector('[data-field="photo"]').files[0];
 
     if (!condition) {
       errorEl.textContent = 'Please describe the condition for every item before submitting.';
       return;
     }
     items.push({ loanId, condition, damaged });
+    if (photoFile) photoFiles.push({ loanId, photoFile });
   }
 
-  const result = await requestJson('/api/return-kit', {
+  const formData = new FormData();
+  formData.append('kitLoanGroupId', String(kitLoanGroupId));
+  formData.append('items', JSON.stringify(items));
+  for (const { loanId, photoFile } of photoFiles) {
+    formData.append(`photo_${loanId}`, photoFile);
+  }
+
+  const submitBtn = kitReturnChecklistForm.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+
+  const response = await fetch('/api/return-kit', {
     method: 'POST',
-    body: JSON.stringify({ kitLoanGroupId, items })
+    body: formData,
+    credentials: 'include'
   });
+  const result = await response.json();
+  submitBtn.disabled = false;
 
   if (result.error) {
     errorEl.textContent = result.error;

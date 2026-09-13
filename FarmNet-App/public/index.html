@@ -325,15 +325,18 @@
     </div>
   </div>
 
-  <!-- Kit check-out checklist modal: shown after borrowing/reserving a kit so each
-       component can be verified as received before the modal can be dismissed. -->
+  <!-- Kit check-out checklist modal: shown before borrowing a kit so each component
+       can be verified as present and in good condition before the kit is checked out.
+       The kit is only borrowed once this checklist is submitted successfully. -->
   <div id="kit-checkout-checklist-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="kit-checkout-checklist-title">
     <div class="modal-dialog card">
       <h3 id="kit-checkout-checklist-title">Verify Kit Items</h3>
       <p id="kit-checkout-checklist-intro"></p>
       <div id="kit-checkout-checklist-items" class="checklist-items"></div>
+      <div id="kit-checkout-checklist-error" class="form-error"></div>
       <div class="form-actions">
-        <button type="button" id="kit-checkout-checklist-confirm" disabled>Confirm all items received</button>
+        <button type="button" id="kit-checkout-checklist-confirm" disabled>Confirm and check out</button>
+        <button type="button" id="kit-checkout-checklist-cancel" class="secondary">Cancel</button>
       </div>
     </div>
   </div>
