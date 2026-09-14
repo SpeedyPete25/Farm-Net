@@ -525,6 +525,24 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const bookingId = allRequests.body.bookings[0].id;
 
+    // Booking creation queues a notification (content + audit trail; nothing is
+    // actually emailed by this test suite, only the outbox entry is verified).
+    const adminEmail = uniqueEmail('booking-notify-admin');
+    const adminClient = new TestClient(baseUrl);
+    await registerUser(adminClient, adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+    await loginUser(adminClient, adminEmail, password);
+
+    const outboxAfterCreate = await adminClient.request('/api/admin/notifications/outbox');
+    assert.equal(outboxAfterCreate.status, 200);
+    const createdEntry = outboxAfterCreate.body.entries.find((entry) => (
+      entry.notificationType === 'booking_created' &&
+      entry.resourceId === bookingId &&
+      entry.recipientEmail === email
+    ));
+    assert.ok(createdEntry, 'Expected a booking_created notification for the new booking.');
+    assert.match(createdEntry.subject, /Booking confirmed/);
+
     const edited = await client.request('/api/edit-booking', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -550,6 +568,15 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const afterCancel = await client.request('/api/my-requests?status=all');
     assert.equal(afterCancel.body.bookings[0].status, 'cancelled');
+
+    const outboxAfterCancel = await adminClient.request('/api/admin/notifications/outbox');
+    const cancelledEntry = outboxAfterCancel.body.entries.find((entry) => (
+      entry.notificationType === 'booking_cancelled' &&
+      entry.resourceId === bookingId &&
+      entry.recipientEmail === email
+    ));
+    assert.ok(cancelledEntry, 'Expected a booking_cancelled notification for the cancelled booking.');
+    assert.match(cancelledEntry.subject, /Booking cancelled/);
   });
 
   await t.test('supports recurring room bookings and cancelling a whole series', async () => {
@@ -601,6 +628,21 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.ok(seriesId);
     assert.ok(afterCreate.body.bookings.every((booking) => booking.seriesId === seriesId));
 
+    // A recurring series creates one summary notification (not one per occurrence).
+    const adminEmail = uniqueEmail('recurring-notify-admin');
+    const adminClient = new TestClient(baseUrl);
+    await registerUser(adminClient, adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+    await loginUser(adminClient, adminEmail, password);
+
+    const outboxAfterSeriesCreate = await adminClient.request('/api/admin/notifications/outbox');
+    const seriesCreatedEntries = outboxAfterSeriesCreate.body.entries.filter((entry) => (
+      entry.notificationType === 'booking_created' && entry.recipientEmail === email
+    ));
+    assert.equal(seriesCreatedEntries.length, 1);
+    assert.match(seriesCreatedEntries[0].subject, /Booking confirmed/);
+    assert.match(seriesCreatedEntries[0].body, /3 occurrences/);
+
     const expectedDates = [startDate, formatDateFromToday(37), formatDateFromToday(44)].sort();
     const actualDates = afterCreate.body.bookings.map((booking) => booking.date).sort();
     assert.deepEqual(actualDates, expectedDates);
@@ -638,6 +680,14 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const afterCancel = await client.request('/api/my-requests?status=all');
     assert.ok(afterCancel.body.bookings.every((booking) => booking.status === 'cancelled'));
+
+    // Cancelling the series also queues one summary cancellation notification.
+    const outboxAfterSeriesCancel = await adminClient.request('/api/admin/notifications/outbox');
+    const seriesCancelledEntries = outboxAfterSeriesCancel.body.entries.filter((entry) => (
+      entry.notificationType === 'booking_cancelled' && entry.recipientEmail === email
+    ));
+    assert.equal(seriesCancelledEntries.length, 1);
+    assert.match(seriesCancelledEntries[0].body, /3 upcoming occurrences/);
   });
 
   await t.test('reports a stable occurrence position and total for each series booking', async () => {
@@ -1010,6 +1060,18 @@ test('automated integration coverage for critical flows', async (t) => {
     const afterCancelSeries = await adminClient.request('/api/admin/bookings?status=all');
     const cancelledBookings = afterCancelSeries.body.bookings.filter((b) => b.seriesId === approveSeriesId);
     assert.ok(cancelledBookings.every((b) => b.status === 'cancelled'));
+
+    // An admin cancelling on the owner's behalf notifies the owner, not the admin,
+    // and says so explicitly in the body.
+    const outboxAfterAdminSeriesCancel = await adminClient.request('/api/admin/notifications/outbox');
+    const adminCancelledEntry = outboxAfterAdminSeriesCancel.body.entries.find((entry) => (
+      entry.notificationType === 'booking_cancelled' &&
+      entry.resourceId === approveSeriesId &&
+      entry.recipientEmail === memberEmail
+    ));
+    assert.ok(adminCancelledEntry, 'Expected a booking_cancelled notification addressed to the booking owner.');
+    assert.match(adminCancelledEntry.body, /cancelled by an administrator/);
+    assert.match(adminCancelledEntry.body, new RegExp(adminEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
     // Cancelling again finds nothing upcoming left.
     const cancelAgain = await adminClient.request(`/api/admin/bookings/series/${approveSeriesId}/cancel`, { method: 'POST' });

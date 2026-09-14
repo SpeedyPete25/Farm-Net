@@ -969,6 +969,53 @@ async function persistSentNotificationAuditEntry(outboxEntry, recordedBy = {}) {
 }
 
 /**
+ * Build and queue a "booking created" notification for the booking owner. Covers
+ * both a single booking and a whole recurring series created in one request.
+ * @param {{ userId: number, recipientEmail: string, room: { id: number, name: string, location?: string }, bookingId: number, date: string, startTime: string, durationHours: number, status: 'active'|'pending', isRecurring?: boolean, occurrenceCount?: number, frequency?: string }} params
+ * @returns {Promise<void>}
+ */
+async function queueBookingCreatedNotification({ userId, recipientEmail, room, bookingId, date, startTime, durationHours, status, isRecurring, occurrenceCount, frequency }) {
+  const roomLabel = `${room.name}${room.location ? ` (${room.location})` : ''}`;
+  const scheduleLine = isRecurring
+    ? `${occurrenceCount} occurrences starting ${date} at ${startTime}, repeating ${frequency}, ${durationHours} hour(s) each`
+    : `${date} at ${startTime} for ${durationHours} hour(s)`;
+
+  const subject = status === 'pending'
+    ? `Booking request submitted: ${roomLabel}`
+    : `Booking confirmed: ${roomLabel}`;
+  const body = status === 'pending'
+    ? `Hello ${recipientEmail},\n\nYour booking request for ${roomLabel} (${scheduleLine}) has been submitted and is awaiting admin approval.\n\nBooking #${bookingId}`
+    : `Hello ${recipientEmail},\n\nYour booking for ${roomLabel} (${scheduleLine}) has been confirmed.\n\nBooking #${bookingId}`;
+
+  await persistNotificationOutboxEntries('booking_created', [{
+    userId, recipientEmail, roomId: room.id, bookingId, date, startTime, subject, body
+  }]);
+}
+
+/**
+ * Build and queue a "booking cancelled" notification for the booking owner, whether
+ * cancelled by the owner themselves or by an admin on their behalf.
+ * @param {{ userId: number, recipientEmail: string, room: { id: number, name: string, location?: string }, bookingId: number, date: string, startTime: string, cancelledByEmail?: string|null, occurrenceCount?: number }} params
+ * @returns {Promise<void>}
+ */
+async function queueBookingCancelledNotification({ userId, recipientEmail, room, bookingId, date, startTime, cancelledByEmail, occurrenceCount }) {
+  const roomLabel = `${room.name}${room.location ? ` (${room.location})` : ''}`;
+  const isSelfCancel = !cancelledByEmail || cancelledByEmail === recipientEmail;
+  const scheduleLine = occurrenceCount > 1
+    ? `${occurrenceCount} upcoming occurrences starting ${date} at ${startTime}`
+    : `${date} at ${startTime}`;
+
+  const subject = `Booking cancelled: ${roomLabel}`;
+  const body = isSelfCancel
+    ? `Hello ${recipientEmail},\n\nYour booking for ${roomLabel} (${scheduleLine}) has been cancelled.\n\nBooking #${bookingId}`
+    : `Hello ${recipientEmail},\n\nYour booking for ${roomLabel} (${scheduleLine}) was cancelled by an administrator (${cancelledByEmail}).\n\nBooking #${bookingId}`;
+
+  await persistNotificationOutboxEntries('booking_cancelled', [{
+    userId, recipientEmail, roomId: room.id, bookingId, date, startTime, subject, body
+  }]);
+}
+
+/**
  * Generate notification content for equipment that is due within the next
  * `thresholdDays` days (inclusive). This only generates the content — it does
  * not send emails.
@@ -1986,6 +2033,19 @@ app.post('/api/cancel-booking', requireLogin, async (req, res) => {
   const description = `Cancelled booking for ${booking.date} at ${booking.startTime}`;
   await logActivity(req.session.userId, 'booking_cancelled', 'booking', bookingId, description);
 
+  const roomRows = await query('SELECT id, name, location FROM rooms WHERE id = ?', [booking.roomId]);
+  if (roomRows.length > 0) {
+    await queueBookingCancelledNotification({
+      userId: req.session.userId,
+      recipientEmail: req.session.email,
+      room: roomRows[0],
+      bookingId,
+      date: booking.date,
+      startTime: booking.startTime,
+      cancelledByEmail: null
+    });
+  }
+
   res.json({ message: 'Booking cancelled successfully.' });
 });
 
@@ -2558,6 +2618,20 @@ app.post('/api/book-room', requireLogin, async (req, res) => {
       : `Booked ${room.name} on ${date} at ${startTime} for ${duration} hours`);
   await logActivity(req.session.userId, status === 'pending' ? 'booking_requested' : 'booking_created', 'booking', createdIds[0], description);
 
+  await queueBookingCreatedNotification({
+    userId: req.session.userId,
+    recipientEmail: req.session.email,
+    room,
+    bookingId: createdIds[0],
+    date,
+    startTime,
+    durationHours: duration,
+    status,
+    isRecurring,
+    occurrenceCount: occurrenceDates.length,
+    frequency: isRecurring ? recurrence.frequency : null
+  });
+
   res.json({
     message: status === 'pending'
       ? (isRecurring
@@ -2581,8 +2655,9 @@ app.post('/api/cancel-booking-series', requireLogin, async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const occurrences = await query(
-    `SELECT id FROM bookings
-     WHERE seriesId = ? AND userId = ? AND status IN ('active', 'pending') AND date >= ?`,
+    `SELECT id, roomId, date, startTime FROM bookings
+     WHERE seriesId = ? AND userId = ? AND status IN ('active', 'pending') AND date >= ?
+     ORDER BY date ASC, startTime ASC`,
     [seriesId, req.session.userId, today]
   );
 
@@ -2595,6 +2670,21 @@ app.post('/api/cancel-booking-series', requireLogin, async (req, res) => {
 
   const description = `Cancelled ${ids.length} upcoming occurrence(s) of recurring booking series #${seriesId}`;
   await logActivity(req.session.userId, 'booking_series_cancelled', 'booking', seriesId, description);
+
+  const earliest = occurrences[0];
+  const roomRows = await query('SELECT id, name, location FROM rooms WHERE id = ?', [earliest.roomId]);
+  if (roomRows.length > 0) {
+    await queueBookingCancelledNotification({
+      userId: req.session.userId,
+      recipientEmail: req.session.email,
+      room: roomRows[0],
+      bookingId: seriesId,
+      date: earliest.date,
+      startTime: earliest.startTime,
+      cancelledByEmail: null,
+      occurrenceCount: ids.length
+    });
+  }
 
   res.json({ message: `Cancelled ${ids.length} upcoming booking(s) in the series.` });
 });
@@ -3319,7 +3409,7 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
   }
 
   const rows = await query(
-    `SELECT b.id, b.userId, b.date, b.startTime, b.status, u.email AS userEmail
+    `SELECT b.id, b.userId, b.roomId, b.date, b.startTime, b.status, u.email AS userEmail
      FROM bookings b
      JOIN users u ON u.id = b.userId
      WHERE b.id = ?`,
@@ -3344,6 +3434,19 @@ app.post('/api/admin/bookings/:id/cancel', requireAdmin, async (req, res) => {
 
   const description = `${req.session.email} cancelled booking #${bookingId} for ${booking.userEmail} (${booking.date} ${booking.startTime})`;
   await logActivity(req.session.userId, 'admin_booking_cancelled', 'booking', bookingId, description);
+
+  const roomRows = await query('SELECT id, name, location FROM rooms WHERE id = ?', [booking.roomId]);
+  if (roomRows.length > 0) {
+    await queueBookingCancelledNotification({
+      userId: booking.userId,
+      recipientEmail: booking.userEmail,
+      room: roomRows[0],
+      bookingId,
+      date: booking.date,
+      startTime: booking.startTime,
+      cancelledByEmail: req.session.email
+    });
+  }
 
   res.json({ message: 'Booking cancelled successfully.' });
 });
@@ -3424,10 +3527,11 @@ app.post('/api/admin/bookings/series/:seriesId/cancel', requireAdmin, async (req
 
   const today = new Date().toISOString().slice(0, 10);
   const rows = await query(
-    `SELECT b.id, u.email AS userEmail
+    `SELECT b.id, b.userId, b.roomId, b.date, b.startTime, u.email AS userEmail
      FROM bookings b
      JOIN users u ON u.id = b.userId
-     WHERE b.seriesId = ? AND b.status IN ('active', 'pending') AND b.date >= ?`,
+     WHERE b.seriesId = ? AND b.status IN ('active', 'pending') AND b.date >= ?
+     ORDER BY b.date ASC, b.startTime ASC`,
     [seriesId, today]
   );
 
@@ -3440,6 +3544,21 @@ app.post('/api/admin/bookings/series/:seriesId/cancel', requireAdmin, async (req
 
   const description = `${req.session.email} cancelled ${ids.length} upcoming occurrence(s) of recurring booking series #${seriesId} for ${rows[0].userEmail}`;
   await logActivity(req.session.userId, 'admin_booking_series_cancelled', 'booking', seriesId, description);
+
+  const earliest = rows[0];
+  const roomRows = await query('SELECT id, name, location FROM rooms WHERE id = ?', [earliest.roomId]);
+  if (roomRows.length > 0) {
+    await queueBookingCancelledNotification({
+      userId: earliest.userId,
+      recipientEmail: earliest.userEmail,
+      room: roomRows[0],
+      bookingId: seriesId,
+      date: earliest.date,
+      startTime: earliest.startTime,
+      cancelledByEmail: req.session.email,
+      occurrenceCount: ids.length
+    });
+  }
 
   res.json({ message: `Cancelled ${ids.length} upcoming booking(s) in the series.` });
 });
