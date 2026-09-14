@@ -32,6 +32,7 @@ const pageRooms = document.getElementById('page-rooms');
 const pageEquipment = document.getElementById('page-equipment');
 const pageSettings = document.getElementById('page-settings');
 const pageAdmin = document.getElementById('page-admin');
+const pageReports = document.getElementById('page-reports');
 const pageOutbox = document.getElementById('page-outbox');
 const pageNotifications = document.getElementById('page-notifications');
 const pageRoomManagement = document.getElementById('page-room-management');
@@ -78,6 +79,11 @@ const roomUsageEnd = document.getElementById('room-usage-end');
 const roomUsageGenerate = document.getElementById('room-usage-generate');
 const roomUsageExport = document.getElementById('room-usage-export');
 const roomUsageList = document.getElementById('room-usage-list');
+const equipmentUsageStart = document.getElementById('equipment-usage-start');
+const equipmentUsageEnd = document.getElementById('equipment-usage-end');
+const equipmentUsageGenerate = document.getElementById('equipment-usage-generate');
+const equipmentUsageExport = document.getElementById('equipment-usage-export');
+const equipmentUsageList = document.getElementById('equipment-usage-list');
 
 // Room management controls.
 const roomManagementList = document.getElementById('room-management-list');
@@ -152,9 +158,9 @@ const themeSettingsSuccess = document.getElementById('theme-settings-success');
 
 /**
  * Allowed route fragments used for hash routing and page switching.
- * @type {Array<'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'outbox'|'room-management'|'equipment-management'>}
+ * @type {Array<'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'reports'|'outbox'|'room-management'|'equipment-management'>}
  */
-const allPages = ['dashboard', 'rooms', 'equipment', 'notifications', 'settings', 'admin', 'outbox', 'room-management', 'equipment-management'];
+const allPages = ['dashboard', 'rooms', 'equipment', 'notifications', 'settings', 'admin', 'reports', 'outbox', 'room-management', 'equipment-management'];
 
 /**
  * True when the authenticated profile has admin role.
@@ -184,7 +190,7 @@ applyTheme('dark');
 
 /**
  * Resolve the active page from URL hash.
- * @returns {'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'outbox'|'room-management'|'equipment-management'}
+ * @returns {'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'reports'|'outbox'|'room-management'|'equipment-management'}
  */
 function getPageFromHash() {
   const hashPage = window.location.hash.replace('#', '').trim();
@@ -220,13 +226,13 @@ function resetErrors() {
 
 /**
  * Switch the visible dashboard sub-page and optionally sync URL hash.
- * @param {'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'outbox'|'room-management'|'equipment-management'} page Target page.
+ * @param {'dashboard'|'rooms'|'equipment'|'notifications'|'settings'|'admin'|'reports'|'outbox'|'room-management'|'equipment-management'} page Target page.
  * @param {{ updateHash?: boolean }} [options={}] Options for hash behavior.
  */
 function setActivePage(page, options = {}) {
   const updateHash = options.updateHash !== false;
   const requestedPage = allPages.includes(page) ? page : 'dashboard';
-  const adminOnlyPages = ['admin', 'outbox', 'room-management', 'equipment-management'];
+  const adminOnlyPages = ['admin', 'reports', 'outbox', 'room-management', 'equipment-management'];
   const nextPage = adminOnlyPages.includes(requestedPage) && !isAdminUser ? 'dashboard' : requestedPage;
   activePage = nextPage;
 
@@ -235,6 +241,7 @@ function setActivePage(page, options = {}) {
   pageEquipment.classList.toggle('hidden', nextPage !== 'equipment');
   pageSettings.classList.toggle('hidden', nextPage !== 'settings');
   pageAdmin.classList.toggle('hidden', nextPage !== 'admin');
+  pageReports.classList.toggle('hidden', nextPage !== 'reports');
   pageOutbox.classList.toggle('hidden', nextPage !== 'outbox');
   pageNotifications.classList.toggle('hidden', nextPage !== 'notifications');
   pageRoomManagement.classList.toggle('hidden', nextPage !== 'room-management');
@@ -245,6 +252,7 @@ function setActivePage(page, options = {}) {
   navEquipment.classList.toggle('active', nextPage === 'equipment');
   navSettings.classList.toggle('active', nextPage === 'settings');
   navAdmin.classList.toggle('active', nextPage === 'admin');
+  if (navReports) navReports.classList.toggle('active', nextPage === 'reports');
   navOutbox.classList.toggle('active', nextPage === 'outbox');
   navNotifications.classList.toggle('active', nextPage === 'notifications');
   navRoomManagement.classList.toggle('active', nextPage === 'room-management');
@@ -260,6 +268,23 @@ function setActivePage(page, options = {}) {
 
   if (nextPage === 'admin' && isAdminUser) {
     adminPage.load();
+  }
+
+  if (nextPage === 'reports' && isAdminUser) {
+    if (roomUsageStart && roomUsageEnd && !roomUsageStart.value && !roomUsageEnd.value) {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      roomUsageStart.value = start.toISOString().slice(0, 10);
+      roomUsageEnd.value = today.toISOString().slice(0, 10);
+    }
+    if (equipmentUsageStart && equipmentUsageEnd && !equipmentUsageStart.value && !equipmentUsageEnd.value) {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      equipmentUsageStart.value = start.toISOString().slice(0, 10);
+      equipmentUsageEnd.value = today.toISOString().slice(0, 10);
+    }
   }
 
   if (nextPage === 'outbox' && isAdminUser) {
@@ -813,6 +838,11 @@ const adminPage = createAdminPage({
   roomUsageGenerate,
   roomUsageExport,
   roomUsageList,
+  equipmentUsageStart,
+  equipmentUsageEnd,
+  equipmentUsageGenerate,
+  equipmentUsageExport,
+  equipmentUsageList,
   requestJson,
   onReturnLoan: returnLoan
 });
@@ -1300,17 +1330,13 @@ navOutbox.addEventListener('click', () => {
   setActivePage('outbox');
 });
 
-// Navigate to Reports (open Admin and scroll to reports section)
+// Navigate to the dedicated reports tab if the user is authorized.
 if (navReports) navReports.addEventListener('click', () => {
   if (!isAdminUser) {
     setActivePage('dashboard');
     return;
   }
-  setActivePage('admin');
-  setTimeout(() => {
-    const el = document.getElementById('room-usage-section');
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, 120);
+  setActivePage('reports');
 });
 
 /**

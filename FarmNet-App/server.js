@@ -4984,6 +4984,76 @@ app.get('/api/reports/room-usage', requireAdmin, async (req, res) => {
   }
 });
 
+// Generate equipment usage report for a date range. Admin only.
+// Query params: ?start=YYYY-MM-DD&end=YYYY-MM-DD
+app.get('/api/reports/equipment-usage', requireAdmin, async (req, res) => {
+  const start = String(req.query.start || '').trim();
+  const end = String(req.query.end || '').trim();
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(start) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query parameters are required in YYYY-MM-DD format.' });
+  }
+  if (start > end) return res.status(400).json({ error: 'start must be <= end.' });
+
+  try {
+    const rows = await query(
+      `SELECT l.id, l.userId, l.equipmentId, e.name AS equipmentName, l.borrowDate, l.returnDate
+       FROM loans l
+       JOIN equipment e ON e.id = l.equipmentId
+       WHERE l.equipmentId IS NOT NULL
+         AND l.borrowDate <= ?
+         AND l.returnDate >= ?
+         AND l.status IN ('active', 'returned', 'pending')
+       ORDER BY e.name ASC, l.borrowDate ASC`,
+      [end, start]
+    );
+
+    const equipmentMap = new Map();
+    for (const row of rows) {
+      const equipmentId = Number(row.equipmentId);
+      const equipmentName = row.equipmentName || 'Unknown equipment';
+      const overlapStart = new Date(`${row.borrowDate}T00:00:00Z`);
+      const overlapEnd = new Date(`${row.returnDate}T00:00:00Z`);
+      const rangeStart = new Date(`${start}T00:00:00Z`);
+      const rangeEnd = new Date(`${end}T00:00:00Z`);
+      const effectiveStart = overlapStart > rangeStart ? overlapStart : rangeStart;
+      const effectiveEnd = overlapEnd < rangeEnd ? overlapEnd : rangeEnd;
+      const totalBorrowedDays = effectiveStart <= effectiveEnd
+        ? Math.round((effectiveEnd.getTime() - effectiveStart.getTime()) / 86400000) + 1
+        : 0;
+
+      if (!equipmentMap.has(equipmentId)) {
+        equipmentMap.set(equipmentId, {
+          equipmentId,
+          equipmentName,
+          totalLoans: 0,
+          totalBorrowedDays: 0,
+          uniqueBorrowers: new Set()
+        });
+      }
+
+      const current = equipmentMap.get(equipmentId);
+      current.totalLoans += 1;
+      current.totalBorrowedDays += totalBorrowedDays;
+      current.uniqueBorrowers.add(Number(row.userId));
+    }
+
+    const equipment = Array.from(equipmentMap.values())
+      .map((entry) => ({
+        equipmentId: entry.equipmentId,
+        equipmentName: entry.equipmentName,
+        totalLoans: entry.totalLoans,
+        totalBorrowedDays: entry.totalBorrowedDays,
+        uniqueBorrowers: entry.uniqueBorrowers.size
+      }))
+      .sort((a, b) => a.equipmentName.localeCompare(b.equipmentName));
+
+    res.json({ start, end, equipment });
+  } catch (err) {
+    console.error('Failed to generate equipment usage report:', err);
+    res.status(500).json({ error: 'Failed to generate equipment usage report' });
+  }
+});
+
 // Generate escalating overdue notifications for all users (admin only).
 app.get('/api/notifications/overdue-escalations', requireAdmin, async (req, res) => {
   const levelsParam = String(req.query.levels || '').trim();

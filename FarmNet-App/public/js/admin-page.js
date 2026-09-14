@@ -110,7 +110,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -937,6 +937,7 @@ export function createAdminPage(deps) {
 
   // Room usage report state
   let lastRoomReport = null;
+  let lastEquipmentReport = null;
 
   function renderRoomUsage(report) {
     if (!roomUsageList) return;
@@ -1036,6 +1037,95 @@ export function createAdminPage(deps) {
     URL.revokeObjectURL(url);
   }
 
+  function renderEquipmentUsage(report) {
+    if (!equipmentUsageList) return;
+    if (!report || !Array.isArray(report.equipment) || report.equipment.length === 0) {
+      renderListState(equipmentUsageList, { kind: 'empty', message: 'No equipment usage data for the selected range.' });
+      return;
+    }
+
+    equipmentUsageList.innerHTML = '';
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Equipment</th>
+          <th>Total Loans</th>
+          <th>Total Borrowed Days</th>
+          <th>Unique Borrowers</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    report.equipment.forEach((entry) => {
+      const row = document.createElement('tr');
+      const name = document.createElement('td'); name.textContent = entry.equipmentName || '-';
+      const loans = document.createElement('td'); loans.textContent = String(entry.totalLoans || 0);
+      const borrowedDays = document.createElement('td'); borrowedDays.textContent = String(entry.totalBorrowedDays || 0);
+      const borrowers = document.createElement('td'); borrowers.textContent = String(entry.uniqueBorrowers || 0);
+
+      row.appendChild(name);
+      row.appendChild(loans);
+      row.appendChild(borrowedDays);
+      row.appendChild(borrowers);
+      tbody.appendChild(row);
+    });
+
+    equipmentUsageList.appendChild(table);
+  }
+
+  async function loadEquipmentUsageReport() {
+    if (!equipmentUsageList || !equipmentUsageStart || !equipmentUsageEnd) return;
+    const start = String(equipmentUsageStart.value || '');
+    const end = String(equipmentUsageEnd.value || '');
+    if (!start || !end) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+    renderListState(equipmentUsageList, { kind: 'loading', message: 'Generating report...' });
+    try {
+      const result = await requestJson(`/api/reports/equipment-usage?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+      if (result?.error) {
+        renderListState(equipmentUsageList, { kind: 'error', message: result.error });
+      } else {
+        lastEquipmentReport = result;
+        renderEquipmentUsage(result);
+      }
+    } catch (err) {
+      renderListState(equipmentUsageList, { kind: 'error', message: 'Unable to generate report.' });
+    }
+  }
+
+  function exportEquipmentUsageCsv() {
+    if (!lastEquipmentReport || !Array.isArray(lastEquipmentReport.equipment)) {
+      alert('No report data to export. Generate the report first.');
+      return;
+    }
+    const rows = lastEquipmentReport.equipment;
+    const header = ['Equipment', 'TotalLoans', 'TotalBorrowedDays', 'UniqueBorrowers'];
+    const csvLines = [header.join(',')];
+    rows.forEach((entry) => {
+      const line = [entry.equipmentName, entry.totalLoans, entry.totalBorrowedDays, entry.uniqueBorrowers]
+        .map((v) => String(v).replace(/"/g, '""'))
+        .map((v) => (v.includes(',') || v.includes('\n') ? `"${v}"` : v));
+      csvLines.push(line.join(','));
+    });
+    const csv = csvLines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const filename = `equipment-usage-${lastEquipmentReport.start || ''}_to_${lastEquipmentReport.end || ''}.csv`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   /**
    * Handle clicks in the users table.
    * Uses event delegation to process delete actions from dynamic rows.
@@ -1074,6 +1164,10 @@ export function createAdminPage(deps) {
   // Wire up room usage buttons
   if (roomUsageGenerate) roomUsageGenerate.addEventListener('click', () => loadRoomUsageReport());
   if (roomUsageExport) roomUsageExport.addEventListener('click', () => exportRoomUsageCsv());
+
+  // Wire up equipment usage buttons
+  if (equipmentUsageGenerate) equipmentUsageGenerate.addEventListener('click', () => loadEquipmentUsageReport());
+  if (equipmentUsageExport) equipmentUsageExport.addEventListener('click', () => exportEquipmentUsageCsv());
 
   /**
    * Handle clicks in the bookings table.
