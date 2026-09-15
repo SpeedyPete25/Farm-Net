@@ -75,7 +75,7 @@ What the suite currently covers (`tests/api.integration.test.js`, 24 scenarios):
 - Configurable room policies and the admin room-booking approval workflow.
 - Notification generation and the outbox queue: equipment due-soon persisted to the outbox, and upcoming room-booking notification content (self-service and admin-wide).
 
-Not yet covered by the automated suite (verified manually against a live server during development instead): equipment reservation for a future date, overdue-escalation notification content, the notification outbox status-update/sent-log audit flow, and the room usage report (`/api/reports/room-usage`).
+Not yet covered by the automated suite (verified manually against a live server during development instead): equipment reservation for a future date, overdue-escalation notification content, the notification outbox status-update/sent-log audit flow, and the room and equipment usage reports (`/api/reports/room-usage`, `/api/reports/equipment-usage`).
 
 Browser smoke suite (`tests/browser/smoke.spec.js`, `playwright.config.js`):
 
@@ -98,13 +98,13 @@ npx playwright install chromium
 - Book a room using a date, start time, and duration, in 15-minute increments — as a one-off or as a **daily/weekly/monthly recurring series** (2–52 occurrences). A whole series can be rescheduled or cancelled in one action, and each occurrence shows its position in the series (e.g. "2 of 6").
 - Cancel and edit personal room bookings (future, active/pending bookings only; conflicts are rejected).
 - Rooms can be configured with booking policies: minimum/maximum booking length, a maximum number of bookings per user per week, blackout windows, and whether new bookings require admin approval before becoming active.
-- Borrow or **reserve for a future date** individual equipment items, or a whole **kit** (a named bundle of multiple equipment types) in one request; return it with a required condition note and optional photo. Each physical unit gets a unique code (e.g. `lap001`) assigned at borrow/reserve time, and admins can borrow/return on behalf of another user.
+- Borrow or **reserve for a future date** individual equipment items, or a whole **kit** (a named bundle of multiple equipment types) in one request; return it with a required condition note and optional photo. Each physical unit gets a unique code (e.g. `lap001`) assigned at borrow/reserve time, and admins can borrow/return on behalf of another user. Borrowing a kit requires a check-out **checklist** confirming each component is present and in good condition before the loan is created.
 - Equipment units carry a computed lifecycle state — `available` / `reserved` / `checked-out` / `overdue` / `pending` (awaiting approval) / `in-maintenance` (flagged damaged) — so overdue or damaged units are automatically excluded from what can be borrowed.
-- Return a kit as one **checklist**: every component in the kit is verified and given its own condition note (and optional damage flag) together, rather than being returned as one undifferentiated block.
+- Return a kit as one **checklist**: every component in the kit is verified and given its own condition note (and optional damage flag, and optional photo per item) together, rather than being returned as one undifferentiated block.
 - Flagging equipment as damaged on return creates a linked damage report (with photo), and admins can review all damage reports and clear a unit back to working condition.
 - Individual equipment items, like rooms, can be configured to require admin approval before a loan becomes active.
-- View generated notification content (in-app) for your own equipment due soon, overdue, or upcoming bookings, and admins can generate the same content for every user plus escalating overdue reminders. Creating or cancelling a booking automatically queues a notification for the booking owner. All generated notifications are queued in an outbox for delivery, with an audit trail once an admin marks one sent — no entries are actually emailed yet, since that requires a real SMTP/delivery integration.
-- Admins can generate a room usage report for a date range (bookings, hours booked, unique users, busiest day per room).
+- View your own generated "equipment due soon" notification content on the in-app `Notifications` page. The API also supports self-service overdue-escalation and upcoming-booking content (`/api/notifications/overdue`, `/api/notifications/upcoming-bookings/mine`), though the page doesn't surface those yet. Admins can generate all of that content for every user, and creating or cancelling a booking automatically queues a notification for the booking owner. Every generated notification is queued in an outbox for delivery, with an audit trail once an admin marks one sent — no entries are actually emailed yet, since that requires a real SMTP/delivery integration.
+- Admins can generate a room usage report (bookings, hours booked, unique users, busiest day per room) and an equipment usage report (total loans, total days borrowed, unique borrowers per equipment type) for a date range, both exportable as CSV.
 - Review active and historical bookings, loans, and request status.
 - Change your password and save a light or dark theme preference.
 - Use admin pages to manage users (roles, deletion), bookings (including recurring series), loans, rooms, equipment, equipment kits, damage reports, and audit history.
@@ -114,12 +114,12 @@ npx playwright install chromium
 - `User Bookings`: dashboard showing the signed-in user's bookings and loans, including recurring-series and kit groupings with bulk actions.
 - `Room Bookings`: weekly timetable plus booking form (with recurrence options).
 - `Equipment Loans`: current equipment inventory, kit availability, and borrowing/reserving actions.
-- `Notifications`: the signed-in user's own generated "equipment due soon" and "overdue" notification content.
+- `Notifications`: the signed-in user's own generated "equipment due soon" notification content.
 - `Settings`: password change and theme preference.
 - `User Management`: role management, user creation, user deletion, plus booking (including recurring series), loan, kit-loan, damage report, notification preview, and audit log administration.
 - `Notification Outbox`: admin-only — queued notification payloads awaiting delivery, and the sent-notification audit log.
 - `Room Management` and `Equipment Management`: admin-only inventory administration, including per-room/per-equipment approval policy, blackout window management, and equipment kit definitions.
-- `Reports`: jumps to the room usage report section on the admin page.
+- `Reports`: admin-only — room usage and equipment usage reports for a date range, each exportable as CSV.
 
 ## Project Structure
 
@@ -134,7 +134,7 @@ npx playwright install chromium
 - `public/js/equipment-kits-page.js`: kit availability, and borrow/reserve actions.
 - `public/js/notifications-page.js`: the signed-in user's own generated notification content.
 - `public/js/settings-page.js`: password change and theme preference.
-- `public/js/admin-page.js`: admin user/booking/loan/kit-loan/damage-report management, notification generation, room usage reports, and audit log.
+- `public/js/admin-page.js`: admin user/booking/loan/kit-loan/damage-report management, notification generation, room and equipment usage reports, notification outbox/sent-log, and audit log.
 - `public/js/room-management-page.js`: admin room CRUD.
 - `public/js/equipment-management-page.js`: admin equipment CRUD and equipment kit definitions.
 - `public/styles.css`: shared styling for the whole app.
@@ -262,6 +262,7 @@ Booking creation and cancellation notifications aren't generated on demand — `
 - `PATCH /admin/notifications/outbox/:id` **admin** — update an outbox entry's status (`queued`/`sent`/`failed`, optional `error`); marking an entry `sent` records it in the sent-notification audit log.
 - `GET /admin/notifications/sent-log` **admin** — audit trail of notifications marked sent (most recent 200), including who recorded the send and when.
 - `GET /reports/room-usage` **admin** — per-room usage report for a date range (`start`, `end`, both `YYYY-MM-DD`): total bookings, total hours, unique users, and busiest date.
+- `GET /reports/equipment-usage` **admin** — per-equipment usage report for a date range (`start`, `end`, both `YYYY-MM-DD`): total loans, total days borrowed (clamped to the requested range), and unique borrowers, for any loan overlapping the range.
 
 **Admin — audit**
 - `GET /admin/audit-log` **admin** — most recent 100 audit log entries (actor, event type, resource, description, timestamp).
@@ -320,3 +321,4 @@ Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as vali
 - The app already supports booking edits, recurring booking series, booking archives/history, admin management flows, and configurable per-room/per-equipment approval policies (length limits, weekly frequency cap, blackout windows, admin approval).
 - Notification content (equipment due/overdue, upcoming bookings, booking creation/cancellation) is generated and queued into a `notification_outbox` table, with a `notification_sent_log` audit trail recorded once an admin marks an entry sent. No entries are actually delivered by an SMTP/email transport yet — the outbox is the hand-off point for that future delivery worker. Equipment due/overdue/upcoming-booking content is also shown in-app on demand (the `Notifications` page); booking creation/cancellation notifications are queued automatically at the moment of the event and are visible via the admin outbox/sent-log, not the self-service page. Email confirmation links for registration remain a roadmap item that isn't built.
 - Only admins can create admins (via role promotion). No default admin account is seeded automatically.
+- Room usage and equipment usage reports exist (`/api/reports/room-usage`, `/api/reports/equipment-usage`); a "frequently overdue items/users" report and a "frequently damaged equipment" report do not yet exist.
