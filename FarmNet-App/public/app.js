@@ -84,6 +84,10 @@ const equipmentUsageEnd = document.getElementById('equipment-usage-end');
 const equipmentUsageGenerate = document.getElementById('equipment-usage-generate');
 const equipmentUsageExport = document.getElementById('equipment-usage-export');
 const equipmentUsageList = document.getElementById('equipment-usage-list');
+const frequentlyOverdueStart = document.getElementById('frequently-overdue-start');
+const frequentlyOverdueEnd = document.getElementById('frequently-overdue-end');
+const frequentlyOverdueGenerate = document.getElementById('frequently-overdue-generate');
+const frequentlyOverdueList = document.getElementById('frequently-overdue-list');
 
 // Room management controls.
 const roomManagementList = document.getElementById('room-management-list');
@@ -284,6 +288,13 @@ function setActivePage(page, options = {}) {
       start.setDate(today.getDate() - 30);
       equipmentUsageStart.value = start.toISOString().slice(0, 10);
       equipmentUsageEnd.value = today.toISOString().slice(0, 10);
+    }
+    if (frequentlyOverdueStart && frequentlyOverdueEnd && !frequentlyOverdueStart.value && !frequentlyOverdueEnd.value) {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      frequentlyOverdueStart.value = start.toISOString().slice(0, 10);
+      frequentlyOverdueEnd.value = today.toISOString().slice(0, 10);
     }
   }
 
@@ -843,6 +854,10 @@ const adminPage = createAdminPage({
   equipmentUsageGenerate,
   equipmentUsageExport,
   equipmentUsageList,
+  frequentlyOverdueStart,
+  frequentlyOverdueEnd,
+  frequentlyOverdueGenerate,
+  frequentlyOverdueList,
   requestJson,
   onReturnLoan: returnLoan
 });

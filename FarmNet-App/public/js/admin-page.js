@@ -110,7 +110,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, frequentlyOverdueStart, frequentlyOverdueEnd, frequentlyOverdueGenerate, frequentlyOverdueList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -935,9 +935,95 @@ export function createAdminPage(deps) {
     }
   }
 
-  // Room usage report state
+  // Report state
   let lastRoomReport = null;
   let lastEquipmentReport = null;
+  let lastFrequentOverdueReport = null;
+
+  function renderFrequentlyOverdue(report) {
+    if (!frequentlyOverdueList) return;
+    const items = Array.isArray(report?.items) ? report.items : [];
+    const users = Array.isArray(report?.users) ? report.users : [];
+
+    if (items.length === 0 && users.length === 0) {
+      renderListState(frequentlyOverdueList, { kind: 'empty', message: 'No overdue item or user activity for the selected range.' });
+      return;
+    }
+
+    frequentlyOverdueList.innerHTML = '';
+    const container = document.createElement('div');
+    container.style.display = 'grid';
+    container.style.gap = '20px';
+
+    const buildTable = (title, rows, columns) => {
+      const section = document.createElement('div');
+      const heading = document.createElement('h4');
+      heading.textContent = title;
+      heading.style.margin = '0 0 8px';
+      section.appendChild(heading);
+
+      if (!rows || rows.length === 0) {
+        const empty = document.createElement('p');
+        empty.textContent = 'No records';
+        empty.style.margin = '0';
+        section.appendChild(empty);
+        return section;
+      }
+
+      const table = document.createElement('table');
+      table.className = 'admin-users-table';
+      table.innerHTML = `<thead><tr>${columns.map((col) => `<th>${col}</th>`).join('')}</tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+
+      rows.forEach((rowData) => {
+        const row = document.createElement('tr');
+        columns.forEach((column) => {
+          const cell = document.createElement('td');
+          const value = rowData[columnKeyMap[column]];
+          cell.textContent = value == null || value === '' ? '-' : String(value);
+          row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+      });
+
+      section.appendChild(table);
+      return section;
+    };
+
+    const columnKeyMap = {
+      Equipment: 'equipmentName',
+      'Overdue Count': 'overdueCount',
+      'Max Days Overdue': 'maxDaysOverdue',
+      'Last Overdue Date': 'lastOverdueDate',
+      User: 'userEmail',
+    };
+
+    container.appendChild(buildTable('Items', items, ['Equipment', 'Overdue Count', 'Max Days Overdue', 'Last Overdue Date']));
+    container.appendChild(buildTable('Users', users, ['User', 'Overdue Count', 'Max Days Overdue', 'Last Overdue Date']));
+    frequentlyOverdueList.appendChild(container);
+  }
+
+  async function loadFrequentlyOverdueReport() {
+    if (!frequentlyOverdueList || !frequentlyOverdueStart || !frequentlyOverdueEnd) return;
+    const start = String(frequentlyOverdueStart.value || '');
+    const end = String(frequentlyOverdueEnd.value || '');
+    if (!start || !end) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+    renderListState(frequentlyOverdueList, { kind: 'loading', message: 'Generating overdue report...' });
+    try {
+      const result = await requestJson(`/api/reports/frequently-overdue?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+      if (result?.error) {
+        renderListState(frequentlyOverdueList, { kind: 'error', message: result.error });
+      } else {
+        lastFrequentOverdueReport = result;
+        renderFrequentlyOverdue(result);
+      }
+    } catch (err) {
+      renderListState(frequentlyOverdueList, { kind: 'error', message: 'Unable to generate overdue report.' });
+    }
+  }
 
   function renderRoomUsage(report) {
     if (!roomUsageList) return;
@@ -1168,6 +1254,9 @@ export function createAdminPage(deps) {
   // Wire up equipment usage buttons
   if (equipmentUsageGenerate) equipmentUsageGenerate.addEventListener('click', () => loadEquipmentUsageReport());
   if (equipmentUsageExport) equipmentUsageExport.addEventListener('click', () => exportEquipmentUsageCsv());
+
+  // Wire up frequently overdue report button
+  if (frequentlyOverdueGenerate) frequentlyOverdueGenerate.addEventListener('click', () => loadFrequentlyOverdueReport());
 
   /**
    * Handle clicks in the bookings table.
