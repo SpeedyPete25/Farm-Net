@@ -88,6 +88,10 @@ const frequentlyOverdueStart = document.getElementById('frequently-overdue-start
 const frequentlyOverdueEnd = document.getElementById('frequently-overdue-end');
 const frequentlyOverdueGenerate = document.getElementById('frequently-overdue-generate');
 const frequentlyOverdueList = document.getElementById('frequently-overdue-list');
+const frequentlyDamagedStart = document.getElementById('frequently-damaged-start');
+const frequentlyDamagedEnd = document.getElementById('frequently-damaged-end');
+const frequentlyDamagedGenerate = document.getElementById('frequently-damaged-generate');
+const frequentlyDamagedList = document.getElementById('frequently-damaged-list');
 
 // Room management controls.
 const roomManagementList = document.getElementById('room-management-list');
@@ -295,6 +299,13 @@ function setActivePage(page, options = {}) {
       start.setDate(today.getDate() - 30);
       frequentlyOverdueStart.value = start.toISOString().slice(0, 10);
       frequentlyOverdueEnd.value = today.toISOString().slice(0, 10);
+    }
+    if (frequentlyDamagedStart && frequentlyDamagedEnd && !frequentlyDamagedStart.value && !frequentlyDamagedEnd.value) {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      frequentlyDamagedStart.value = start.toISOString().slice(0, 10);
+      frequentlyDamagedEnd.value = today.toISOString().slice(0, 10);
     }
   }
 
@@ -858,6 +869,10 @@ const adminPage = createAdminPage({
   frequentlyOverdueEnd,
   frequentlyOverdueGenerate,
   frequentlyOverdueList,
+  frequentlyDamagedStart,
+  frequentlyDamagedEnd,
+  frequentlyDamagedGenerate,
+  frequentlyDamagedList,
   requestJson,
   onReturnLoan: returnLoan
 });

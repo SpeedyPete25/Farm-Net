@@ -5172,6 +5172,72 @@ app.get('/api/reports/frequently-overdue', requireAdmin, async (req, res) => {
   }
 });
 
+// Generate a summary of frequently damaged equipment. Admin only.
+// Query params: ?start=YYYY-MM-DD&end=YYYY-MM-DD
+app.get('/api/reports/frequently-damaged', requireAdmin, async (req, res) => {
+  const start = String(req.query.start || '').trim();
+  const end = String(req.query.end || '').trim();
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(start) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query parameters are required in YYYY-MM-DD format.' });
+  }
+  if (start > end) return res.status(400).json({ error: 'start must be <= end.' });
+
+  try {
+    const rows = await query(
+      `SELECT d.id, d.createdAt, l.equipmentId, e.name AS equipmentName
+       FROM damage_reports d
+       JOIN loans l ON l.id = d.loanId
+       LEFT JOIN equipment e ON e.id = l.equipmentId
+       WHERE DATE(d.createdAt) >= ?
+         AND DATE(d.createdAt) <= ?
+       ORDER BY d.createdAt DESC, e.name ASC`,
+      [start, end]
+    );
+
+    const itemMap = new Map();
+    for (const row of rows) {
+      const equipmentId = Number(row.equipmentId);
+      const equipmentName = String(row.equipmentName || 'Unknown equipment');
+      const damageDate = String(row.createdAt || '').trim();
+
+      if (!Number.isFinite(equipmentId) || equipmentId <= 0) continue;
+
+      if (!itemMap.has(equipmentId)) {
+        itemMap.set(equipmentId, {
+          equipmentId,
+          equipmentName,
+          damageCount: 0,
+          lastDamageDate: damageDate || null
+        });
+      }
+
+      const item = itemMap.get(equipmentId);
+      item.damageCount += 1;
+      if (damageDate && (!item.lastDamageDate || damageDate > item.lastDamageDate)) {
+        item.lastDamageDate = damageDate;
+      }
+    }
+
+    const items = Array.from(itemMap.values())
+      .map((entry) => ({
+        equipmentId: Number(entry.equipmentId),
+        equipmentName: String(entry.equipmentName || 'Unknown equipment'),
+        damageCount: Number(entry.damageCount || 0),
+        lastDamageDate: entry.lastDamageDate || null
+      }))
+      .sort((a, b) => {
+        const countDiff = b.damageCount - a.damageCount;
+        if (countDiff !== 0) return countDiff;
+        return String(a.equipmentName || '').localeCompare(String(b.equipmentName || ''));
+      });
+
+    res.json({ start, end, items });
+  } catch (err) {
+    console.error('Failed to generate frequently damaged equipment report:', err);
+    res.status(500).json({ error: 'Failed to generate frequently damaged equipment report' });
+  }
+});
+
 // Generate room usage report for a date range. Admin only.
 // Query params: ?start=YYYY-MM-DD&end=YYYY-MM-DD
 app.get('/api/reports/room-usage', requireAdmin, async (req, res) => {

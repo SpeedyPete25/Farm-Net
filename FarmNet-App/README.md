@@ -171,6 +171,7 @@ Three rooms (Chemistry Lab, Computer Lab, Physics Lab) and three equipment types
 All routes are prefixed with `/api`. Routes marked **auth** require an active session (`requireLogin`); routes marked **admin** require an admin session (`requireAdmin`) and return `401`/`403` otherwise.
 
 **Account & session**
+
 - `POST /register` — create an account (validates email format, and mailbox reachability if enabled).
 - `POST /login` — authenticate and start a session.
 - `POST /logout` — destroy the current session.
@@ -179,11 +180,13 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `POST /change-password` **auth** — change password (requires current password, 8+ char new password).
 
 **Resources & timetable**
+
 - `GET /resources` **auth** — rooms, equipment (with computed availability and per-status counts), and kits (with computed availability) available.
 - `GET /timetable` **auth** — 7-day booking grid for a room (`roomId`, `weekStart`).
 - `GET /rooms/:roomId/schedule` **auth** — bookings for a room on a specific date.
 
 **Bookings (self-service)**
+
 - `GET /my-requests` **auth** — current user's bookings and loans (`status=active|all`; `active` includes `pending`). Bookings include `seriesId`/`seriesPosition`/`seriesTotal` when part of a recurring series; loans include `kitId`/`kitLoanGroupId`/`kitName` when part of a kit.
 - `POST /book-room` **auth** — create a booking (future time, 15-minute increments, overlap check, room policy checks). Returns `status: 'pending'` instead of `'active'` when the room requires admin approval. Accepts an optional `recurrence: { frequency: 'daily'|'weekly'|'monthly', occurrences: 2-52 }` to create a whole series in one atomic request (all occurrences validated before any are created).
 - `POST /edit-booking` **auth** — edit one occurrence's own active/pending booking (re-validated against room policy).
@@ -192,6 +195,7 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `POST /cancel-booking-series` **auth** — cancel every remaining active/pending occurrence in a series at once.
 
 **Equipment & kit loans (self-service)**
+
 - `POST /borrow-equipment` **auth** — borrow an available unit for N days; assigns a specific unit code. Returns `status: 'pending'` if the equipment requires approval. Accepts an optional `borrowerEmail` (admin only) to borrow on behalf of another user.
 - `POST /reserve-equipment` **auth** — reserve an available unit for a future date range (same approval/on-behalf semantics as borrowing).
 - `POST /borrow-kit` / `POST /reserve-kit` **auth** — borrow/reserve every component of a kit as one atomic request; creates one loan per assigned unit, all sharing a `kitLoanGroupId`. Each component's `active`/`pending` status still follows its own equipment's approval policy, so one request can end up partially pending. Accepts an optional `borrowerEmail` (admin only).
@@ -203,6 +207,7 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 - `GET /loans/:id/photo` **auth** — fetch the return-condition photo for one of your own loans.
 
 **Notifications (self-service, generated content only — nothing is emailed)**
+
 - `GET /notifications/mine` **auth** — the current user's own "equipment due soon" notification content (`days`, default 3).
 - `GET /notifications/overdue` **auth** — the current user's own overdue-escalation notification content (`levels`, comma-separated day thresholds, default `3,7,14`).
 - `GET /notifications/upcoming-bookings/mine` **auth** — the current user's own upcoming room-booking notification content (`days`, default 1).
@@ -210,11 +215,13 @@ All routes are prefixed with `/api`. Routes marked **auth** require an active se
 Booking creation and cancellation notifications aren't generated on demand — `POST /book-room`, `POST /cancel-booking`, `POST /cancel-booking-series`, and their admin equivalents below queue a `booking_created`/`booking_cancelled` entry directly into the outbox at the moment of the event.
 
 **Admin — users**
+
 - `GET /admin/users` **admin** — list all users.
 - `PATCH /admin/users/:id/role` **admin** — change a user's role (blocks demoting the last admin).
 - `DELETE /admin/users/:id` **admin** — delete a user and cascade-delete their bookings, loans, damage reports, and activity history (blocks self-deletion and deleting the last admin) inside a single database transaction.
 
 **Admin — bookings**
+
 - `GET /admin/bookings` **admin** — list all bookings (`status=active|all`), including series position/total.
 - `POST /admin/bookings/:id/cancel` **admin** — cancel any active/pending, future booking.
 - `PATCH /admin/bookings/:id` **admin** — edit any active/pending booking (same validation as user edit, room policy not re-checked).
@@ -223,6 +230,7 @@ Booking creation and cancellation notifications aren't generated on demand — `
 - `POST /admin/bookings/series/:seriesId/{cancel,approve,deny}` **admin** — apply the same action to every matching occurrence in a series at once.
 
 **Admin — loans & kit loans**
+
 - `GET /admin/loans` **admin** — list all loans (`status=active|all`), including kit grouping.
 - `POST /admin/loans/:id/cancel` **admin** — cancel any active/pending, non-past loan.
 - `POST /admin/loans/:id/approve` / `POST /admin/loans/:id/deny` **admin** — approve or deny a `pending` loan.
@@ -234,6 +242,7 @@ Booking creation and cancellation notifications aren't generated on demand — `
 - `GET /admin/damage-reports/:id/photo` **admin** — fetch the photo attached to a damage report.
 
 **Admin — rooms**
+
 - `GET /admin/rooms` **admin** — list all rooms, including configured policy fields.
 - `POST /admin/rooms` **admin** — add a room (rejects duplicate location); accepts optional policy fields (see below).
 - `PATCH /admin/rooms/:id` **admin** — update a room's booking policy: `minDurationMinutes`, `maxDurationMinutes`, `maxBookingsPerUserPerWeek` (all optional — omit/blank for no limit) and `requiresApproval` (boolean).
@@ -243,6 +252,7 @@ Booking creation and cancellation notifications aren't generated on demand — `
 - `DELETE /admin/rooms/:roomId/blackouts/:blackoutId` **admin** — remove a blackout window.
 
 **Admin — equipment & kits**
+
 - `GET /admin/equipment` **admin** — list equipment with unit codes and computed status per unit.
 - `POST /admin/equipment` **admin** — add equipment (creates matching unit codes; rejects duplicate name).
 - `PATCH /admin/equipment/:id` **admin** — change quantity (adds/removes unit codes; blocks reducing below active loan count or below available unassigned units).
@@ -255,6 +265,7 @@ Booking creation and cancellation notifications aren't generated on demand — `
 - `DELETE /admin/kits/:id` **admin** — remove a kit definition (loans already created from it are unaffected).
 
 **Admin — notifications & reports**
+
 - `GET /notifications/equipment-due` **admin** — generated "equipment due soon" content for every user (`days`, default 3).
 - `GET /notifications/overdue-escalations` **admin** — generated overdue-escalation content for every user (`levels`, comma-separated day thresholds, default `3,7,14`).
 - `GET /notifications/upcoming-bookings` **admin** — generated upcoming room-booking content for every user (`days`, default 1).
@@ -265,6 +276,7 @@ Booking creation and cancellation notifications aren't generated on demand — `
 - `GET /reports/equipment-usage` **admin** — per-equipment usage report for a date range (`start`, `end`, both `YYYY-MM-DD`): total loans, total days borrowed (clamped to the requested range), and unique borrowers, for any loan overlapping the range.
 
 **Admin — audit**
+
 - `GET /admin/audit-log` **admin** — most recent 100 audit log entries (actor, event type, resource, description, timestamp).
 
 ## Configuration
@@ -291,29 +303,29 @@ Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as vali
 ## Troubleshooting
 
 - App does not start because port `3000` is already in use:
-	- Set a different port in `FarmNet-App/.env`, for example `PORT=3001`, then restart with `npm start`.
-	- Or stop the process currently using port `3000` and start the app again.
+  - Set a different port in `FarmNet-App/.env`, for example `PORT=3001`, then restart with `npm start`.
+  - Or stop the process currently using port `3000` and start the app again.
 - App fails to start with a database connection error:
-	- Make sure Postgres is running: `docker compose up -d`, then check `docker compose ps`.
-	- Confirm `DATABASE_URL` (in `.env` or your shell) points at the right host/port/database.
+  - Make sure Postgres is running: `docker compose up -d`, then check `docker compose ps`.
+  - Confirm `DATABASE_URL` (in `.env` or your shell) points at the right host/port/database.
 - Registration fails while testing offline or on restricted networks:
-	- Set `EMAIL_VERIFICATION_ENABLED=false` in `FarmNet-App/.env` to bypass MX/SMTP mailbox checks during development.
-	- Restart the server after changing environment variables.
+  - Set `EMAIL_VERIFICATION_ENABLED=false` in `FarmNet-App/.env` to bypass MX/SMTP mailbox checks during development.
+  - Restart the server after changing environment variables.
 - Login/auth issues after schema changes or old local data:
-	- Reset the database schema (see "Resetting Data" above) and restart to rebuild it from the current schema.
-	- Re-register users after a reset because accounts are deleted along with the schema.
+  - Reset the database schema (see "Resetting Data" above) and restart to rebuild it from the current schema.
+  - Re-register users after a reset because accounts are deleted along with the schema.
 - Return photo upload problems:
-	- Ensure uploads are image files and under 5 MB.
-	- Confirm `FarmNet-App/data/return-photos/` exists and is writable by the running process.
+  - Ensure uploads are image files and under 5 MB.
+  - Confirm `FarmNet-App/data/return-photos/` exists and is writable by the running process.
 - Playwright browser tests fail with a "missing browser" error:
-	- Run `npx playwright install chromium`.
+  - Run `npx playwright install chromium`.
 
 ## Known Limitations
 
 - The Express session secret is a fixed string in `server.js`, suitable for local development only — do not deploy this as-is without moving it to an environment variable.
 - Registration validates mailbox reachability (MX + SMTP checks when enabled) but does not send a click-to-confirm email.
 - No rate limiting on login/registration endpoints.
-- Foreign-key relationships (e.g. a loan referencing its equipment, a booking referencing its room) are stored as plain columns without database-level `FOREIGN KEY` constraints. This preserves the exact behaviour of the original SQLite version, which never enabled foreign-key enforcement — several admin delete routes (equipment, rooms) only guard against *active* references, not full history, and would need that audited before real FK enforcement could be turned on safely.
+- Foreign-key relationships (e.g. a loan referencing its equipment, a booking referencing its room) are stored as plain columns without database-level `FOREIGN KEY` constraints. This preserves the exact behaviour of the original SQLite version, which never enabled foreign-key enforcement — several admin delete routes (equipment, rooms) only guard against _active_ references, not full history, and would need that audited before real FK enforcement could be turned on safely.
 
 ## Notes
 
@@ -321,4 +333,4 @@ Known-provider domains (Gmail, Outlook, Yahoo, iCloud, etc.) are treated as vali
 - The app already supports booking edits, recurring booking series, booking archives/history, admin management flows, and configurable per-room/per-equipment approval policies (length limits, weekly frequency cap, blackout windows, admin approval).
 - Notification content (equipment due/overdue, upcoming bookings, booking creation/cancellation) is generated and queued into a `notification_outbox` table, with a `notification_sent_log` audit trail recorded once an admin marks an entry sent. No entries are actually delivered by an SMTP/email transport yet — the outbox is the hand-off point for that future delivery worker. Equipment due/overdue/upcoming-booking content is also shown in-app on demand (the `Notifications` page); booking creation/cancellation notifications are queued automatically at the moment of the event and are visible via the admin outbox/sent-log, not the self-service page. Email confirmation links for registration remain a roadmap item that isn't built.
 - Only admins can create admins (via role promotion). No default admin account is seeded automatically.
-- Room usage and equipment usage reports exist (`/api/reports/room-usage`, `/api/reports/equipment-usage`); a "frequently overdue items/users" report and a "frequently damaged equipment" report do not yet exist.
+- Room usage and equipment usage reports exist (`/api/reports/room-usage`, `/api/reports/equipment-usage`), and the admin report set includes frequently overdue items/users plus frequently damaged equipment reports.

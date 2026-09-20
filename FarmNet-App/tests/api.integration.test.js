@@ -1745,6 +1745,86 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.ok(report.body.users.some((entry) => entry.userEmail === borrowerEmail && entry.overdueCount >= 2));
   });
 
+  await t.test('generates a frequently damaged equipment report for admins', async () => {
+    const adminEmail = uniqueEmail('admin-damage-report');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    await loginUser(adminClient, adminEmail, password);
+
+    const equipmentNameA = `Frequent Damage A ${Date.now()}`;
+    const equipmentNameB = `Frequent Damage B ${Date.now() + 1}`;
+
+    const addA = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentNameA, quantity: 1 })
+    });
+    assert.equal(addA.status, 200);
+    const addB = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentNameB, quantity: 1 })
+    });
+    assert.equal(addB.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const itemA = equipmentList.body.equipment.find((item) => item.name === equipmentNameA);
+    const itemB = equipmentList.body.equipment.find((item) => item.name === equipmentNameB);
+    assert.ok(itemA && itemB);
+
+    const borrowerEmail = uniqueEmail('damage-borrower');
+    const borrowerClient = new TestClient(baseUrl);
+    await registerUser(borrowerClient, borrowerEmail, password);
+    await loginUser(borrowerClient, borrowerEmail, password);
+
+    const firstBorrow = await borrowerClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: itemA.id, days: 2 })
+    });
+    assert.equal(firstBorrow.status, 200);
+
+    const secondBorrow = await borrowerClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: itemB.id, days: 3 })
+    });
+    assert.equal(secondBorrow.status, 200);
+
+    const loanRows = await borrowerClient.request('/api/my-requests?status=all');
+    const firstLoanId = loanRows.body.loans.find((entry) => entry.equipmentName === equipmentNameA).id;
+    const secondLoanId = loanRows.body.loans.find((entry) => entry.equipmentName === equipmentNameB).id;
+
+    const firstReturn = new FormData();
+    firstReturn.append('loanId', String(firstLoanId));
+    firstReturn.append('returnCondition', 'Handle cracked after use.');
+    firstReturn.append('damaged', 'true');
+
+    const firstReturnResponse = await borrowerClient.request('/api/return-loan', { method: 'POST', body: firstReturn });
+    assert.equal(firstReturnResponse.status, 200, `Unexpected return payload: ${JSON.stringify(firstReturnResponse.body)}`);
+
+    const secondReturn = new FormData();
+    secondReturn.append('loanId', String(secondLoanId));
+    secondReturn.append('returnCondition', 'Battery worn and damaged.');
+    secondReturn.append('damaged', 'true');
+
+    const secondReturnResponse = await borrowerClient.request('/api/return-loan', { method: 'POST', body: secondReturn });
+    assert.equal(secondReturnResponse.status, 200, `Unexpected second return payload: ${JSON.stringify(secondReturnResponse.body)}`);
+
+    const reportDateStart = formatDateFromToday(-10);
+    const reportDateEnd = formatDateFromToday(10);
+    const report = await adminClient.request(`/api/reports/frequently-damaged?start=${encodeURIComponent(reportDateStart)}&end=${encodeURIComponent(reportDateEnd)}`);
+
+    assert.equal(report.status, 200, `Unexpected report payload: ${JSON.stringify(report.body)}`);
+    assert.equal(Array.isArray(report.body.items), true);
+    assert.ok(report.body.items.some((entry) => entry.equipmentName === equipmentNameA && entry.damageCount >= 1));
+    assert.ok(report.body.items.some((entry) => entry.equipmentName === equipmentNameB && entry.damageCount >= 1));
+  });
+
   await t.test('supports equipment request and admin approval workflow', async () => {
     const adminEmail = uniqueEmail('equip-approval-admin');
     const password = 'Password123';

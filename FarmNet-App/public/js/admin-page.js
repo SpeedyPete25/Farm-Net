@@ -110,7 +110,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, frequentlyOverdueStart, frequentlyOverdueEnd, frequentlyOverdueGenerate, frequentlyOverdueList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, frequentlyOverdueStart, frequentlyOverdueEnd, frequentlyOverdueGenerate, frequentlyOverdueList, frequentlyDamagedStart, frequentlyDamagedEnd, frequentlyDamagedGenerate, frequentlyDamagedList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -939,6 +939,7 @@ export function createAdminPage(deps) {
   let lastRoomReport = null;
   let lastEquipmentReport = null;
   let lastFrequentOverdueReport = null;
+  let lastFrequentDamagedReport = null;
 
   function renderFrequentlyOverdue(report) {
     if (!frequentlyOverdueList) return;
@@ -1022,6 +1023,67 @@ export function createAdminPage(deps) {
       }
     } catch (err) {
       renderListState(frequentlyOverdueList, { kind: 'error', message: 'Unable to generate overdue report.' });
+    }
+  }
+
+  function renderFrequentlyDamaged(report) {
+    if (!frequentlyDamagedList) return;
+    const items = Array.isArray(report?.items) ? report.items : [];
+
+    if (items.length === 0) {
+      renderListState(frequentlyDamagedList, { kind: 'empty', message: 'No damage incidents for the selected range.' });
+      return;
+    }
+
+    frequentlyDamagedList.innerHTML = '';
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Equipment</th>
+          <th>Damage Count</th>
+          <th>Last Damage Date</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    items.forEach((entry) => {
+      const row = document.createElement('tr');
+      const name = document.createElement('td'); name.textContent = entry.equipmentName || '-';
+      const count = document.createElement('td'); count.textContent = String(entry.damageCount || 0);
+      const last = document.createElement('td'); last.textContent = entry.lastDamageDate ? String(entry.lastDamageDate).slice(0, 10) : '-';
+
+      row.appendChild(name);
+      row.appendChild(count);
+      row.appendChild(last);
+      tbody.appendChild(row);
+    });
+
+    frequentlyDamagedList.appendChild(table);
+  }
+
+  async function loadFrequentlyDamagedReport() {
+    if (!frequentlyDamagedList || !frequentlyDamagedStart || !frequentlyDamagedEnd) return;
+    const start = String(frequentlyDamagedStart.value || '');
+    const end = String(frequentlyDamagedEnd.value || '');
+    if (!start || !end) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+    renderListState(frequentlyDamagedList, { kind: 'loading', message: 'Generating damaged-equipment report...' });
+    try {
+      const result = await requestJson(`/api/reports/frequently-damaged?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+      if (result?.error) {
+        renderListState(frequentlyDamagedList, { kind: 'error', message: result.error });
+      } else {
+        lastFrequentDamagedReport = result;
+        renderFrequentlyDamaged(result);
+      }
+    } catch (err) {
+      renderListState(frequentlyDamagedList, { kind: 'error', message: 'Unable to generate damaged-equipment report.' });
     }
   }
 
@@ -1255,8 +1317,9 @@ export function createAdminPage(deps) {
   if (equipmentUsageGenerate) equipmentUsageGenerate.addEventListener('click', () => loadEquipmentUsageReport());
   if (equipmentUsageExport) equipmentUsageExport.addEventListener('click', () => exportEquipmentUsageCsv());
 
-  // Wire up frequently overdue report button
+  // Wire up frequently overdue and damaged report buttons
   if (frequentlyOverdueGenerate) frequentlyOverdueGenerate.addEventListener('click', () => loadFrequentlyOverdueReport());
+  if (frequentlyDamagedGenerate) frequentlyDamagedGenerate.addEventListener('click', () => loadFrequentlyDamagedReport());
 
   /**
    * Handle clicks in the bookings table.
