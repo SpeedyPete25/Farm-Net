@@ -87,10 +87,12 @@ const equipmentUsageList = document.getElementById('equipment-usage-list');
 const frequentlyOverdueStart = document.getElementById('frequently-overdue-start');
 const frequentlyOverdueEnd = document.getElementById('frequently-overdue-end');
 const frequentlyOverdueGenerate = document.getElementById('frequently-overdue-generate');
+const frequentlyOverdueExport = document.getElementById('frequently-overdue-export');
 const frequentlyOverdueList = document.getElementById('frequently-overdue-list');
 const frequentlyDamagedStart = document.getElementById('frequently-damaged-start');
 const frequentlyDamagedEnd = document.getElementById('frequently-damaged-end');
 const frequentlyDamagedGenerate = document.getElementById('frequently-damaged-generate');
+const frequentlyDamagedExport = document.getElementById('frequently-damaged-export');
 const frequentlyDamagedList = document.getElementById('frequently-damaged-list');
 
 // Room management controls.
@@ -868,10 +870,12 @@ const adminPage = createAdminPage({
   frequentlyOverdueStart,
   frequentlyOverdueEnd,
   frequentlyOverdueGenerate,
+  frequentlyOverdueExport,
   frequentlyOverdueList,
   frequentlyDamagedStart,
   frequentlyDamagedEnd,
   frequentlyDamagedGenerate,
+  frequentlyDamagedExport,
   frequentlyDamagedList,
   requestJson,
   onReturnLoan: returnLoan

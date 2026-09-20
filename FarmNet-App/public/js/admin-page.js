@@ -110,7 +110,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, frequentlyOverdueStart, frequentlyOverdueEnd, frequentlyOverdueGenerate, frequentlyOverdueList, frequentlyDamagedStart, frequentlyDamagedEnd, frequentlyDamagedGenerate, frequentlyDamagedList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, frequentlyOverdueStart, frequentlyOverdueEnd, frequentlyOverdueGenerate, frequentlyOverdueExport, frequentlyOverdueList, frequentlyDamagedStart, frequentlyDamagedEnd, frequentlyDamagedGenerate, frequentlyDamagedExport, frequentlyDamagedList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -1026,6 +1026,30 @@ export function createAdminPage(deps) {
     }
   }
 
+  function exportFrequentlyOverdueCsv() {
+    if (!lastFrequentOverdueReport || !Array.isArray(lastFrequentOverdueReport.items) || !Array.isArray(lastFrequentOverdueReport.users)) {
+      alert('No report data to export. Generate the report first.');
+      return;
+    }
+
+    const rows = [
+      ['Category', 'Name', 'OverdueCount', 'MaxDaysOverdue', 'LastOverdueDate'],
+      ...lastFrequentOverdueReport.items.map((entry) => ['Item', entry.equipmentName || '', entry.overdueCount || 0, entry.maxDaysOverdue || 0, entry.lastOverdueDate || '']),
+      ...lastFrequentOverdueReport.users.map((entry) => ['User', entry.userEmail || '', entry.overdueCount || 0, entry.maxDaysOverdue || 0, entry.lastOverdueDate || ''])
+    ];
+
+    const csv = rows.map((line) => line.map((value) => String(value).replace(/"/g, '""')).map((value) => (value.includes(',') || value.includes('\n') ? `"${value}"` : value)).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `frequently-overdue-${lastFrequentOverdueReport.start || ''}_to_${lastFrequentOverdueReport.end || ''}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function renderFrequentlyDamaged(report) {
     if (!frequentlyDamagedList) return;
     const items = Array.isArray(report?.items) ? report.items : [];
@@ -1085,6 +1109,29 @@ export function createAdminPage(deps) {
     } catch (err) {
       renderListState(frequentlyDamagedList, { kind: 'error', message: 'Unable to generate damaged-equipment report.' });
     }
+  }
+
+  function exportFrequentlyDamagedCsv() {
+    if (!lastFrequentDamagedReport || !Array.isArray(lastFrequentDamagedReport.items)) {
+      alert('No report data to export. Generate the report first.');
+      return;
+    }
+
+    const rows = [
+      ['Equipment', 'DamageCount', 'LastDamageDate'],
+      ...lastFrequentDamagedReport.items.map((entry) => [entry.equipmentName || '', entry.damageCount || 0, entry.lastDamageDate || ''])
+    ];
+
+    const csv = rows.map((line) => line.map((value) => String(value).replace(/"/g, '""')).map((value) => (value.includes(',') || value.includes('\n') ? `"${value}"` : value)).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `frequently-damaged-${lastFrequentDamagedReport.start || ''}_to_${lastFrequentDamagedReport.end || ''}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   function renderRoomUsage(report) {
@@ -1319,7 +1366,9 @@ export function createAdminPage(deps) {
 
   // Wire up frequently overdue and damaged report buttons
   if (frequentlyOverdueGenerate) frequentlyOverdueGenerate.addEventListener('click', () => loadFrequentlyOverdueReport());
+  if (frequentlyOverdueExport) frequentlyOverdueExport.addEventListener('click', () => exportFrequentlyOverdueCsv());
   if (frequentlyDamagedGenerate) frequentlyDamagedGenerate.addEventListener('click', () => loadFrequentlyDamagedReport());
+  if (frequentlyDamagedExport) frequentlyDamagedExport.addEventListener('click', () => exportFrequentlyDamagedCsv());
 
   /**
    * Handle clicks in the bookings table.
