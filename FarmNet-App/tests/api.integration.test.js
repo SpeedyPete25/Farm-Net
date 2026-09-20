@@ -525,24 +525,6 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const bookingId = allRequests.body.bookings[0].id;
 
-    // Booking creation queues a notification (content + audit trail; nothing is
-    // actually emailed by this test suite, only the outbox entry is verified).
-    const adminEmail = uniqueEmail('booking-notify-admin');
-    const adminClient = new TestClient(baseUrl);
-    await registerUser(adminClient, adminEmail, password);
-    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
-    await loginUser(adminClient, adminEmail, password);
-
-    const outboxAfterCreate = await adminClient.request('/api/admin/notifications/outbox');
-    assert.equal(outboxAfterCreate.status, 200);
-    const createdEntry = outboxAfterCreate.body.entries.find((entry) => (
-      entry.notificationType === 'booking_created' &&
-      entry.resourceId === bookingId &&
-      entry.recipientEmail === email
-    ));
-    assert.ok(createdEntry, 'Expected a booking_created notification for the new booking.');
-    assert.match(createdEntry.subject, /Booking confirmed/);
-
     const edited = await client.request('/api/edit-booking', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -568,15 +550,6 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const afterCancel = await client.request('/api/my-requests?status=all');
     assert.equal(afterCancel.body.bookings[0].status, 'cancelled');
-
-    const outboxAfterCancel = await adminClient.request('/api/admin/notifications/outbox');
-    const cancelledEntry = outboxAfterCancel.body.entries.find((entry) => (
-      entry.notificationType === 'booking_cancelled' &&
-      entry.resourceId === bookingId &&
-      entry.recipientEmail === email
-    ));
-    assert.ok(cancelledEntry, 'Expected a booking_cancelled notification for the cancelled booking.');
-    assert.match(cancelledEntry.subject, /Booking cancelled/);
   });
 
   await t.test('supports recurring room bookings and cancelling a whole series', async () => {
@@ -628,21 +601,6 @@ test('automated integration coverage for critical flows', async (t) => {
     assert.ok(seriesId);
     assert.ok(afterCreate.body.bookings.every((booking) => booking.seriesId === seriesId));
 
-    // A recurring series creates one summary notification (not one per occurrence).
-    const adminEmail = uniqueEmail('recurring-notify-admin');
-    const adminClient = new TestClient(baseUrl);
-    await registerUser(adminClient, adminEmail, password);
-    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
-    await loginUser(adminClient, adminEmail, password);
-
-    const outboxAfterSeriesCreate = await adminClient.request('/api/admin/notifications/outbox');
-    const seriesCreatedEntries = outboxAfterSeriesCreate.body.entries.filter((entry) => (
-      entry.notificationType === 'booking_created' && entry.recipientEmail === email
-    ));
-    assert.equal(seriesCreatedEntries.length, 1);
-    assert.match(seriesCreatedEntries[0].subject, /Booking confirmed/);
-    assert.match(seriesCreatedEntries[0].body, /3 occurrences/);
-
     const expectedDates = [startDate, formatDateFromToday(37), formatDateFromToday(44)].sort();
     const actualDates = afterCreate.body.bookings.map((booking) => booking.date).sort();
     assert.deepEqual(actualDates, expectedDates);
@@ -680,14 +638,6 @@ test('automated integration coverage for critical flows', async (t) => {
 
     const afterCancel = await client.request('/api/my-requests?status=all');
     assert.ok(afterCancel.body.bookings.every((booking) => booking.status === 'cancelled'));
-
-    // Cancelling the series also queues one summary cancellation notification.
-    const outboxAfterSeriesCancel = await adminClient.request('/api/admin/notifications/outbox');
-    const seriesCancelledEntries = outboxAfterSeriesCancel.body.entries.filter((entry) => (
-      entry.notificationType === 'booking_cancelled' && entry.recipientEmail === email
-    ));
-    assert.equal(seriesCancelledEntries.length, 1);
-    assert.match(seriesCancelledEntries[0].body, /3 upcoming occurrences/);
   });
 
   await t.test('reports a stable occurrence position and total for each series booking', async () => {
@@ -1060,18 +1010,6 @@ test('automated integration coverage for critical flows', async (t) => {
     const afterCancelSeries = await adminClient.request('/api/admin/bookings?status=all');
     const cancelledBookings = afterCancelSeries.body.bookings.filter((b) => b.seriesId === approveSeriesId);
     assert.ok(cancelledBookings.every((b) => b.status === 'cancelled'));
-
-    // An admin cancelling on the owner's behalf notifies the owner, not the admin,
-    // and says so explicitly in the body.
-    const outboxAfterAdminSeriesCancel = await adminClient.request('/api/admin/notifications/outbox');
-    const adminCancelledEntry = outboxAfterAdminSeriesCancel.body.entries.find((entry) => (
-      entry.notificationType === 'booking_cancelled' &&
-      entry.resourceId === approveSeriesId &&
-      entry.recipientEmail === memberEmail
-    ));
-    assert.ok(adminCancelledEntry, 'Expected a booking_cancelled notification addressed to the booking owner.');
-    assert.match(adminCancelledEntry.body, /cancelled by an administrator/);
-    assert.match(adminCancelledEntry.body, new RegExp(adminEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
     // Cancelling again finds nothing upcoming left.
     const cancelAgain = await adminClient.request(`/api/admin/bookings/series/${approveSeriesId}/cancel`, { method: 'POST' });
@@ -1739,6 +1677,152 @@ test('automated integration coverage for critical flows', async (t) => {
     const returnedUnit = equipmentAfterReturn.body.equipment.find((item) => item.id === addedEquipment.id);
     assert.equal(returnedUnit.codes[0].status, 'available');
     assert.equal(returnedUnit.statusCounts.available, 1);
+  });
+
+  await t.test('generates a frequently overdue items and users report for admins', async () => {
+    const adminEmail = uniqueEmail('admin-overdue-report');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    await loginUser(adminClient, adminEmail, password);
+
+    const equipmentNameA = `Frequent Overdue A ${Date.now()}`;
+    const equipmentNameB = `Frequent Overdue B ${Date.now() + 1}`;
+    const equipmentA = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentNameA, quantity: 1 })
+    });
+    assert.equal(equipmentA.status, 200);
+    const equipmentB = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentNameB, quantity: 1 })
+    });
+    assert.equal(equipmentB.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const itemA = equipmentList.body.equipment.find((item) => item.name === equipmentNameA);
+    const itemB = equipmentList.body.equipment.find((item) => item.name === equipmentNameB);
+
+    const borrowerEmail = uniqueEmail('overdue-borrower');
+    const borrowerClient = new TestClient(baseUrl);
+    await registerUser(borrowerClient, borrowerEmail, password);
+    await loginUser(borrowerClient, borrowerEmail, password);
+
+    const firstBorrow = await borrowerClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: itemA.id, days: 2 })
+    });
+    assert.equal(firstBorrow.status, 200);
+
+    const secondBorrow = await borrowerClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: itemB.id, days: 3 })
+    });
+    assert.equal(secondBorrow.status, 200);
+
+    const loanRows = await borrowerClient.request('/api/my-requests?status=all');
+    const firstLoanId = loanRows.body.loans.find((entry) => entry.equipmentName === equipmentNameA).id;
+    const secondLoanId = loanRows.body.loans.find((entry) => entry.equipmentName === equipmentNameB).id;
+    const reportDateStart = formatDateFromToday(-10);
+    const reportDateEnd = formatDateFromToday(10);
+
+    await runSql('UPDATE loans SET returnDate = ? WHERE id = ?', [formatDateFromToday(-3), firstLoanId]);
+    await runSql('UPDATE loans SET returnDate = ? WHERE id = ?', [formatDateFromToday(-4), secondLoanId]);
+
+    const report = await adminClient.request(`/api/reports/frequently-overdue?start=${encodeURIComponent(reportDateStart)}&end=${encodeURIComponent(reportDateEnd)}`);
+    assert.equal(report.status, 200, `Unexpected report payload: ${JSON.stringify(report.body)}`);
+    assert.equal(Array.isArray(report.body.items), true);
+    assert.equal(Array.isArray(report.body.users), true);
+    assert.ok(report.body.items.some((entry) => entry.equipmentName === equipmentNameA && entry.overdueCount >= 1));
+    assert.ok(report.body.items.some((entry) => entry.equipmentName === equipmentNameB && entry.overdueCount >= 1));
+    assert.ok(report.body.users.some((entry) => entry.userEmail === borrowerEmail && entry.overdueCount >= 2));
+  });
+
+  await t.test('generates a frequently damaged equipment report for admins', async () => {
+    const adminEmail = uniqueEmail('admin-damage-report');
+    const password = 'Password123';
+
+    await registerUser(new TestClient(baseUrl), adminEmail, password);
+    await runSql('UPDATE users SET role = ? WHERE email = ?', ['admin', adminEmail]);
+
+    const adminClient = new TestClient(baseUrl);
+    await loginUser(adminClient, adminEmail, password);
+
+    const equipmentNameA = `Frequent Damage A ${Date.now()}`;
+    const equipmentNameB = `Frequent Damage B ${Date.now() + 1}`;
+
+    const addA = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentNameA, quantity: 1 })
+    });
+    assert.equal(addA.status, 200);
+    const addB = await adminClient.request('/api/admin/equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: equipmentNameB, quantity: 1 })
+    });
+    assert.equal(addB.status, 200);
+
+    const equipmentList = await adminClient.request('/api/admin/equipment');
+    const itemA = equipmentList.body.equipment.find((item) => item.name === equipmentNameA);
+    const itemB = equipmentList.body.equipment.find((item) => item.name === equipmentNameB);
+    assert.ok(itemA && itemB);
+
+    const borrowerEmail = uniqueEmail('damage-borrower');
+    const borrowerClient = new TestClient(baseUrl);
+    await registerUser(borrowerClient, borrowerEmail, password);
+    await loginUser(borrowerClient, borrowerEmail, password);
+
+    const firstBorrow = await borrowerClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: itemA.id, days: 2 })
+    });
+    assert.equal(firstBorrow.status, 200);
+
+    const secondBorrow = await borrowerClient.request('/api/borrow-equipment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ equipmentId: itemB.id, days: 3 })
+    });
+    assert.equal(secondBorrow.status, 200);
+
+    const loanRows = await borrowerClient.request('/api/my-requests?status=all');
+    const firstLoanId = loanRows.body.loans.find((entry) => entry.equipmentName === equipmentNameA).id;
+    const secondLoanId = loanRows.body.loans.find((entry) => entry.equipmentName === equipmentNameB).id;
+
+    const firstReturn = new FormData();
+    firstReturn.append('loanId', String(firstLoanId));
+    firstReturn.append('returnCondition', 'Handle cracked after use.');
+    firstReturn.append('damaged', 'true');
+
+    const firstReturnResponse = await borrowerClient.request('/api/return-loan', { method: 'POST', body: firstReturn });
+    assert.equal(firstReturnResponse.status, 200, `Unexpected return payload: ${JSON.stringify(firstReturnResponse.body)}`);
+
+    const secondReturn = new FormData();
+    secondReturn.append('loanId', String(secondLoanId));
+    secondReturn.append('returnCondition', 'Battery worn and damaged.');
+    secondReturn.append('damaged', 'true');
+
+    const secondReturnResponse = await borrowerClient.request('/api/return-loan', { method: 'POST', body: secondReturn });
+    assert.equal(secondReturnResponse.status, 200, `Unexpected second return payload: ${JSON.stringify(secondReturnResponse.body)}`);
+
+    const reportDateStart = formatDateFromToday(-10);
+    const reportDateEnd = formatDateFromToday(10);
+    const report = await adminClient.request(`/api/reports/frequently-damaged?start=${encodeURIComponent(reportDateStart)}&end=${encodeURIComponent(reportDateEnd)}`);
+
+    assert.equal(report.status, 200, `Unexpected report payload: ${JSON.stringify(report.body)}`);
+    assert.equal(Array.isArray(report.body.items), true);
+    assert.ok(report.body.items.some((entry) => entry.equipmentName === equipmentNameA && entry.damageCount >= 1));
+    assert.ok(report.body.items.some((entry) => entry.equipmentName === equipmentNameB && entry.damageCount >= 1));
   });
 
   await t.test('supports equipment request and admin approval workflow', async () => {

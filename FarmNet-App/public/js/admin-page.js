@@ -110,7 +110,7 @@ import { renderListState } from './utils.js';
  * @returns {AdminPageApi} Admin page API.
  */
 export function createAdminPage(deps) {
-  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, requestJson, onReturnLoan } = deps;
+  const { usersList, adminCreateUserForm, adminCreateUserEmail, adminCreateUserPassword, adminCreateUserRole, adminCreateUserError, adminBookingsList, adminLoansList, damageReportsList, auditLogList, adminNotificationsList, adminOutboxList, adminOutboxRefresh, adminSentLogList, adminSentLogRefresh, adminNotificationsDays, adminNotificationsRefresh, adminNotificationsType, adminNotificationsLevels, roomUsageStart, roomUsageEnd, roomUsageGenerate, roomUsageExport, roomUsageList, equipmentUsageStart, equipmentUsageEnd, equipmentUsageGenerate, equipmentUsageExport, equipmentUsageList, frequentlyOverdueStart, frequentlyOverdueEnd, frequentlyOverdueGenerate, frequentlyOverdueExport, frequentlyOverdueList, frequentlyDamagedStart, frequentlyDamagedEnd, frequentlyDamagedGenerate, frequentlyDamagedExport, frequentlyDamagedList, requestJson, onReturnLoan } = deps;
 
   /**
    * Change role for one user and refresh data.
@@ -935,9 +935,204 @@ export function createAdminPage(deps) {
     }
   }
 
-  // Room usage report state
+  // Report state
   let lastRoomReport = null;
   let lastEquipmentReport = null;
+  let lastFrequentOverdueReport = null;
+  let lastFrequentDamagedReport = null;
+
+  function renderFrequentlyOverdue(report) {
+    if (!frequentlyOverdueList) return;
+    const items = Array.isArray(report?.items) ? report.items : [];
+    const users = Array.isArray(report?.users) ? report.users : [];
+
+    if (items.length === 0 && users.length === 0) {
+      renderListState(frequentlyOverdueList, { kind: 'empty', message: 'No overdue item or user activity for the selected range.' });
+      return;
+    }
+
+    frequentlyOverdueList.innerHTML = '';
+    const container = document.createElement('div');
+    container.style.display = 'grid';
+    container.style.gap = '20px';
+
+    const buildTable = (title, rows, columns) => {
+      const section = document.createElement('div');
+      const heading = document.createElement('h4');
+      heading.textContent = title;
+      heading.style.margin = '0 0 8px';
+      section.appendChild(heading);
+
+      if (!rows || rows.length === 0) {
+        const empty = document.createElement('p');
+        empty.textContent = 'No records';
+        empty.style.margin = '0';
+        section.appendChild(empty);
+        return section;
+      }
+
+      const table = document.createElement('table');
+      table.className = 'admin-users-table';
+      table.innerHTML = `<thead><tr>${columns.map((col) => `<th>${col}</th>`).join('')}</tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+
+      rows.forEach((rowData) => {
+        const row = document.createElement('tr');
+        columns.forEach((column) => {
+          const cell = document.createElement('td');
+          const value = rowData[columnKeyMap[column]];
+          cell.textContent = value == null || value === '' ? '-' : String(value);
+          row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+      });
+
+      section.appendChild(table);
+      return section;
+    };
+
+    const columnKeyMap = {
+      Equipment: 'equipmentName',
+      'Overdue Count': 'overdueCount',
+      'Max Days Overdue': 'maxDaysOverdue',
+      'Last Overdue Date': 'lastOverdueDate',
+      User: 'userEmail',
+    };
+
+    container.appendChild(buildTable('Items', items, ['Equipment', 'Overdue Count', 'Max Days Overdue', 'Last Overdue Date']));
+    container.appendChild(buildTable('Users', users, ['User', 'Overdue Count', 'Max Days Overdue', 'Last Overdue Date']));
+    frequentlyOverdueList.appendChild(container);
+  }
+
+  async function loadFrequentlyOverdueReport() {
+    if (!frequentlyOverdueList || !frequentlyOverdueStart || !frequentlyOverdueEnd) return;
+    const start = String(frequentlyOverdueStart.value || '');
+    const end = String(frequentlyOverdueEnd.value || '');
+    if (!start || !end) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+    renderListState(frequentlyOverdueList, { kind: 'loading', message: 'Generating overdue report...' });
+    try {
+      const result = await requestJson(`/api/reports/frequently-overdue?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+      if (result?.error) {
+        renderListState(frequentlyOverdueList, { kind: 'error', message: result.error });
+      } else {
+        lastFrequentOverdueReport = result;
+        renderFrequentlyOverdue(result);
+      }
+    } catch (err) {
+      renderListState(frequentlyOverdueList, { kind: 'error', message: 'Unable to generate overdue report.' });
+    }
+  }
+
+  function exportFrequentlyOverdueCsv() {
+    if (!lastFrequentOverdueReport || !Array.isArray(lastFrequentOverdueReport.items) || !Array.isArray(lastFrequentOverdueReport.users)) {
+      alert('No report data to export. Generate the report first.');
+      return;
+    }
+
+    const rows = [
+      ['Category', 'Name', 'OverdueCount', 'MaxDaysOverdue', 'LastOverdueDate'],
+      ...lastFrequentOverdueReport.items.map((entry) => ['Item', entry.equipmentName || '', entry.overdueCount || 0, entry.maxDaysOverdue || 0, entry.lastOverdueDate || '']),
+      ...lastFrequentOverdueReport.users.map((entry) => ['User', entry.userEmail || '', entry.overdueCount || 0, entry.maxDaysOverdue || 0, entry.lastOverdueDate || ''])
+    ];
+
+    const csv = rows.map((line) => line.map((value) => String(value).replace(/"/g, '""')).map((value) => (value.includes(',') || value.includes('\n') ? `"${value}"` : value)).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `frequently-overdue-${lastFrequentOverdueReport.start || ''}_to_${lastFrequentOverdueReport.end || ''}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderFrequentlyDamaged(report) {
+    if (!frequentlyDamagedList) return;
+    const items = Array.isArray(report?.items) ? report.items : [];
+
+    if (items.length === 0) {
+      renderListState(frequentlyDamagedList, { kind: 'empty', message: 'No damage incidents for the selected range.' });
+      return;
+    }
+
+    frequentlyDamagedList.innerHTML = '';
+    const table = document.createElement('table');
+    table.className = 'admin-users-table';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Equipment</th>
+          <th>Damage Count</th>
+          <th>Last Damage Date</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    items.forEach((entry) => {
+      const row = document.createElement('tr');
+      const name = document.createElement('td'); name.textContent = entry.equipmentName || '-';
+      const count = document.createElement('td'); count.textContent = String(entry.damageCount || 0);
+      const last = document.createElement('td'); last.textContent = entry.lastDamageDate ? String(entry.lastDamageDate).slice(0, 10) : '-';
+
+      row.appendChild(name);
+      row.appendChild(count);
+      row.appendChild(last);
+      tbody.appendChild(row);
+    });
+
+    frequentlyDamagedList.appendChild(table);
+  }
+
+  async function loadFrequentlyDamagedReport() {
+    if (!frequentlyDamagedList || !frequentlyDamagedStart || !frequentlyDamagedEnd) return;
+    const start = String(frequentlyDamagedStart.value || '');
+    const end = String(frequentlyDamagedEnd.value || '');
+    if (!start || !end) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+    renderListState(frequentlyDamagedList, { kind: 'loading', message: 'Generating damaged-equipment report...' });
+    try {
+      const result = await requestJson(`/api/reports/frequently-damaged?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+      if (result?.error) {
+        renderListState(frequentlyDamagedList, { kind: 'error', message: result.error });
+      } else {
+        lastFrequentDamagedReport = result;
+        renderFrequentlyDamaged(result);
+      }
+    } catch (err) {
+      renderListState(frequentlyDamagedList, { kind: 'error', message: 'Unable to generate damaged-equipment report.' });
+    }
+  }
+
+  function exportFrequentlyDamagedCsv() {
+    if (!lastFrequentDamagedReport || !Array.isArray(lastFrequentDamagedReport.items)) {
+      alert('No report data to export. Generate the report first.');
+      return;
+    }
+
+    const rows = [
+      ['Equipment', 'DamageCount', 'LastDamageDate'],
+      ...lastFrequentDamagedReport.items.map((entry) => [entry.equipmentName || '', entry.damageCount || 0, entry.lastDamageDate || ''])
+    ];
+
+    const csv = rows.map((line) => line.map((value) => String(value).replace(/"/g, '""')).map((value) => (value.includes(',') || value.includes('\n') ? `"${value}"` : value)).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `frequently-damaged-${lastFrequentDamagedReport.start || ''}_to_${lastFrequentDamagedReport.end || ''}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   function renderRoomUsage(report) {
     if (!roomUsageList) return;
@@ -1168,6 +1363,12 @@ export function createAdminPage(deps) {
   // Wire up equipment usage buttons
   if (equipmentUsageGenerate) equipmentUsageGenerate.addEventListener('click', () => loadEquipmentUsageReport());
   if (equipmentUsageExport) equipmentUsageExport.addEventListener('click', () => exportEquipmentUsageCsv());
+
+  // Wire up frequently overdue and damaged report buttons
+  if (frequentlyOverdueGenerate) frequentlyOverdueGenerate.addEventListener('click', () => loadFrequentlyOverdueReport());
+  if (frequentlyOverdueExport) frequentlyOverdueExport.addEventListener('click', () => exportFrequentlyOverdueCsv());
+  if (frequentlyDamagedGenerate) frequentlyDamagedGenerate.addEventListener('click', () => loadFrequentlyDamagedReport());
+  if (frequentlyDamagedExport) frequentlyDamagedExport.addEventListener('click', () => exportFrequentlyDamagedCsv());
 
   /**
    * Handle clicks in the bookings table.

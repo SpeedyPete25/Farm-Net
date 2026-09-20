@@ -248,6 +248,30 @@
             <button id="equipment-usage-export" class="secondary">Export CSV</button>
           </label>
           <div id="equipment-usage-list"></div>
+
+          <h3 id="frequently-overdue-section" style="margin-top: 24px;">Frequently Overdue Items and Users</h3>
+          <p>List equipment and users with the highest overdue counts within a date range.</p>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            Start:
+            <input id="frequently-overdue-start" type="date" />
+            End:
+            <input id="frequently-overdue-end" type="date" />
+            <button id="frequently-overdue-generate" class="secondary">Generate</button>
+            <button id="frequently-overdue-export" class="secondary">Export CSV</button>
+          </label>
+          <div id="frequently-overdue-list"></div>
+
+          <h3 id="frequently-damaged-section" style="margin-top: 24px;">Frequently Damaged Equipment</h3>
+          <p>List the equipment with the most reported damage incidents within a date range.</p>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            Start:
+            <input id="frequently-damaged-start" type="date" />
+            End:
+            <input id="frequently-damaged-end" type="date" />
+            <button id="frequently-damaged-generate" class="secondary">Generate</button>
+            <button id="frequently-damaged-export" class="secondary">Export CSV</button>
+          </label>
+          <div id="frequently-damaged-list"></div>
         </article>
 
         <article id="page-outbox" class="card page-panel hidden">

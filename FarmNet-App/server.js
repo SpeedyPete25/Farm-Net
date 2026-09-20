@@ -87,10 +87,11 @@ const db = new Pool({
 // number globally rather than patching every call site.
 pgTypes.setTypeParser(20, (value) => parseInt(value, 10));
 
-// Handle unexpected connection-level errors (e.g. the connection to Postgres drops).
+// Handle unexpected connection-level errors without tearing down the whole process.
+// A single transient Postgres failure should be logged and retried by the pool rather
+// than crashing the app and taking down the API mid-request.
 db.on('error', (err) => {
   console.error('Database error:', err);
-  process.exit(1);
 });
 
 app.use(express.json());
@@ -5044,6 +5045,196 @@ app.get('/api/notifications/mine', requireLogin, async (req, res) => {
   } catch (err) {
     console.error('Failed to generate user equipment notifications:', err);
     res.status(500).json({ error: 'Failed to generate notifications' });
+  }
+});
+
+// Generate a summary of frequently overdue items and users. Admin only.
+// Query params: ?start=YYYY-MM-DD&end=YYYY-MM-DD
+app.get('/api/reports/frequently-overdue', requireAdmin, async (req, res) => {
+  const start = String(req.query.start || '').trim();
+  const end = String(req.query.end || '').trim();
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(start) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query parameters are required in YYYY-MM-DD format.' });
+  }
+
+  const startDate = new Date(`${start}T00:00:00Z`);
+  const endDate = new Date(`${end}T23:59:59Z`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return res.status(400).json({ error: 'start and end query parameters are required in YYYY-MM-DD format.' });
+  }
+  if (startDate.getTime() > endDate.getTime()) {
+    return res.status(400).json({ error: 'start must be <= end.' });
+  }
+
+  try {
+    const today = new Date();
+    const todayIso = today.toISOString().slice(0, 10);
+    const todayMs = new Date(`${todayIso}T00:00:00Z`).getTime();
+
+    const rows = await query(
+      `SELECT l.id, l.userId, u.email AS userEmail, l.equipmentId, e.name AS equipmentName, l.returnDate
+       FROM loans l
+       LEFT JOIN users u ON u.id = l.userId
+       LEFT JOIN equipment e ON e.id = l.equipmentId
+       WHERE l.returnDate >= ?
+         AND l.returnDate <= ?
+         AND l.returnDate < ?
+       ORDER BY l.returnDate DESC, e.name ASC, u.email ASC`,
+      [start, end, todayIso]
+    );
+
+    const itemMap = new Map();
+    const userMap = new Map();
+
+    for (const row of rows) {
+      const returnDate = String(row.returnDate || '').trim();
+      if (!returnDate) continue;
+
+      const returnDateMs = new Date(`${returnDate}T00:00:00Z`).getTime();
+      const daysOverdue = Number.isFinite(returnDateMs)
+        ? Math.max(0, Math.round((todayMs - returnDateMs) / 86400000))
+        : 0;
+
+      const equipmentId = Number(row.equipmentId);
+      const equipmentName = String(row.equipmentName || 'Unknown equipment');
+      const userId = Number(row.userId);
+      const userEmail = String(row.userEmail || 'Unknown user');
+
+      if (Number.isFinite(equipmentId) && equipmentId > 0) {
+        if (!itemMap.has(equipmentId)) {
+          itemMap.set(equipmentId, {
+            equipmentId,
+            equipmentName,
+            overdueCount: 0,
+            maxDaysOverdue: 0,
+            lastOverdueDate: returnDate
+          });
+        }
+        const item = itemMap.get(equipmentId);
+        item.overdueCount += 1;
+        item.maxDaysOverdue = Math.max(item.maxDaysOverdue, daysOverdue);
+        if (returnDate > item.lastOverdueDate) item.lastOverdueDate = returnDate;
+      }
+
+      if (Number.isFinite(userId) && userId > 0) {
+        if (!userMap.has(userId)) {
+          userMap.set(userId, {
+            userId,
+            userEmail,
+            overdueCount: 0,
+            maxDaysOverdue: 0,
+            lastOverdueDate: returnDate
+          });
+        }
+        const user = userMap.get(userId);
+        user.overdueCount += 1;
+        user.maxDaysOverdue = Math.max(user.maxDaysOverdue, daysOverdue);
+        if (returnDate > user.lastOverdueDate) user.lastOverdueDate = returnDate;
+      }
+    }
+
+    const items = Array.from(itemMap.values())
+      .map((row) => ({
+        equipmentId: Number(row.equipmentId),
+        equipmentName: String(row.equipmentName || 'Unknown equipment'),
+        overdueCount: Number(row.overdueCount || 0),
+        maxDaysOverdue: Number(row.maxDaysOverdue || 0),
+        lastOverdueDate: row.lastOverdueDate || null
+      }))
+      .sort((a, b) => {
+        const countDiff = b.overdueCount - a.overdueCount;
+        if (countDiff !== 0) return countDiff;
+        const dayDiff = b.maxDaysOverdue - a.maxDaysOverdue;
+        if (dayDiff !== 0) return dayDiff;
+        return String(a.equipmentName || '').localeCompare(String(b.equipmentName || ''));
+      });
+
+    const users = Array.from(userMap.values())
+      .map((row) => ({
+        userId: Number(row.userId),
+        userEmail: String(row.userEmail || 'Unknown user'),
+        overdueCount: Number(row.overdueCount || 0),
+        maxDaysOverdue: Number(row.maxDaysOverdue || 0),
+        lastOverdueDate: row.lastOverdueDate || null
+      }))
+      .sort((a, b) => {
+        const countDiff = b.overdueCount - a.overdueCount;
+        if (countDiff !== 0) return countDiff;
+        const dayDiff = b.maxDaysOverdue - a.maxDaysOverdue;
+        if (dayDiff !== 0) return dayDiff;
+        return String(a.userEmail || '').localeCompare(String(b.userEmail || ''));
+      });
+
+    res.json({ start, end, items, users });
+  } catch (err) {
+    console.error('Failed to generate frequently overdue report:', err);
+    res.status(500).json({ error: 'Failed to generate frequently overdue report' });
+  }
+});
+
+// Generate a summary of frequently damaged equipment. Admin only.
+// Query params: ?start=YYYY-MM-DD&end=YYYY-MM-DD
+app.get('/api/reports/frequently-damaged', requireAdmin, async (req, res) => {
+  const start = String(req.query.start || '').trim();
+  const end = String(req.query.end || '').trim();
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(start) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end query parameters are required in YYYY-MM-DD format.' });
+  }
+  if (start > end) return res.status(400).json({ error: 'start must be <= end.' });
+
+  try {
+    const rows = await query(
+      `SELECT d.id, d.createdAt, l.equipmentId, e.name AS equipmentName
+       FROM damage_reports d
+       JOIN loans l ON l.id = d.loanId
+       LEFT JOIN equipment e ON e.id = l.equipmentId
+       WHERE DATE(d.createdAt) >= ?
+         AND DATE(d.createdAt) <= ?
+       ORDER BY d.createdAt DESC, e.name ASC`,
+      [start, end]
+    );
+
+    const itemMap = new Map();
+    for (const row of rows) {
+      const equipmentId = Number(row.equipmentId);
+      const equipmentName = String(row.equipmentName || 'Unknown equipment');
+      const damageDate = String(row.createdAt || '').trim();
+
+      if (!Number.isFinite(equipmentId) || equipmentId <= 0) continue;
+
+      if (!itemMap.has(equipmentId)) {
+        itemMap.set(equipmentId, {
+          equipmentId,
+          equipmentName,
+          damageCount: 0,
+          lastDamageDate: damageDate || null
+        });
+      }
+
+      const item = itemMap.get(equipmentId);
+      item.damageCount += 1;
+      if (damageDate && (!item.lastDamageDate || damageDate > item.lastDamageDate)) {
+        item.lastDamageDate = damageDate;
+      }
+    }
+
+    const items = Array.from(itemMap.values())
+      .map((entry) => ({
+        equipmentId: Number(entry.equipmentId),
+        equipmentName: String(entry.equipmentName || 'Unknown equipment'),
+        damageCount: Number(entry.damageCount || 0),
+        lastDamageDate: entry.lastDamageDate || null
+      }))
+      .sort((a, b) => {
+        const countDiff = b.damageCount - a.damageCount;
+        if (countDiff !== 0) return countDiff;
+        return String(a.equipmentName || '').localeCompare(String(b.equipmentName || ''));
+      });
+
+    res.json({ start, end, items });
+  } catch (err) {
+    console.error('Failed to generate frequently damaged equipment report:', err);
+    res.status(500).json({ error: 'Failed to generate frequently damaged equipment report' });
   }
 });
 

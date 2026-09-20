@@ -84,6 +84,16 @@ const equipmentUsageEnd = document.getElementById('equipment-usage-end');
 const equipmentUsageGenerate = document.getElementById('equipment-usage-generate');
 const equipmentUsageExport = document.getElementById('equipment-usage-export');
 const equipmentUsageList = document.getElementById('equipment-usage-list');
+const frequentlyOverdueStart = document.getElementById('frequently-overdue-start');
+const frequentlyOverdueEnd = document.getElementById('frequently-overdue-end');
+const frequentlyOverdueGenerate = document.getElementById('frequently-overdue-generate');
+const frequentlyOverdueExport = document.getElementById('frequently-overdue-export');
+const frequentlyOverdueList = document.getElementById('frequently-overdue-list');
+const frequentlyDamagedStart = document.getElementById('frequently-damaged-start');
+const frequentlyDamagedEnd = document.getElementById('frequently-damaged-end');
+const frequentlyDamagedGenerate = document.getElementById('frequently-damaged-generate');
+const frequentlyDamagedExport = document.getElementById('frequently-damaged-export');
+const frequentlyDamagedList = document.getElementById('frequently-damaged-list');
 
 // Room management controls.
 const roomManagementList = document.getElementById('room-management-list');
@@ -284,6 +294,20 @@ function setActivePage(page, options = {}) {
       start.setDate(today.getDate() - 30);
       equipmentUsageStart.value = start.toISOString().slice(0, 10);
       equipmentUsageEnd.value = today.toISOString().slice(0, 10);
+    }
+    if (frequentlyOverdueStart && frequentlyOverdueEnd && !frequentlyOverdueStart.value && !frequentlyOverdueEnd.value) {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      frequentlyOverdueStart.value = start.toISOString().slice(0, 10);
+      frequentlyOverdueEnd.value = today.toISOString().slice(0, 10);
+    }
+    if (frequentlyDamagedStart && frequentlyDamagedEnd && !frequentlyDamagedStart.value && !frequentlyDamagedEnd.value) {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      frequentlyDamagedStart.value = start.toISOString().slice(0, 10);
+      frequentlyDamagedEnd.value = today.toISOString().slice(0, 10);
     }
   }
 
@@ -843,6 +867,16 @@ const adminPage = createAdminPage({
   equipmentUsageGenerate,
   equipmentUsageExport,
   equipmentUsageList,
+  frequentlyOverdueStart,
+  frequentlyOverdueEnd,
+  frequentlyOverdueGenerate,
+  frequentlyOverdueExport,
+  frequentlyOverdueList,
+  frequentlyDamagedStart,
+  frequentlyDamagedEnd,
+  frequentlyDamagedGenerate,
+  frequentlyDamagedExport,
+  frequentlyDamagedList,
   requestJson,
   onReturnLoan: returnLoan
 });
