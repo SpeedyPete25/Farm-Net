@@ -3,7 +3,7 @@
  * Renders users, bookings, loans, and audit data for admin actions.
  */
 
-import { renderListState } from './utils.js';
+import { downloadCsv, renderListState } from './utils.js';
 
 /**
  * @typedef {{ id: number, email: string, role: 'user' | 'admin' }} User
@@ -1012,6 +1012,7 @@ export function createAdminPage(deps) {
       alert('Please select both start and end dates.');
       return;
     }
+    lastFrequentOverdueReport = null;
     renderListState(frequentlyOverdueList, { kind: 'loading', message: 'Generating overdue report...' });
     try {
       const result = await requestJson(`/api/reports/frequently-overdue?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
@@ -1037,17 +1038,7 @@ export function createAdminPage(deps) {
       ...lastFrequentOverdueReport.items.map((entry) => ['Item', entry.equipmentName || '', entry.overdueCount || 0, entry.maxDaysOverdue || 0, entry.lastOverdueDate || '']),
       ...lastFrequentOverdueReport.users.map((entry) => ['User', entry.userEmail || '', entry.overdueCount || 0, entry.maxDaysOverdue || 0, entry.lastOverdueDate || ''])
     ];
-
-    const csv = rows.map((line) => line.map((value) => String(value).replace(/"/g, '""')).map((value) => (value.includes(',') || value.includes('\n') ? `"${value}"` : value)).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `frequently-overdue-${lastFrequentOverdueReport.start || ''}_to_${lastFrequentOverdueReport.end || ''}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadCsv(rows, `frequently-overdue-${lastFrequentOverdueReport.start || ''}_to_${lastFrequentOverdueReport.end || ''}.csv`);
   }
 
   function renderFrequentlyDamaged(report) {
@@ -1097,6 +1088,7 @@ export function createAdminPage(deps) {
       alert('Please select both start and end dates.');
       return;
     }
+    lastFrequentDamagedReport = null;
     renderListState(frequentlyDamagedList, { kind: 'loading', message: 'Generating damaged-equipment report...' });
     try {
       const result = await requestJson(`/api/reports/frequently-damaged?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
@@ -1119,19 +1111,9 @@ export function createAdminPage(deps) {
 
     const rows = [
       ['Equipment', 'DamageCount', 'LastDamageDate'],
-      ...lastFrequentDamagedReport.items.map((entry) => [entry.equipmentName || '', entry.damageCount || 0, entry.lastDamageDate || ''])
+      ...lastFrequentDamagedReport.items.map((entry) => [entry.equipmentName || '', entry.damageCount || 0, entry.lastDamageDate ? String(entry.lastDamageDate).slice(0, 10) : ''])
     ];
-
-    const csv = rows.map((line) => line.map((value) => String(value).replace(/"/g, '""')).map((value) => (value.includes(',') || value.includes('\n') ? `"${value}"` : value)).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `frequently-damaged-${lastFrequentDamagedReport.start || ''}_to_${lastFrequentDamagedReport.end || ''}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadCsv(rows, `frequently-damaged-${lastFrequentDamagedReport.start || ''}_to_${lastFrequentDamagedReport.end || ''}.csv`);
   }
 
   function renderRoomUsage(report) {
@@ -1191,6 +1173,7 @@ export function createAdminPage(deps) {
       alert('Please select both start and end dates.');
       return;
     }
+    lastRoomReport = null;
     renderListState(roomUsageList, { kind: 'loading', message: 'Generating report...' });
     try {
       const result = await requestJson(`/api/reports/room-usage?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
@@ -1210,26 +1193,11 @@ export function createAdminPage(deps) {
       alert('No report data to export. Generate the report first.');
       return;
     }
-    const rows = lastRoomReport.rooms;
-    const header = ['Room','Location','TotalBookings','TotalHours','UniqueUsers','BusiestDate','BusiestHours'];
-    const csvLines = [header.join(',')];
-    rows.forEach((r) => {
-      const line = [r.roomName, r.roomLocation, r.totalBookings, r.totalHours, r.uniqueUsers, r.busiestDate || '', r.busiestDateHours || 0]
-        .map((v) => String(v).replace(/"/g, '""'))
-        .map((v) => (v.includes(',') || v.includes('\n') ? `"${v}"` : v));
-      csvLines.push(line.join(','));
-    });
-    const csv = csvLines.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const filename = `room-usage-${lastRoomReport.start || ''}_to_${lastRoomReport.end || ''}.csv`;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const rows = [
+      ['Room', 'Location', 'TotalBookings', 'TotalHours', 'UniqueUsers', 'BusiestDate', 'BusiestHours'],
+      ...lastRoomReport.rooms.map((r) => [r.roomName, r.roomLocation, r.totalBookings, r.totalHours, r.uniqueUsers, r.busiestDate || '', r.busiestDateHours || 0])
+    ];
+    downloadCsv(rows, `room-usage-${lastRoomReport.start || ''}_to_${lastRoomReport.end || ''}.csv`);
   }
 
   function renderEquipmentUsage(report) {
@@ -1280,6 +1248,7 @@ export function createAdminPage(deps) {
       alert('Please select both start and end dates.');
       return;
     }
+    lastEquipmentReport = null;
     renderListState(equipmentUsageList, { kind: 'loading', message: 'Generating report...' });
     try {
       const result = await requestJson(`/api/reports/equipment-usage?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
@@ -1299,26 +1268,11 @@ export function createAdminPage(deps) {
       alert('No report data to export. Generate the report first.');
       return;
     }
-    const rows = lastEquipmentReport.equipment;
-    const header = ['Equipment', 'TotalLoans', 'TotalBorrowedDays', 'UniqueBorrowers'];
-    const csvLines = [header.join(',')];
-    rows.forEach((entry) => {
-      const line = [entry.equipmentName, entry.totalLoans, entry.totalBorrowedDays, entry.uniqueBorrowers]
-        .map((v) => String(v).replace(/"/g, '""'))
-        .map((v) => (v.includes(',') || v.includes('\n') ? `"${v}"` : v));
-      csvLines.push(line.join(','));
-    });
-    const csv = csvLines.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const filename = `equipment-usage-${lastEquipmentReport.start || ''}_to_${lastEquipmentReport.end || ''}.csv`;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const rows = [
+      ['Equipment', 'TotalLoans', 'TotalBorrowedDays', 'UniqueBorrowers'],
+      ...lastEquipmentReport.equipment.map((entry) => [entry.equipmentName, entry.totalLoans, entry.totalBorrowedDays, entry.uniqueBorrowers])
+    ];
+    downloadCsv(rows, `equipment-usage-${lastEquipmentReport.start || ''}_to_${lastEquipmentReport.end || ''}.csv`);
   }
 
   /**

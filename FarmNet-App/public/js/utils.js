@@ -90,3 +90,27 @@ export function getNextQuarterTime() {
 
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
+
+/**
+ * Build a CSV file from rows and trigger a browser download.
+ * Values containing commas, quotes, or line breaks are quoted per RFC 4180.
+ * @param {Array<Array<string|number|null|undefined>>} rows Rows to export, header row first.
+ * @param {string} filename Download file name.
+ */
+export function downloadCsv(rows, filename) {
+  const csv = rows
+    .map((line) => line.map((value) => {
+      const text = String(value ?? '');
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(','))
+    .join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
