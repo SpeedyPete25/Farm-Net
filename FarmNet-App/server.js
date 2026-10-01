@@ -528,8 +528,13 @@ function buildEquipmentCodePrefix(name) {
 async function addEquipmentUnits(equipmentId, equipmentName, count) {
   if (!Number.isInteger(count) || count <= 0) return;
 
+  // `code` is unique across every equipment type (not just this one), so two types
+  // whose names reduce to the same 3-letter prefix (e.g. "Frequent Overdue A" and
+  // "Frequent Overdue B" both -> "fre") must still avoid colliding with each other's
+  // codes, not just their own -- otherwise the INSERT below throws a unique-constraint
+  // violation that nothing catches, crashing the whole process (not just the request).
   const prefix = buildEquipmentCodePrefix(equipmentName);
-  const existingRows = await query('SELECT code FROM equipment_units WHERE equipmentId = ?', [equipmentId]);
+  const existingRows = await query('SELECT code FROM equipment_units', []);
   const existingCodes = new Set(existingRows.map((row) => String(row.code || '').toLowerCase()));
 
   let nextNumber = 1;

@@ -720,7 +720,13 @@ test('automated integration coverage for critical flows', async (t) => {
     await registerUser(monthlyClient, monthlyEmail, password);
     await loginUser(monthlyClient, monthlyEmail, password);
 
-    const monthlyStart = formatDateFromToday(90);
+    // Anchored to day-of-month 15 (not formatDateFromToday) so this never lands on a
+    // day (29/30/31) that a shorter month would clamp, which would make the "same
+    // day of month" assertion below fail depending on what day the suite happens to run.
+    const monthlyBase = new Date();
+    monthlyBase.setDate(1);
+    monthlyBase.setMonth(monthlyBase.getMonth() + 4);
+    const monthlyStart = `${monthlyBase.getFullYear()}-${String(monthlyBase.getMonth() + 1).padStart(2, '0')}-15`;
     const monthlyCreated = await monthlyClient.request('/api/book-room', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
